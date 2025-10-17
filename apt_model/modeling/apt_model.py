@@ -331,6 +331,7 @@ class AutopoieticAttention(nn.Module):
         self.dropout_layer = nn.Dropout(dropout)
 
         self._reset_parameters()
+        self.res_scale = 1.0
 
     def _reset_parameters(self):
         nn.init.xavier_uniform_(self.q_proj.weight)
@@ -713,6 +714,7 @@ class APTEncoderLayer(nn.Module):
         
         # 配置
         self.batch_first = batch_first
+        self.res_scale = 1.0
     
     def forward(
         self,
@@ -831,6 +833,7 @@ class APTDecoderLayer(nn.Module):
         
         # 配置
         self.batch_first = batch_first
+        self.res_scale = 1.0
     
     def forward(
         self,

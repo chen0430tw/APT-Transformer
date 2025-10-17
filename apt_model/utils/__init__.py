@@ -12,7 +12,12 @@ from .error_handler import EnhancedErrorHandler
 from .cache_manager import CacheManager
 from .language_manager import LanguageManager
 from .hardware_check import check_hardware_compatibility
-from .visualization import ModelVisualizer
+try:
+    from .visualization import ModelVisualizer
+except ModuleNotFoundError as exc:
+    if exc.name not in {"matplotlib", "apt_model.utils.visualization"}:
+        raise
+    ModelVisualizer = None  # Optional dependency (matplotlib) is not available.
 from .time_estimator import TrainingTimeEstimator
 
 # Set up common devices and seed utilities
