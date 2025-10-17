@@ -1,0 +1,16 @@
+torch>=2.2
+transformers>=4.45
+datasets>=3.0
+accelerate>=1.0
+evaluate>=0.4
+numpy>=1.24
+pandas>=2.0
+Pillow>=10.0
+tqdm>=4.65
+sentencepiece>=0.1.99
+safetensors>=0.4
+optuna>=3.6
+tensorboard>=2.14
+GPUtil>=1.4
+protobuf>=4.24
+scipy>=1.10
