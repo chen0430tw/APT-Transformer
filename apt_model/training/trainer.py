@@ -8,6 +8,7 @@ import os
 import torch
 import torch.nn.functional as F
 import traceback
+from contextlib import nullcontext
 from tqdm import tqdm
 from datetime import datetime
 from torch.utils.data import Dataset, DataLoader
@@ -318,23 +319,31 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     
     print(f"开始训练，总共 {epochs} 轮...")
     
-    from torch.cuda.amp import autocast, GradScaler
-    
+    # 创建一个假的 GradScaler 以保持代码兼容性
+    class DummyScaler:
+        def scale(self, loss):
+            return loss
+
+        def step(self, optimizer):
+            optimizer.step()
+
+        def update(self):
+            pass
+
     # 在训练开始前初始化 GradScaler
-    try:
-        from torch.cuda.amp import GradScaler
-        scaler = GradScaler()
-    except (ImportError, AttributeError):
-        # 创建一个假的 GradScaler 以保持代码兼容性
-        class DummyScaler:
-            def scale(self, loss):
-                return loss
-            def step(self, optimizer):
-                optimizer.step()
-            def update(self):
-                pass
+    if torch.cuda.is_available():
+        try:
+            from torch.cuda.amp import GradScaler
+            scaler = GradScaler()
+            autocast_context = torch.cuda.amp.autocast
+        except (ImportError, AttributeError):
+            scaler = DummyScaler()
+            autocast_context = nullcontext
+            print("警告: CUDA AMP 不可用，使用标准精度训练")
+    else:
         scaler = DummyScaler()
-        print("警告: 混合精度训练不可用，使用标准精度训练")
+        autocast_context = nullcontext
+        print("警告: 未检测到GPU，使用标准精度训练")
 
     # 添加梯度累积参数
     accumulation_steps = 4  # 可以根据需求调整
@@ -361,8 +370,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                     optimizer.zero_grad()
                 
                 # 使用更新后的 autocast 进行混合精度前向计算和损失计算
-                amp_dtype = torch.bfloat16  # 或使用torch.float32
-                with torch.amp.autocast('cuda'):
+                with autocast_context() if autocast_context is not nullcontext else nullcontext():
                     try:
                         # 在这里添加打印语句
                         import inspect
@@ -428,7 +436,8 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                     scaler.update()
                     scheduler.step()
                 
-                    torch.cuda.empty_cache()  # 清理GPU缓存
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()  # 清理GPU缓存
                     
                     try:
                         current_lr = scheduler.get_last_lr()[0]

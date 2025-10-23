@@ -91,9 +91,12 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                     self.vocab_size = vocab_size
                     self.pad_token_id = 0
                     self.eos_token_id = 1
+                    self.bos_token_id = 2
                     self.pad_token = "<pad>"
                     self.eos_token = "<eos>"
-                    
+                    self.bos_token = "<bos>"
+                    self.all_special_ids = {self.pad_token_id, self.eos_token_id, self.bos_token_id}
+
                 def encode(self, text, return_tensors=None, max_length=None, truncation=None):
                     # 非常简单的分词 - 仅以空格分割
                     tokens = text.split()
@@ -103,12 +106,32 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                     ids = [hash(t) % 10000 + 10 for t in tokens]
                     if return_tensors == "pt":
                         import torch
-                        return torch.tensor([ids])
+                        return torch.tensor([ids], dtype=torch.long)
                     return ids
-                
+
                 def decode(self, ids, skip_special_tokens=True):
                     # 简单解码（不可逆，仅用于测试）
-                    return " ".join([f"<token_{id}>" for id in ids])
+                    tokens = []
+                    for idx in ids:
+                        if skip_special_tokens and idx in self.all_special_ids:
+                            continue
+                        tokens.append(f"<token_{idx}>")
+                    return " ".join(tokens)
+
+                def save_pretrained(self, save_directory):
+                    import json
+                    import os
+
+                    os.makedirs(save_directory, exist_ok=True)
+                    metadata = {
+                        "type": "simple",
+                        "vocab_size": self.vocab_size,
+                        "pad_token_id": self.pad_token_id,
+                        "eos_token_id": self.eos_token_id,
+                        "bos_token_id": self.bos_token_id,
+                    }
+                    with open(os.path.join(save_directory, "tokenizer_config.json"), "w", encoding="utf-8") as f:
+                        json.dump(metadata, f, ensure_ascii=False, indent=2)
                 
             return SimpleTokenizer()
 
