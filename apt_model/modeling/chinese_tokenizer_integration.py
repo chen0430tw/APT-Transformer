@@ -7,7 +7,7 @@ APT模型中文分词器集成
 
 import os
 import logging
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Union
 
 from transformers import GPT2Tokenizer, PreTrainedTokenizer
 from apt_model.modeling.chinese_tokenizer import ChineseTokenizer
@@ -120,22 +120,82 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
 
             # 简单的备用分词器
             class SimpleTokenizer:
-                def __init__(self):
-                    self.vocab_size = vocab_size
-                    self.pad_token_id = 0
-                    self.eos_token_id = 1
-                    self.bos_token_id = 2
+                """A lightweight word-level tokenizer used when GPT2 assets are unavailable."""
+
+                def __init__(self, base_texts: Optional[List[str]] = None, max_vocab_size: Optional[int] = None):
+                    import re
+
+                    self._token_pattern = re.compile(r"\w+|[\u4e00-\u9fff]|[^\w\s]", re.UNICODE)
                     self.pad_token = "<pad>"
                     self.eos_token = "<eos>"
                     self.bos_token = "<bos>"
-                    self.all_special_ids = {self.pad_token_id, self.eos_token_id, self.bos_token_id}
+                    self.unk_token = "<unk>"
 
+                    self.pad_token_id = 0
+                    self.eos_token_id = 1
+                    self.bos_token_id = 2
+                    self.unk_token_id = 3
+
+                    self.all_special_tokens = [
+                        self.pad_token,
+                        self.eos_token,
+                        self.bos_token,
+                        self.unk_token,
+                    ]
+                    self._token_to_id = {
+                        self.pad_token: self.pad_token_id,
+                        self.eos_token: self.eos_token_id,
+                        self.bos_token: self.bos_token_id,
+                        self.unk_token: self.unk_token_id,
+                    }
+                    self._id_to_token = {idx: tok for tok, idx in self._token_to_id.items()}
+                    self._max_vocab_size = max_vocab_size
+                    self._vocab_frozen = False
+
+                    if base_texts:
+                        for text in base_texts:
+                            for token in self._tokenize(text):
+                                self._maybe_add_token(token, allow_new=True)
+
+                    # Freeze the vocabulary after the initial corpus pass to avoid
+                    # generating token IDs that exceed the model's embedding matrix.
+                    self._vocab_frozen = True
+                    if self._max_vocab_size is None:
+                        self._max_vocab_size = len(self._token_to_id)
+                    else:
+                        self._max_vocab_size = max(self._max_vocab_size, len(self._token_to_id))
+
+                # ------------------------------------------------------------------
+                # Helper API
+                # ------------------------------------------------------------------
+                def _tokenize(self, text: str) -> List[str]:
+                    return self._token_pattern.findall(text)
+
+                def _maybe_add_token(self, token: str, allow_new: bool = False) -> int:
+                    token = token.strip()
+                    if not token:
+                        return self.unk_token_id
+                    if token in self._token_to_id:
+                        return self._token_to_id[token]
+                    limit = self._max_vocab_size if self._max_vocab_size is not None else float('inf')
+                    if not allow_new or len(self._token_to_id) >= limit:
+                        return self.unk_token_id
+                    new_id = len(self._token_to_id)
+                    self._token_to_id[token] = new_id
+                    self._id_to_token[new_id] = token
+                    return new_id
+
+                # ------------------------------------------------------------------
+                # Public tokenizer interface
+                # ------------------------------------------------------------------
                 def encode(self, text, return_tensors=None, max_length=None, truncation=None):
-                    tokens = text.split()
-                    if max_length and truncation and len(tokens) > max_length:
-                        tokens = tokens[:max_length]
+                    tokens = self._tokenize(text)
+                    allow_new = not self._vocab_frozen
+                    ids = [self._maybe_add_token(tok, allow_new=allow_new) for tok in tokens]
 
-                    ids = [hash(t) % 10000 + 10 for t in tokens]
+                    if max_length is not None and truncation and len(ids) > max_length:
+                        ids = ids[:max_length]
+
                     if return_tensors == "pt":
                         import torch
 
@@ -143,14 +203,36 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                     return ids
 
                 def decode(self, ids, skip_special_tokens=True):
-                    iterable = ids.tolist() if hasattr(ids, "tolist") else ids
+                    iterable = ids.tolist() if hasattr(ids, "tolist") else list(ids)
                     tokens: List[str] = []
                     for raw_idx in iterable:
                         idx = int(raw_idx)
                         if skip_special_tokens and idx in self.all_special_ids:
                             continue
-                        tokens.append(f"<token_{idx}>")
-                    return " ".join(tokens)
+                        tokens.append(self._id_to_token.get(idx, self.unk_token))
+                    return self._detokenize(tokens)
+
+                def _detokenize(self, tokens: List[str]) -> str:
+                    if not tokens:
+                        return ""
+
+                    import string
+
+                    no_space_before = set(string.punctuation) | {"。", "，", "！", "？", "；", "：", "、", "）", ")", "】", "］"}
+                    no_space_after = {"（", "(", "【", "［"}
+
+                    pieces: List[str] = []
+                    for token in tokens:
+                        if not pieces:
+                            pieces.append(token)
+                            continue
+
+                        if token in no_space_before or pieces[-1] in no_space_after:
+                            pieces[-1] = pieces[-1] + token
+                        else:
+                            pieces.append(token)
+
+                    return " ".join(pieces)
 
                 def save_pretrained(self, save_directory):
                     import json
@@ -158,15 +240,68 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                     os.makedirs(save_directory, exist_ok=True)
                     metadata = {
                         "type": "simple",
-                        "vocab_size": self.vocab_size,
+                        "pad_token": self.pad_token,
+                        "eos_token": self.eos_token,
+                        "bos_token": self.bos_token,
+                        "unk_token": self.unk_token,
                         "pad_token_id": self.pad_token_id,
                         "eos_token_id": self.eos_token_id,
                         "bos_token_id": self.bos_token_id,
+                        "unk_token_id": self.unk_token_id,
+                        "vocab": self._id_to_token,
                     }
                     with open(os.path.join(save_directory, "tokenizer_config.json"), "w", encoding="utf-8") as f:
                         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-            return SimpleTokenizer()
+                def get_vocab(self) -> Dict[str, int]:
+                    return dict(self._token_to_id)
+
+                def convert_ids_to_tokens(self, ids: Union[int, List[int]]):
+                    if isinstance(ids, int):
+                        return self._id_to_token.get(ids, self.unk_token)
+                    return [self._id_to_token.get(int(idx), self.unk_token) for idx in ids]
+
+                def __len__(self):
+                    return len(self._token_to_id)
+
+                @property
+                def vocab_size(self) -> int:
+                    return len(self._token_to_id)
+
+                @property
+                def all_special_ids(self) -> set:
+                    return {
+                        self.pad_token_id,
+                        self.eos_token_id,
+                        self.bos_token_id,
+                        self.unk_token_id,
+                    }
+
+                @property
+                def special_tokens_map(self) -> Dict[str, Union[str, int]]:
+                    return {
+                        "pad_token": self.pad_token,
+                        "eos_token": self.eos_token,
+                        "bos_token": self.bos_token,
+                        "unk_token": self.unk_token,
+                        "pad_token_id": self.pad_token_id,
+                        "eos_token_id": self.eos_token_id,
+                        "bos_token_id": self.bos_token_id,
+                        "unk_token_id": self.unk_token_id,
+                    }
+
+                def __call__(self, text, return_tensors=None, max_length=None, truncation=None):
+                    input_ids = self.encode(text, return_tensors=return_tensors, max_length=max_length, truncation=truncation)
+                    if return_tensors == "pt":
+                        import torch
+
+                        attention_mask = (input_ids != self.pad_token_id).long()
+                        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+                    attention_mask = [1] * len(input_ids)
+                    return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+            return SimpleTokenizer(base_texts=texts)
 
 
 def save_tokenizer(tokenizer, path):
