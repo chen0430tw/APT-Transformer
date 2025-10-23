@@ -1,5 +1,14 @@
-# -*- coding: utf-8 -*-
-import torch
+"""Smoke test for the minimal APT model build."""
+
+import pytest
+
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover - environment specific
+    torch = None
+
+
+@pytest.mark.skipif(torch is None, reason="PyTorch is not installed in this environment")
 def test_build_and_forward_minimal():
     from apt_model.config.apt_config import APTConfig
     from apt_model.modeling.apt_model import APTModel
