@@ -7,7 +7,8 @@ APT模型中文分词器集成
 
 import os
 import logging
-from typing import Optional, Dict, List, Any, Tuple, Union
+from pathlib import Path
+from typing import Optional, Dict, List, Any, Tuple, Union, Iterable
 
 from transformers import GPT2Tokenizer, PreTrainedTokenizer
 from apt_model.modeling.chinese_tokenizer import ChineseTokenizer
@@ -52,6 +53,25 @@ def _should_allow_remote_downloads() -> bool:
     return flag.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _iter_candidate_tokenizer_dirs(cache_dir: Optional[str]) -> Iterable[Path]:
+    """Yield possible directories containing a cached GPT-2 tokenizer."""
+
+    env_dir = os.environ.get("APT_GPT2_TOKENIZER_DIR")
+    candidates = []
+    if cache_dir:
+        candidates.append(Path(cache_dir))
+    if env_dir:
+        candidates.append(Path(env_dir))
+
+    package_root = Path(__file__).resolve().parents[1]
+    candidates.append(package_root / "resources" / "gpt2_tokenizer")
+    candidates.append(Path.home() / ".cache" / "apt" / "tokenizers" / "gpt2")
+
+    for directory in candidates:
+        if directory and directory.exists():
+            yield directory
+
+
 def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=50257, cache_dir=None):
     """
     获取适合APT模型的分词器
@@ -93,6 +113,18 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
         logger.info(f"加载GPT2分词器 (语言: {language})")
 
         allow_remote = _should_allow_remote_downloads()
+
+        # 尝试从预先下载或缓存的目录中加载 GPT-2 分词器
+        for directory in _iter_candidate_tokenizer_dirs(cache_dir):
+            try:
+                tokenizer = GPT2Tokenizer.from_pretrained(str(directory))
+                if tokenizer.pad_token_id is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                logger.info("从本地缓存加载 GPT2 分词器: %s", directory)
+                return tokenizer
+            except Exception:
+                logger.debug("缓存目录 %s 不包含有效的 GPT2 分词器", directory)
+
         local_kwargs: Dict[str, Any] = {"cache_dir": cache_dir}
         if not allow_remote:
             # 当处于离线模式时避免触发网络请求，直接检查本地缓存。

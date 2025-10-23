@@ -19,6 +19,16 @@ pytest -q tests/test_smoke.py
 > pip install torch
 > ```
 
+> **Optional NLP extras**
+>
+> The text generation metrics and GPT-2 tokenizer rely on scikit-learn and
+> Hugging Face assets.  Run the helper script to install the dependencies and
+> cache the tokenizer locally (safe to skip in air-gapped CI runs):
+>
+> ```bash
+> python scripts/download_optional_assets.py
+> ```
+
 ## Layout
 ```
 apt_model/                      # core package
