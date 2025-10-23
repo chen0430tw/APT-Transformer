@@ -3,10 +3,21 @@
 ## Quickstart
 ```bash
 pip install -r requirements.txt
+# ensure torch is available in the active environment
+python -c "import torch; print(torch.__version__)"
 python -m apt_model --help
 # smoke test (if pytest available)
 pytest -q tests/test_smoke.py
 ```
+
+> **Note**
+>
+> If the environment image does not bundle PyTorch, install it manually before
+> running the training demos:
+>
+> ```bash
+> pip install torch
+> ```
 
 ## Layout
 ```
