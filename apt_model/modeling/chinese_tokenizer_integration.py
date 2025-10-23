@@ -36,6 +36,22 @@ def integrate_chinese_tokenizer(*args, **kwargs) -> PreTrainedTokenizer:
     return tokenizer
 
 
+def _should_allow_remote_downloads() -> bool:
+    """Return whether remote Hugging Face downloads are allowed.
+
+    The function checks an environment variable so projects can opt-in to
+    network access explicitly.  By default we assume offline execution to keep
+    unit tests and CI runs deterministic and to avoid repeated download
+    attempts in restricted environments.
+    """
+
+    flag = os.environ.get("APT_ALLOW_REMOTE_DOWNLOADS")
+    if flag is None:
+        return False
+
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=50257, cache_dir=None):
     """
     获取适合APT模型的分词器
@@ -75,16 +91,33 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
     else:
         # 使用默认的GPT2分词器
         logger.info(f"加载GPT2分词器 (语言: {language})")
+
+        allow_remote = _should_allow_remote_downloads()
+        local_kwargs: Dict[str, Any] = {"cache_dir": cache_dir}
+        if not allow_remote:
+            # 当处于离线模式时避免触发网络请求，直接检查本地缓存。
+            local_kwargs["local_files_only"] = True
+
         try:
-            tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
-            # GPT2分词器没有pad_token，设置它等于eos_token
+            tokenizer = GPT2Tokenizer.from_pretrained("gpt2", **local_kwargs)
             if tokenizer.pad_token_id is None:
                 tokenizer.pad_token = tokenizer.eos_token
             return tokenizer
-        except Exception as e:
-            logger.error(f"加载GPT2分词器失败: {e}")
+        except Exception as local_error:
+            if allow_remote:
+                logger.info("本地未找到GPT2分词器缓存，尝试从Hugging Face下载: %s", local_error)
+                try:
+                    tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
+                    if tokenizer.pad_token_id is None:
+                        tokenizer.pad_token = tokenizer.eos_token
+                    return tokenizer
+                except Exception as download_error:
+                    logger.error("下载GPT2分词器失败: %s", download_error)
+            else:
+                logger.error("离线模式下加载GPT2分词器失败: %s", local_error)
+
             logger.warning("创建备用简单分词器")
-            
+
             # 简单的备用分词器
             class SimpleTokenizer:
                 def __init__(self):
@@ -98,21 +131,22 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                     self.all_special_ids = {self.pad_token_id, self.eos_token_id, self.bos_token_id}
 
                 def encode(self, text, return_tensors=None, max_length=None, truncation=None):
-                    # 非常简单的分词 - 仅以空格分割
                     tokens = text.split()
                     if max_length and truncation and len(tokens) > max_length:
                         tokens = tokens[:max_length]
-                    # 转换为ID (简单地使用哈希)
+
                     ids = [hash(t) % 10000 + 10 for t in tokens]
                     if return_tensors == "pt":
                         import torch
+
                         return torch.tensor([ids], dtype=torch.long)
                     return ids
 
                 def decode(self, ids, skip_special_tokens=True):
-                    # 简单解码（不可逆，仅用于测试）
-                    tokens = []
-                    for idx in ids:
+                    iterable = ids.tolist() if hasattr(ids, "tolist") else ids
+                    tokens: List[str] = []
+                    for raw_idx in iterable:
+                        idx = int(raw_idx)
                         if skip_special_tokens and idx in self.all_special_ids:
                             continue
                         tokens.append(f"<token_{idx}>")
@@ -120,7 +154,6 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
 
                 def save_pretrained(self, save_directory):
                     import json
-                    import os
 
                     os.makedirs(save_directory, exist_ok=True)
                     metadata = {
@@ -132,7 +165,7 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                     }
                     with open(os.path.join(save_directory, "tokenizer_config.json"), "w", encoding="utf-8") as f:
                         json.dump(metadata, f, ensure_ascii=False, indent=2)
-                
+
             return SimpleTokenizer()
 
 
@@ -287,5 +320,5 @@ def get_appropriate_tokenizer(texts, tokenizer_type=None, language=None):
         language=detected_language,
         texts=texts
     )
-    
+
     return tokenizer, detected_language
