@@ -1013,6 +1013,14 @@ class APTModel(nn.Module):
             dropout=config.dropout
         )
         
+        # 兼容缺失的可选配置项，提供合理的默认值
+        use_autopoietic = getattr(config, "use_autopoietic", True)
+        use_dbc_dac = getattr(config, "use_dbc_dac", False)
+        rank_ratio_proj = getattr(config, "rank_ratio_proj", 0.1)
+        rank_ratio_res = getattr(config, "rank_ratio_res", 0.05)
+        dbc_threshold = getattr(config, "dbc_threshold", 1e-6)
+        dbc_iterations = getattr(config, "dbc_iterations", 1)
+
         # 创建编码器层
         encoder_layers = []
         for _ in range(config.num_encoder_layers):
@@ -1028,15 +1036,15 @@ class APTModel(nn.Module):
                     alpha=config.alpha,
                     init_tau=config.init_tau,
                     sr_ratio=config.sr_ratio,
-                    use_autopoietic=config.use_autopoietic,
-                    use_dbc_dac=config.use_dbc_dac,
-                    rank_ratio_proj=config.rank_ratio_proj,
-                    rank_ratio_res=config.rank_ratio_res,
-                    dbc_threshold=config.dbc_threshold,
-                    dbc_iterations=config.dbc_iterations
+                    use_autopoietic=use_autopoietic,
+                    use_dbc_dac=use_dbc_dac,
+                    rank_ratio_proj=rank_ratio_proj,
+                    rank_ratio_res=rank_ratio_res,
+                    dbc_threshold=dbc_threshold,
+                    dbc_iterations=dbc_iterations
                 )
             )
-        
+
         # 创建解码器层
         decoder_layers = []
         for _ in range(config.num_decoder_layers):
@@ -1052,12 +1060,12 @@ class APTModel(nn.Module):
                     alpha=config.alpha,
                     init_tau=config.init_tau,
                     sr_ratio=config.sr_ratio,
-                    use_autopoietic=config.use_autopoietic,
-                    use_dbc_dac=config.use_dbc_dac,
-                    rank_ratio_proj=config.rank_ratio_proj,
-                    rank_ratio_res=config.rank_ratio_res,
-                    dbc_threshold=config.dbc_threshold,
-                    dbc_iterations=config.dbc_iterations
+                    use_autopoietic=use_autopoietic,
+                    use_dbc_dac=use_dbc_dac,
+                    rank_ratio_proj=rank_ratio_proj,
+                    rank_ratio_res=rank_ratio_res,
+                    dbc_threshold=dbc_threshold,
+                    dbc_iterations=dbc_iterations
                 )
             )
         
@@ -1077,12 +1085,12 @@ class APTModel(nn.Module):
         
         # 初始化DBC-DAC优化器
         self.dbc_dac_optimizer = DBCDAC_Optimizer(
-            rank_ratio_proj=getattr(config, 'rank_ratio_proj', 0.1),
-            rank_ratio_res=getattr(config, 'rank_ratio_res', 0.05),
-            threshold=getattr(config, 'dbc_threshold', 1e-6),
-            iterations=getattr(config, 'dbc_iterations', 1),
+            rank_ratio_proj=rank_ratio_proj,
+            rank_ratio_res=rank_ratio_res,
+            threshold=dbc_threshold,
+            iterations=dbc_iterations,
             apply_to_gradients=True
-        ) if getattr(config, 'use_dbc_dac', True) else None
+        ) if use_dbc_dac else None
         
         # 添加梯度稳定钩子
         self.gradient_hooks = add_gradient_hooks_to_model(self, self.dbc_dac_optimizer) if self.dbc_dac_optimizer else []

@@ -82,7 +82,7 @@ try:
             
             with torch.no_grad():
                 try:
-                    outputs = model(src_ids, tgt_ids)
+                    outputs = model(src_ids, tgt_ids, return_dict=True)
                     print(f"✓ 前向传播成功!")
                     print(f"- 输出logits形状: {outputs['logits'].shape}")
                     print(f"- 编码器输出形状: {outputs['encoder_output'].shape}")
