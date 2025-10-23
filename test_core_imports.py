@@ -13,9 +13,31 @@ This script validates:
 import sys
 import traceback
 
+import pytest
 
-def test_import(module_name, components=None):
-    """Test importing a module and optionally specific components."""
+
+MODULE_IMPORTS = [
+    ("apt.core.registry", ["Provider", "Registry", "registry"]),
+    ("apt.core.config", ["APTConfig", "MultimodalConfig", "HardwareProfile"]),
+    ("apt.core.schedules", ["Schedule"]),
+    ("apt.core.providers.attention", ["AttentionProvider"]),
+    ("apt.core.providers.ffn", ["FFNProvider"]),
+    ("apt.core.providers.router", ["RouterProvider"]),
+    ("apt.core.providers.align", ["AlignProvider"]),
+    ("apt.core.providers.retrieval", ["RetrievalProvider"]),
+    ("apt.modeling.compose", ["ModelBuilder"]),
+    ("apt", ["registry", "Provider"]),
+]
+
+
+@pytest.mark.parametrize("module_name,components", MODULE_IMPORTS)
+def test_core_module_imports(module_name, components):
+    """Pytest wrapper to ensure modules import correctly."""
+    assert _import_module(module_name, components)
+
+
+def _import_module(module_name, components=None):
+    """Import a module and optionally specific components."""
     try:
         if components:
             exec(f"from {module_name} import {', '.join(components)}")
@@ -40,29 +62,18 @@ def main():
 
     # Test core imports
     print("\n1. Testing core modules...")
-    tests = [
-        ("apt.core.registry", ["Provider", "Registry", "registry"]),
-        ("apt.core.config", ["APTConfig", "MultimodalConfig", "HardwareProfile"]),
-        ("apt.core.schedules", ["Schedule"]),
-        ("apt.core.providers.attention", ["AttentionProvider"]),
-        ("apt.core.providers.ffn", ["FFNProvider"]),
-        ("apt.core.providers.router", ["RouterProvider"]),
-        ("apt.core.providers.align", ["AlignProvider"]),
-        ("apt.core.providers.retrieval", ["RetrievalProvider"]),
-    ]
-
-    for module_name, components in tests:
-        if not test_import(module_name, components):
+    for module_name, components in MODULE_IMPORTS[:8]:
+        if not _import_module(module_name, components):
             all_passed = False
 
     # Test modeling imports
     print("\n2. Testing modeling modules...")
-    if not test_import("apt.modeling.compose", ["ModelBuilder"]):
+    if not _import_module("apt.modeling.compose", ["ModelBuilder"]):
         all_passed = False
 
     # Test top-level imports
     print("\n3. Testing top-level imports...")
-    if not test_import("apt", ["registry", "Provider"]):
+    if not _import_module("apt", ["registry", "Provider"]):
         all_passed = False
 
     # Test basic functionality

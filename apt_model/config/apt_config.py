@@ -43,6 +43,7 @@ class APTConfig:
         attention_dropout=0.15,  # 注意力Dropout比率
         layer_norm_eps=1e-5,  # 层归一化epsilon
         gradient_clip=0.8,  # 梯度裁剪
+        residual_scale=1.0,  # 残差缩放系数
         # DBC-DAC相关参数
         use_dbc_dac=False,  # 是否使用DBC-DAC稳定
         rank_ratio_proj=0.1,  # DBC投影比例
@@ -88,6 +89,7 @@ class APTConfig:
         self.attention_dropout = attention_dropout  # 设置为0.15，增强注意力机制稳定性
         self.layer_norm_eps = layer_norm_eps  # 保持原值1e-5
         self.gradient_clip = gradient_clip    # 从1.0调整到0.8，适度梯度裁剪
+        self.residual_scale = residual_scale  # 残差连接缩放
         
         # DBC-DAC相关参数
         self.use_dbc_dac = use_dbc_dac
@@ -132,6 +134,7 @@ class APTConfig:
             'attention_dropout': self.attention_dropout,
             'layer_norm_eps': self.layer_norm_eps,
             'gradient_clip': self.gradient_clip,
+            'residual_scale': self.residual_scale,
             'use_dbc_dac': self.use_dbc_dac,
             'rank_ratio_proj': self.rank_ratio_proj,
             'rank_ratio_res': self.rank_ratio_res,
