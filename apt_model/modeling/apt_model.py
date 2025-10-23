@@ -311,6 +311,7 @@ class AutopoieticAttention(nn.Module):
         self.sr_ratio = sr_ratio
         self.use_autopoietic = use_autopoietic
         self.batch_first = batch_first
+        self.res_scale = 1.0
 
         # 查询、键、值的线性变换
         self.q_proj = nn.Linear(embed_dim, embed_dim)
@@ -713,6 +714,7 @@ class APTEncoderLayer(nn.Module):
         
         # 配置
         self.batch_first = batch_first
+        self.res_scale = 1.0
     
     def forward(
         self,
@@ -831,6 +833,7 @@ class APTDecoderLayer(nn.Module):
         
         # 配置
         self.batch_first = batch_first
+        self.res_scale = 1.0
     
     def forward(
         self,
