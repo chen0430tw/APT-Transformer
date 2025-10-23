@@ -159,3 +159,4 @@ wandb/
 .tensorboard/
 optuna_*.db
 optuna_results_*.txt
+apt_model/resources/gpt2_tokenizer/
