@@ -1,0 +1,145 @@
+# APT GPT-5 MoE Reasoning Profile
+# 使用MoE专家路由 + 双态数对齐 + 路由退火
+
+name: "gpt5_moe_reasoning"
+version: "1.0.0"
+description: "GPT-5规模模型，启用MoE和推理增强"
+
+# 启用的插件列表
+plugins:
+  - moe              # MoE专家路由
+  - align            # 双态数对齐
+  - routing          # 路由退火/容量调度
+  - voter            # 高熵投票
+
+# 模型配置
+model:
+  # 基础架构
+  d_model: 768
+  num_heads: 12
+  num_layers: 24
+  d_ff: 3072
+  vocab_size: 50257
+  max_seq_len: 2048
+
+  # 注意力机制选择（可替换为flash_v2）
+  attention_name: tva_default
+
+  # TVA参数
+  tva:
+    r: 4           # 压缩比
+    s: 1           # 自生成强度
+    tau: 0.18      # 温度参数
+
+  # MoE配置
+  moe:
+    enabled: true
+    experts: 64        # 专家数量
+    top_k: 2           # 每次激活的专家数
+    capacity: 1.25     # 容量因子
+    balance_loss: 0.01 # 负载均衡损失权重
+
+  # 双态数对齐
+  bistate:
+    alpha: 0.35        # 稳定态权重
+    beta: 0.20         # 对齐态权重
+    tau_align: 0.15    # 对齐温度
+
+  # 投票参数
+  voting:
+    threshold: 2.2     # 熵阈值
+    k: 3               # 投票样本数
+
+# 训练配置
+training:
+  batch_size: 32
+  max_epochs: 50
+  learning_rate: 3e-5
+  warmup_steps: 1500
+  weight_decay: 0.015
+  gradient_clip: 1.0
+
+  # 混合精度
+  mixed_precision: true
+  amp_level: "O1"
+
+  # 检查点
+  save_freq: 1
+  checkpoint_dir: "./checkpoints/gpt5_moe"
+
+# 课程化调度（核心创新） ⭐
+schedules:
+  # 插件启用时机
+  enable_moe_at_epoch: 2        # epoch=2启用MoE
+  enable_align_at_epoch: 3      # epoch=3启用对齐
+  enable_voter_at_epoch: 5      # epoch=5启用投票
+
+  # 参数退火
+  route_temp:
+    start: 1.5       # 初始路由温度（探索）
+    end: 0.8         # 最终路由温度（利用）
+    by: "epoch"      # 按epoch退火
+
+  moe_capacity:
+    start: 1.5       # 初始容量（宽松）
+    end: 1.1         # 最终容量（紧凑）
+    by: "epoch"
+
+  align_weight:
+    start: 0.0       # 对齐损失权重
+    end: 0.3
+    by: "step"
+    warmup: 5000
+
+  vote_threshold:
+    start: 3.0       # 初始投票阈值（少投票）
+    end: 2.0         # 最终阈值（多投票）
+    by: "epoch"
+
+# 数据配置
+data:
+  train_path: "./data/reasoning_train.jsonl"
+  val_path: "./data/reasoning_val.jsonl"
+
+  # 数据源（可通过插件扩展）
+  loader: "text_default"  # 或 "hf_datasets", "sql"
+
+  # 预处理
+  max_length: 2048
+  truncation: true
+  padding: "max_length"
+
+# 评估配置
+evaluation:
+  metrics:
+    - perplexity
+    - accuracy
+    - reasoning_quality
+
+  eval_freq: 500
+  save_best: true
+
+# 监控配置（可选插件）
+monitoring:
+  wandb:
+    enabled: false
+    project: "apt-gpt5-moe"
+    tags: ["moe", "reasoning", "gpt5"]
+
+  tensorboard:
+    enabled: true
+    log_dir: "./logs/gpt5_moe"
+
+# 硬件配置
+hardware:
+  device: "cuda"
+  num_gpus: 4
+  distributed: true
+  backend: "nccl"
+
+# 调试选项
+debug:
+  verbose: false
+  log_level: "INFO"
+  profile_memory: false
+  check_gradients: true
