@@ -3,10 +3,31 @@
 ## Quickstart
 ```bash
 pip install -r requirements.txt
+# ensure torch is available in the active environment
+python -c "import torch; print(torch.__version__)"
 python -m apt_model --help
 # smoke test (if pytest available)
 pytest -q tests/test_smoke.py
 ```
+
+> **Note**
+>
+> If the environment image does not bundle PyTorch, install it manually before
+> running the training demos:
+>
+> ```bash
+> pip install torch
+> ```
+
+> **Optional NLP extras**
+>
+> The text generation metrics and GPT-2 tokenizer rely on scikit-learn and
+> Hugging Face assets.  Run the helper script to install the dependencies and
+> cache the tokenizer locally (safe to skip in air-gapped CI runs):
+>
+> ```bash
+> python scripts/download_optional_assets.py
+> ```
 
 ## Layout
 ```
