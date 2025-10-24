@@ -19,17 +19,6 @@ from apt_model.utils.language_manager import LanguageManager
 from apt_model.utils.hardware_check import check_hardware_compatibility
 from apt_model.utils.cache_manager import CacheManager
 from apt_model.config.apt_config import APTConfig
-from apt_model.training.trainer import train_model
-from apt_model.data.external_data import train_with_external_data
-from apt_model.interactive.chat import chat_with_model
-from apt_model.evaluation.model_evaluator import evaluate_model
-from apt_model.utils.visualization import ModelVisualizer
-from apt_model.utils.time_estimator import TrainingTimeEstimator
-from apt_model.modeling.chinese_tokenizer_integration import (
-    get_appropriate_tokenizer, 
-    detect_language,
-    is_chinese_text
-)
 from apt_model.cli.commands import (
     run_visualize_command,
     run_estimate_command,
@@ -53,7 +42,6 @@ from apt_model.cli.commands import (
     run_evaluate_command,
     show_help
 )
-from apt_model.utils.common import _initialize_common
 
 def main():
     """主函数"""
