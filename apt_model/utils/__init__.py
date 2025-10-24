@@ -12,8 +12,18 @@ from .error_handler import EnhancedErrorHandler
 from .cache_manager import CacheManager
 from .language_manager import LanguageManager
 from .hardware_check import check_hardware_compatibility
-from .visualization import ModelVisualizer
-from .time_estimator import TrainingTimeEstimator
+# Optional utilities that rely on heavy visualization dependencies may not be
+# available in lightweight environments. Import them lazily so the rest of the
+# training stack can function without matplotlib/plotly.
+try:
+    from .visualization import ModelVisualizer
+except Exception:  # pragma: no cover - best effort fallback for optional deps
+    ModelVisualizer = None
+
+try:
+    from .time_estimator import TrainingTimeEstimator
+except Exception:  # pragma: no cover - best effort fallback for optional deps
+    TrainingTimeEstimator = None
 
 # Set up common devices and seed utilities
 # These are sometimes imported from the root but defined here
