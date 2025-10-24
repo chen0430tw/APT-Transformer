@@ -5,9 +5,36 @@ Logging utilities for the APT Model training system.
 """
 
 import os
+import io
 import logging
 from typing import Optional
 import sys
+
+
+def _create_stream_handler(no_encoding: bool) -> logging.StreamHandler:
+    """Create a stream handler that is resilient to missing fileno."""
+
+    if no_encoding:
+        return logging.StreamHandler(sys.stdout)
+
+    stream = None
+
+    if hasattr(sys.stdout, "fileno"):
+        try:
+            stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+        except (OSError, ValueError):
+            stream = None
+
+    if stream is None and hasattr(sys.stdout, "buffer"):
+        try:
+            stream = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+        except Exception:
+            stream = None
+
+    if stream is None:
+        stream = sys.stdout
+
+    return logging.StreamHandler(stream)
 
 def setup_logging(log_file: Optional[str] = None, level: int = logging.INFO) -> logging.Logger:
     """
@@ -29,14 +56,7 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.INFO) -> 
     no_encoding = os.environ.get("APT_NO_STDOUT_ENCODING", "0") == "1"
     
     # 创建控制台处理器（根据环境变量决定是否指定UTF-8编码）
-    if no_encoding:
-        # 不指定编码，避免Windows中文编码问题
-        console_handler = logging.StreamHandler(sys.stdout)
-    else:
-        # 使用UTF-8编码
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+    console_handler = _create_stream_handler(no_encoding)
     
     console_handler.setLevel(level)
     
@@ -110,14 +130,7 @@ def setup_colored_logging(log_file: Optional[str] = None, level: int = logging.I
     no_encoding = os.environ.get("APT_NO_STDOUT_ENCODING", "0") == "1"
     
     # 创建控制台处理器（根据环境变量决定是否指定UTF-8编码）
-    if no_encoding:
-        # 不指定编码，避免Windows中文编码问题
-        console_handler = logging.StreamHandler(sys.stdout)
-    else:
-        # 使用UTF-8编码
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+    console_handler = _create_stream_handler(no_encoding)
         
     console_handler.setLevel(level)
     
@@ -162,14 +175,7 @@ def get_progress_logger(name: str = 'progress', log_file: Optional[str] = None) 
     formatter = logging.Formatter('%(message)s')
     
     # 创建控制台处理器（根据环境变量决定是否指定UTF-8编码）
-    if no_encoding:
-        # 不指定编码，避免Windows中文编码问题
-        console_handler = logging.StreamHandler(sys.stdout)
-    else:
-        # 使用UTF-8编码
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+    console_handler = _create_stream_handler(no_encoding)
         
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
