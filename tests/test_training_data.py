@@ -1,18 +1,24 @@
 """Tests covering the local training datasets and tokeniser selection."""
 
-from apt_model.training.trainer import get_training_texts
+from apt_model.training import trainer
 from apt_model.modeling.basic_tokenizer import BasicEnglishTokenizer
 
 
 def test_get_training_texts_returns_builtin_prompts():
-    texts = get_training_texts()
+    texts = trainer.get_training_texts()
 
-    assert "Hello, how are you?" in texts
-    assert any("人工智能" in text for text in texts)
-    # 预设的对话样本应该始终可用，例如派蒙相关的台词
-    assert any("派蒙" in text for text in texts)
+    assert texts, "默认训练数据不应为空"
     # 不应出现重复，去重逻辑应生效
     assert len(texts) == len(set(texts))
+
+
+def test_get_training_texts_falls_back_to_builtin(monkeypatch):
+    monkeypatch.setattr(trainer, "_load_training_texts_from_files", lambda base_dir: [])
+
+    texts = trainer.get_training_texts()
+
+    assert "Hello, how are you?" in texts
+    assert any("派蒙" in text for text in texts)
 
 
 def test_basic_english_tokenizer_encodes_from_local_vocab():

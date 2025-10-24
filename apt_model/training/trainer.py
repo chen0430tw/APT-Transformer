@@ -4,9 +4,8 @@
 修改APT模型训练器以支持中文分词
 """
 
-# NOTE: 训练流程需要遵循项目作者的要求，默认只使用 trainer.py 内置的训练文本
-#       而不是读取仓库里额外提供的 txt 数据集。因此不再导入和使用与文件读取相关
-#       的标准库（例如 os、re），避免误用。
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 import traceback
@@ -25,6 +24,8 @@ from apt_model.modeling.chinese_tokenizer_integration import (
     save_tokenizer,
     is_chinese_text
 )
+
+_DATASET_FILENAMES = ("train.txt", "zh_train.txt")
 
 _FALLBACK_TRAINING_TEXTS = [
         # 基本对话
@@ -158,16 +159,44 @@ _FALLBACK_TRAINING_TEXTS = [
 ]
 
 
-def get_training_texts():
-    """Return the builtin training prompts defined in ``trainer.py``.
+def _load_training_texts_from_files(base_dir: Path):
+    """Load training samples from bundled text files if they exist."""
 
-    项目维护者在 ``trainer.py`` 中直接写入了一系列中英文训练样本，
-    并明确要求训练流程使用这些内置的题目而不是仓库附带的 ``train.txt``
-    或 ``zh_train.txt`` 文件。为了保证行为符合这一约束，该函数仅返回
-    内置列表，按原始顺序去重后供训练使用。
+    aggregated = []
+
+    for filename in _DATASET_FILENAMES:
+        dataset_path = base_dir / filename
+
+        if not dataset_path.exists():
+            continue
+
+        with dataset_path.open("r", encoding="utf-8") as handle:
+            file_texts = [line.strip() for line in handle if line.strip()]
+
+        if file_texts:
+            aggregated.extend(file_texts)
+
+    return aggregated
+
+
+def get_training_texts():
+    """Return the training prompts for the default offline curriculum.
+
+    项目维护者在 ``trainer.py`` 中写入了一系列中英文训练样本，同时也在
+    仓库中提供了 ``train.txt``/``zh_train.txt`` 等补充数据。训练命令在未
+    指定自定义数据路径时会优先加载这些文件，若不存在或为空则回退到
+    trainer 内置的题目，实现“开箱即用”的默认体验。
     """
 
-    # 去重但保持顺序，避免重复样本对训练造成不必要的偏倚
+    base_dir = Path(__file__).resolve().parents[1]
+    file_texts = _load_training_texts_from_files(base_dir)
+
+    if file_texts:
+        deduped = list(dict.fromkeys(file_texts))
+        print(f"加载本地训练数据，共 {len(deduped)} 条文本。")
+        return deduped
+
+    print("未找到有效的本地训练数据，使用 trainer.py 内置样本。")
     deduped_texts = list(dict.fromkeys(_FALLBACK_TRAINING_TEXTS))
 
     if not deduped_texts:
