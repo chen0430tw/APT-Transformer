@@ -10,9 +10,11 @@ tokeniser is not possible.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
-from typing import Iterable, List, Sequence
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence
 
 import torch
 
@@ -92,6 +94,11 @@ class BasicEnglishTokenizer:
     def vocab_size(self) -> int:
         return len(self._token_to_id)
 
+    def get_vocab(self) -> Dict[str, int]:
+        """Return a copy of the internal vocabulary mapping."""
+
+        return dict(self._token_to_id)
+
     # ------------------------------------------------------------------
     # Core API used by the training loop
     # ------------------------------------------------------------------
@@ -155,6 +162,54 @@ class BasicEnglishTokenizer:
             text = text.lower()
         tokens = self._TOKEN_RE.findall(text)
         return tokens or [self.unk_token]
+
+
+    # ------------------------------------------------------------------
+    # Serialization helpers
+    # ------------------------------------------------------------------
+    def save_pretrained(self, save_directory: str) -> None:
+        """Persist the tokenizer to ``save_directory``.
+
+        The format mirrors the structure used by Hugging Face tokenisers so
+        that higher level utilities (e.g. checkpoint management) can treat
+        this tokenizer uniformly.
+        """
+
+        path = Path(save_directory)
+        path.mkdir(parents=True, exist_ok=True)
+
+        ordered_tokens = [
+            token for token, _ in sorted(self._token_to_id.items(), key=lambda item: item[1])
+        ]
+        config = {
+            "type": "basic",
+            "lowercase": self.lowercase,
+            "tokens": ordered_tokens,
+        }
+
+        with (path / "tokenizer_config.json").open("w", encoding="utf-8") as handle:
+            json.dump(config, handle, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def from_pretrained(cls, save_directory: str) -> "BasicEnglishTokenizer":
+        """Load a previously saved tokenizer."""
+
+        config_path = Path(save_directory) / "tokenizer_config.json"
+        if not config_path.exists():
+            raise FileNotFoundError(f"未找到分词器配置文件: {config_path}")
+
+        with config_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        tokens = payload.get("tokens")
+        if not tokens:
+            raise ValueError("basic 分词器配置缺少 tokens 列表")
+
+        instance = cls.__new__(cls)
+        instance.lowercase = payload.get("lowercase", True)
+        instance._token_to_id = {token: idx for idx, token in enumerate(tokens)}
+        instance._id_to_token = {idx: token for token, idx in instance._token_to_id.items()}
+        return instance
 
 
 __all__ = ["BasicEnglishTokenizer"]

@@ -108,6 +108,8 @@ def save_tokenizer(tokenizer, path):
                     "vocab_size": tokenizer.vocab_size,
                     "special_tokens": tokenizer.special_tokens
                 }, f, ensure_ascii=False, indent=2)
+        elif isinstance(tokenizer, BasicEnglishTokenizer):
+            tokenizer.save_pretrained(path)
         elif hasattr(tokenizer, 'save_pretrained'):
             tokenizer.save_pretrained(path)
         else:
@@ -140,7 +142,7 @@ def load_tokenizer(path):
             import json
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                
+
             if config.get("type") == "chinese":
                 # 加载中文分词器
                 vocab_file = os.path.join(path, "vocab.json")
@@ -148,9 +150,20 @@ def load_tokenizer(path):
                 tokenizer = ChineseTokenizer(vocab_file=vocab_file, mode=mode)
                 logger.info(f"已加载中文分词器，模式: {mode}, 词汇表大小: {tokenizer.vocab_size}")
                 return tokenizer
-        
-        logger.info("未找到兼容配置，回退到基础英语分词器")
-        return BasicEnglishTokenizer()
+            if config.get("type") == "basic":
+                tokenizer = BasicEnglishTokenizer.from_pretrained(path)
+                logger.info(f"已加载基础英语分词器，词汇表大小: {tokenizer.vocab_size}")
+                return tokenizer
+
+        try:
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
+            logger.info(f"已加载 Hugging Face 分词器: {tokenizer.__class__.__name__}")
+            return tokenizer
+        except Exception:
+            logger.info("未找到兼容配置，回退到基础英语分词器")
+            return BasicEnglishTokenizer()
     except Exception as e:
         logger.error(f"加载分词器失败: {e}")
         return None

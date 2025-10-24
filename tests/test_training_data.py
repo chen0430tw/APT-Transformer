@@ -2,6 +2,10 @@
 
 from apt_model.training import trainer
 from apt_model.modeling.basic_tokenizer import BasicEnglishTokenizer
+from apt_model.modeling.chinese_tokenizer_integration import (
+    load_tokenizer,
+    save_tokenizer,
+)
 
 
 def test_get_training_texts_returns_builtin_prompts():
@@ -40,3 +44,16 @@ def test_basic_english_tokenizer_exposes_special_token_ids():
     assert tokenizer.bos_token_id not in {tokenizer.pad_token_id, tokenizer.eos_token_id}
     decoded = tokenizer.decode([tokenizer.bos_token_id, tokenizer.eos_token_id])
     assert decoded == ""
+
+
+def test_basic_tokenizer_can_be_serialized(tmp_path):
+    tokenizer = BasicEnglishTokenizer(texts=["Hello there", "General Kenobi"], vocab_size=32)
+
+    target_dir = tmp_path / "tokenizer"
+    saved = save_tokenizer(tokenizer, target_dir)
+    assert saved, "保存基础分词器时应返回 True"
+
+    reloaded = load_tokenizer(target_dir)
+    assert isinstance(reloaded, BasicEnglishTokenizer)
+    assert reloaded.get_vocab() == tokenizer.get_vocab()
+    assert reloaded.lowercase == tokenizer.lowercase
