@@ -22,6 +22,17 @@ from apt_model.core.system import (
     _initialize_common,
 )
 
+from apt_model.core.hardware import (
+    check_hardware_compatibility,
+    get_hardware_profile,
+    HardwareProfiler,
+)
+
+from apt_model.core.resources import (
+    ResourceMonitor,
+    CacheManager,
+)
+
 # ============================================================================
 # 从infrastructure模块导入（向后兼容）
 # ============================================================================
@@ -31,23 +42,20 @@ from apt_model.infrastructure.errors import ErrorHandler
 # ============================================================================
 # 保留的utils模块
 # ============================================================================
-from .resource_monitor import ResourceMonitor
-from .cache_manager import CacheManager
 from .language_manager import LanguageManager
-from .hardware_check import check_hardware_compatibility
 from .visualization import ModelVisualizer
 from .time_estimator import TrainingTimeEstimator
 
 # ============================================================================
 # 版本信息
 # ============================================================================
-__version__ = '0.2.0'  # 版本更新以反映重构
+__version__ = '0.3.0'  # 版本更新以反映硬件和资源整合
 
 # ============================================================================
 # 公共API（向后兼容）
 # ============================================================================
 __all__ = [
-    # 从core模块导入
+    # 从core.system模块导入
     'set_seed',
     'get_device',
     'memory_cleanup',
@@ -55,15 +63,21 @@ __all__ = [
     'SystemInitializer',
     '_initialize_common',
 
+    # 从core.hardware模块导入
+    'check_hardware_compatibility',
+    'get_hardware_profile',
+    'HardwareProfiler',
+
+    # 从core.resources模块导入
+    'ResourceMonitor',
+    'CacheManager',
+
     # 从infrastructure模块导入
     'setup_logging',
     'ErrorHandler',
 
     # 保留的utils模块
-    'ResourceMonitor',
-    'CacheManager',
     'LanguageManager',
-    'check_hardware_compatibility',
     'ModelVisualizer',
     'TrainingTimeEstimator',
 ]
