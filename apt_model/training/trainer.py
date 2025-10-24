@@ -4,8 +4,7 @@
 修改APT模型训练器以支持中文分词
 """
 
-from pathlib import Path
-
+import os
 import torch
 import torch.nn.functional as F
 import traceback
@@ -17,17 +16,39 @@ from apt_model.utils import set_seed
 from apt_model.utils import get_device, device
 from apt_model.config.apt_config import APTConfig
 from apt_model.modeling.apt_model import APTModel, APTLargeModel
+from apt_model.generation.generator import generate_natural_text
+from apt_model.generation.evaluator import evaluate_text_quality
 
 # 导入中文分词器相关函数
 from apt_model.modeling.chinese_tokenizer_integration import (
-    get_appropriate_tokenizer,
+    get_appropriate_tokenizer, 
     save_tokenizer,
     is_chinese_text
 )
 
-_DATASET_FILENAMES = ("train.txt", "zh_train.txt")
-
-_FALLBACK_TRAINING_TEXTS = [
+def get_training_texts():
+    """
+    获取训练文本数据。如果在项目根目录下存在 "train.txt" 文件，则读取文件，否则返回内置预设数据。
+    """
+    import os
+    # 获取项目根目录（假设代码文件在项目子目录中）
+    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    train_file = os.path.join(script_dir, "train.txt")
+    
+    print("检查训练数据文件路径：", train_file)
+    
+    if os.path.exists(train_file):
+        with open(train_file, "r", encoding="utf-8") as f:
+            texts = [line.strip() for line in f if line.strip()]
+        if texts:
+            return texts
+        else:
+            print("训练数据文件 'train.txt' 为空，使用预设训练数据。")
+    else:
+        print("未找到训练数据文件 'train.txt'，使用预设训练数据。")
+    
+    # 预设训练数据集
+    return [
         # 基本对话
         "Hello, how are you?",
         "I'm doing well, thank you for asking. How about you?",
@@ -156,71 +177,13 @@ _FALLBACK_TRAINING_TEXTS = [
         "数据科学结合了统计学、编程和领域知识来提取数据中的价值。",
         "机器学习算法可以分为监督学习、无监督学习和强化学习。",
         "神经网络是受人脑结构启发而设计的算法。"
-]
-
-
-def _load_training_texts_from_files(base_dir: Path):
-    """Load training samples from bundled text files if they exist."""
-
-    aggregated = []
-
-    for filename in _DATASET_FILENAMES:
-        dataset_path = base_dir / filename
-
-        if not dataset_path.exists():
-            continue
-
-        with dataset_path.open("r", encoding="utf-8") as handle:
-            file_texts = [line.strip() for line in handle if line.strip()]
-
-        if file_texts:
-            aggregated.extend(file_texts)
-
-    return aggregated
-
-
-def get_training_texts():
-    """Return the training prompts for the default offline curriculum.
-
-    项目维护者在 ``trainer.py`` 中写入了一系列中英文训练样本，同时也在
-    仓库中提供了 ``train.txt``/``zh_train.txt`` 等补充数据。训练命令在未
-    指定自定义数据路径时会优先加载这些文件，若不存在或为空则回退到
-    trainer 内置的题目，实现“开箱即用”的默认体验。
-    """
-
-    base_dir = Path(__file__).resolve().parents[1]
-    file_texts = _load_training_texts_from_files(base_dir)
-
-    if file_texts:
-        deduped = list(dict.fromkeys(file_texts))
-        print(f"加载本地训练数据，共 {len(deduped)} 条文本。")
-        return deduped
-
-    print("未找到有效的本地训练数据，使用 trainer.py 内置样本。")
-    deduped_texts = list(dict.fromkeys(_FALLBACK_TRAINING_TEXTS))
-
-    if not deduped_texts:
-        raise RuntimeError("内置训练文本为空，请检查 _FALLBACK_TRAINING_TEXTS 定义。")
-
-    return deduped_texts
-
-def _generate_natural_text(*args, **kwargs):
-    from apt_model.generation.generator import generate_natural_text
-
-    return generate_natural_text(*args, **kwargs)
-
-
-def _evaluate_text_quality(text):
-    from apt_model.generation.evaluator import evaluate_text_quality
-
-    return evaluate_text_quality(text)
-
+    ]
 
 # =============================================================================
 # 主训练函数
 # =============================================================================
-def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model",
-                logger=None, resource_monitor=None, multimodal_config=None,
+def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model", 
+                logger=None, resource_monitor=None, multimodal_config=None, 
                 tokenizer_type=None, language=None, texts=None, tokenizer=None):
     """训练模型的主函数"""
     # 设置随机种子
@@ -236,15 +199,9 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         train_texts = get_training_texts()
     else:
         train_texts = texts
-
+    
     print(f"训练数据集大小: {len(train_texts)} 条文本")
-
-    preview_count = min(5, len(train_texts))
-    if preview_count:
-        print("示例训练文本：")
-        for idx, sample in enumerate(train_texts[:preview_count], start=1):
-            print(f"  {idx}. {sample}")
-
+    
     # 如果数据为空，则报错
     if len(train_texts) == 0:
         raise ValueError("训练数据为空，请确保数据文件存在或内置数据正确加载。")
@@ -315,11 +272,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         epsilon=2.0,
         alpha=0.001,
         beta=0.001,
-        base_lr=learning_rate,
-        pad_token_id=getattr(tokenizer, "pad_token_id", 0),
-        bos_token_id=getattr(tokenizer, "bos_token_id", getattr(tokenizer, "eos_token_id", 0)),
-        eos_token_id=getattr(tokenizer, "eos_token_id", 0),
-        unk_token_id=getattr(tokenizer, "unk_token_id", 3),
+        base_lr=learning_rate
     )
     
     print("初始化模型...")
@@ -362,8 +315,6 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     global_step = 0
     train_losses = []
     best_quality_score = 0.0
-    correct_tokens = 0
-    total_tokens = 0
     
     print(f"开始训练，总共 {epochs} 轮...")
     
@@ -436,15 +387,10 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                     try:
                         loss = F.cross_entropy(
                             shift_logits.view(-1, shift_logits.size(-1)),
-                            shift_labels.view(-1),
+                            shift_labels.view(-1), 
                             ignore_index=tokenizer.pad_token_id,
                             label_smoothing=0.1
                         )
-                        with torch.no_grad():
-                            predictions = shift_logits.argmax(dim=-1)
-                            valid_mask = shift_labels != tokenizer.pad_token_id
-                            correct_tokens += (predictions.eq(shift_labels) & valid_mask).sum().item()
-                            total_tokens += valid_mask.sum().item()
                         # 根据累积步骤缩放损失
                         loss = loss / accumulation_steps
                     except Exception as e:
@@ -514,12 +460,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                 continue
         
         avg_loss = total_loss / max(1, len(dataloader))
-        epoch_accuracy = (correct_tokens / total_tokens * 100.0) if total_tokens else 0.0
-        print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}, 训练集准确率: {epoch_accuracy:.2f}%")
-
-        # 重置准确率统计，避免跨轮次累计
-        correct_tokens = 0
-        total_tokens = 0
+        print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}")
         
         if use_tensorboard:
             writer.add_scalar('Loss/epoch', avg_loss, epoch)
@@ -579,12 +520,12 @@ def _test_generation_after_epoch(model, tokenizer, logger=None, language="en"):
     gen_texts = []
     for prompt in test_prompts:
         with torch.no_grad():
-            gen_text, _, _, _ = _generate_natural_text(model, tokenizer, prompt, max_steps=15)
+            gen_text, _, _, _ = generate_natural_text(model, tokenizer, prompt, max_steps=15)
             print(f"提示: '{prompt}'")
             print(f"生成: '{gen_text}'")
             print("-" * 30)
             gen_texts.append(gen_text)
-    avg_quality = sum(_evaluate_text_quality(text)[0] for text in gen_texts) / len(gen_texts)
+    avg_quality = sum(evaluate_text_quality(text)[0] for text in gen_texts) / len(gen_texts)
     print(f"本轮生成文本平均质量: {avg_quality:.2f}/100")
     if avg_quality < 40:
         print("\n安柏：训练...还不够...")
@@ -637,15 +578,15 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
     for prompt in test_prompts:
         print(f"\n提示: '{prompt}'")
         with torch.no_grad():
-            untrained_text, _, _, _ = _generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
-            untrained_score, untrained_feedback = _evaluate_text_quality(untrained_text)
+            untrained_text, _, _, _ = generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
+            untrained_score, untrained_feedback = evaluate_text_quality(untrained_text)
             untrained_scores.append(untrained_score)
         print(f"未训练模型: '{untrained_text}'")
         print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
         
         with torch.no_grad():
-            trained_text, _, _, _ = _generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
-            trained_score, trained_feedback = _evaluate_text_quality(trained_text)
+            trained_text, _, _, _ = generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
+            trained_score, trained_feedback = evaluate_text_quality(trained_text)
             trained_scores.append(trained_score)
         print(f"训练后模型: '{trained_text}'")
         print(f"质量评分: {trained_score}/100 - {trained_feedback}")

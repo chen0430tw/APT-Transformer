@@ -13,7 +13,9 @@ import math
 import logging
 from typing import Tuple, Dict, List, Optional, Union, Any
 
-import importlib
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger('apt_model.generation.evaluator')
 
@@ -54,11 +56,12 @@ class TextQualityEvaluator:
         if not self.use_external_metrics:
             return
             
-        if importlib.util.find_spec("sklearn") is None:
+        try:
+            # Check if sklearn is available for TF-IDF and cosine similarity
+            import sklearn
+            self.has_nlp_metrics = True
+        except ImportError:
             logger.warning("sklearn not available, some evaluation metrics will be disabled")
-            return
-
-        self.has_nlp_metrics = True
     
     def evaluate_text_quality(self, text: str, reference: Optional[str] = None, context: Optional[str] = None) -> Tuple[float, str]:
         """
@@ -228,30 +231,28 @@ class TextQualityEvaluator:
         """
         # If we have NLP metrics and both text and reference
         if self.has_nlp_metrics and reference:
-            vectorizer_module = importlib.import_module("sklearn.feature_extraction.text")
-            metrics_module = importlib.import_module("sklearn.metrics.pairwise")
-
             try:
                 # Use TF-IDF and cosine similarity
-                vectorizer = vectorizer_module.TfidfVectorizer(stop_words='english')
+                vectorizer = TfidfVectorizer(stop_words='english')
                 tfidf_matrix = vectorizer.fit_transform([reference, text])
-                similarity = metrics_module.cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-
+                similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+                
                 # Scale similarity to 0-100
                 relevance_score = min(100.0, similarity * 100.0)
-
+                
                 # Apply length penalty/bonus
                 ref_len = len(reference.split())
                 text_len = len(text.split())
-
+                
                 length_ratio = min(text_len / max(1, ref_len), max(1, ref_len) / max(1, text_len))
                 length_factor = (length_ratio - 0.5) * 20  # Bonus for length similarity
-
+                
                 relevance_score = min(100.0, max(0.0, relevance_score + length_factor))
-
+                
                 return relevance_score
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(f"Error computing relevance score: {exc}")
+            except Exception as e:
+                logger.warning(f"Error computing relevance score: {e}")
+                pass
         
         # Context-based relevance (simplified)
         if context:

@@ -31,7 +31,6 @@ class APTConfig:
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
-        unk_token_id=3,
         # 注意力机制参数
         activation="gelu",  # 激活函数
         use_autopoietic=True,  # 是否使用自生成机制
@@ -44,7 +43,6 @@ class APTConfig:
         attention_dropout=0.15,  # 注意力Dropout比率
         layer_norm_eps=1e-5,  # 层归一化epsilon
         gradient_clip=0.8,  # 梯度裁剪
-        residual_scale=1.0,  # 残差缩放系数
         # DBC-DAC相关参数
         use_dbc_dac=False,  # 是否使用DBC-DAC稳定
         rank_ratio_proj=0.1,  # DBC投影比例
@@ -76,7 +74,6 @@ class APTConfig:
         self.pad_token_id = pad_token_id
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
-        self.unk_token_id = unk_token_id
         
         # 注意力机制参数 - 平衡自生成机制
         self.activation = activation  # 激活函数
@@ -91,7 +88,6 @@ class APTConfig:
         self.attention_dropout = attention_dropout  # 设置为0.15，增强注意力机制稳定性
         self.layer_norm_eps = layer_norm_eps  # 保持原值1e-5
         self.gradient_clip = gradient_clip    # 从1.0调整到0.8，适度梯度裁剪
-        self.residual_scale = residual_scale  # 残差连接缩放
         
         # DBC-DAC相关参数
         self.use_dbc_dac = use_dbc_dac
@@ -126,7 +122,6 @@ class APTConfig:
             'pad_token_id': self.pad_token_id,
             'bos_token_id': self.bos_token_id,
             'eos_token_id': self.eos_token_id,
-            'unk_token_id': self.unk_token_id,
             'activation': self.activation,
             'use_autopoietic': self.use_autopoietic,
             'sr_ratio': self.sr_ratio,
@@ -137,7 +132,6 @@ class APTConfig:
             'attention_dropout': self.attention_dropout,
             'layer_norm_eps': self.layer_norm_eps,
             'gradient_clip': self.gradient_clip,
-            'residual_scale': self.residual_scale,
             'use_dbc_dac': self.use_dbc_dac,
             'rank_ratio_proj': self.rank_ratio_proj,
             'rank_ratio_res': self.rank_ratio_res,

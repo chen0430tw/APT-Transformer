@@ -297,8 +297,7 @@ class AutopoieticAttention(nn.Module):
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
-        dbc_iterations: int = 1,
-        res_scale: float = 1.0,
+        dbc_iterations: int = 1
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -312,7 +311,7 @@ class AutopoieticAttention(nn.Module):
         self.sr_ratio = sr_ratio
         self.use_autopoietic = use_autopoietic
         self.batch_first = batch_first
-        self.res_scale = res_scale
+        self.res_scale = 1.0
 
         # 查询、键、值的线性变换
         self.q_proj = nn.Linear(embed_dim, embed_dim)
@@ -677,8 +676,7 @@ class APTEncoderLayer(nn.Module):
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
-        dbc_iterations: int = 1,
-        res_scale: float = 1.0,
+        dbc_iterations: int = 1
     ):
         super().__init__()
         
@@ -697,8 +695,7 @@ class APTEncoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations,
-            res_scale=res_scale,
+            dbc_iterations=dbc_iterations
         )
         
         # 前馈网络
@@ -714,10 +711,10 @@ class APTEncoderLayer(nn.Module):
         
         # 激活函数
         self.activation = F.gelu if activation == "gelu" else F.relu
-        
+
         # 配置
         self.batch_first = batch_first
-        self.res_scale = res_scale
+        self.res_scale = 1.0
     
     def forward(
         self,
@@ -778,8 +775,7 @@ class APTDecoderLayer(nn.Module):
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
-        dbc_iterations: int = 1,
-        res_scale: float = 1.0,
+        dbc_iterations: int = 1
     ):
         super().__init__()
         
@@ -798,10 +794,9 @@ class APTDecoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations,
-            res_scale=res_scale,
+            dbc_iterations=dbc_iterations
         )
-
+        
         # 编码器-解码器注意力层
         self.multihead_attn = AutopoieticAttention(
             embed_dim=d_model,
@@ -817,8 +812,7 @@ class APTDecoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations,
-            res_scale=res_scale,
+            dbc_iterations=dbc_iterations
         )
         
         # 前馈网络
@@ -839,7 +833,7 @@ class APTDecoderLayer(nn.Module):
         
         # 配置
         self.batch_first = batch_first
-        self.res_scale = res_scale
+        self.res_scale = 1.0
     
     def forward(
         self,
@@ -1039,8 +1033,7 @@ class APTModel(nn.Module):
                     rank_ratio_proj=config.rank_ratio_proj,
                     rank_ratio_res=config.rank_ratio_res,
                     dbc_threshold=config.dbc_threshold,
-                    dbc_iterations=config.dbc_iterations,
-                    res_scale=getattr(config, "residual_scale", 1.0),
+                    dbc_iterations=config.dbc_iterations
                 )
             )
         
@@ -1064,8 +1057,7 @@ class APTModel(nn.Module):
                     rank_ratio_proj=config.rank_ratio_proj,
                     rank_ratio_res=config.rank_ratio_res,
                     dbc_threshold=config.dbc_threshold,
-                    dbc_iterations=config.dbc_iterations,
-                    res_scale=getattr(config, "residual_scale", 1.0),
+                    dbc_iterations=config.dbc_iterations
                 )
             )
         
@@ -1373,7 +1365,7 @@ class APTModel(nn.Module):
 
                         if 0 < top_p < 1.0:
                             sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                            sorted_probs = F.softmax(sorted_logits, dim=-1)
+                            sorted_probs = torch.nn.functional.softmax(sorted_logits, dim=-1)
                             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
                             sorted_indices_to_remove = cumulative_probs > top_p
@@ -1384,7 +1376,7 @@ class APTModel(nn.Module):
                                 remove_indices = sorted_indices[i][sorted_indices_to_remove[i]]
                                 logits[i, remove_indices] = float("-inf")
 
-                        probs = F.softmax(logits, dim=-1)
+                        probs = torch.nn.functional.softmax(logits, dim=-1)
                         probs = torch.nan_to_num(probs, nan=0.0)
 
                         prob_sums = probs.sum(dim=-1, keepdim=True)
@@ -1411,6 +1403,7 @@ class APTModel(nn.Module):
                 self.train()
 
         return generated
+
 
 
 class APTLargeModel(APTModel):

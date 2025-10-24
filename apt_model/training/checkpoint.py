@@ -2,16 +2,10 @@
 # -*- coding: utf-8 -*-
 """Checkpoint management for APT model"""
 
-import logging
 import os
 import json
 import torch
 from datetime import datetime
-
-from apt_model.modeling.chinese_tokenizer_integration import (
-    load_tokenizer as load_integrated_tokenizer,
-    save_tokenizer as save_integrated_tokenizer,
-)
 
 def save_model(model, tokenizer, path, config=None):
     """
@@ -31,8 +25,7 @@ def save_model(model, tokenizer, path, config=None):
     # 保存分词器
     tokenizer_path = os.path.join(path, "tokenizer")
     os.makedirs(tokenizer_path, exist_ok=True)
-    if not save_integrated_tokenizer(tokenizer, tokenizer_path):
-        raise RuntimeError("保存分词器失败，无法写入检查点。")
+    tokenizer.save_pretrained(tokenizer_path)
     
     # 保存配置
     if config:
@@ -50,6 +43,7 @@ def load_model(path, device=None):
     返回:
         tuple: (model, tokenizer, config)
     """
+    from transformers import GPT2Tokenizer
     from apt_model.config.apt_config import APTConfig
     from apt_model.modeling.apt_model import APTLargeModel
     from apt_model.utils import get_device
@@ -74,12 +68,10 @@ def load_model(path, device=None):
     
     # 加载分词器
     tokenizer_path = os.path.join(path, "tokenizer")
-    tokenizer = load_integrated_tokenizer(tokenizer_path)
-    if tokenizer is None:
-        raise RuntimeError("无法加载分词器，请检查模型目录是否完整。")
-
-    if hasattr(tokenizer, "pad_token_id") and getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token_id = getattr(tokenizer, "eos_token_id", 0)
+    tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_path)
+    
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     
     return model, tokenizer, config
 
@@ -191,8 +183,7 @@ class CheckpointManager:
         if tokenizer:
             tokenizer_path = os.path.join(self.save_dir, "tokenizer")
             os.makedirs(tokenizer_path, exist_ok=True)
-            if not save_integrated_tokenizer(tokenizer, tokenizer_path):
-                logging.getLogger('apt_model.tokenizer').warning("保存分词器失败，跳过检查点中的分词器。")
+            tokenizer.save_pretrained(tokenizer_path)
         
         # 记录日志
         if self.logger:

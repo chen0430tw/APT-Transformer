@@ -23,6 +23,9 @@ from apt_model.utils.cache_manager import CacheManager
 from apt_model.config.apt_config import APTConfig
 from apt_model.training.trainer import train_model
 from apt_model.data.external_data import train_with_external_data, load_external_data
+from apt_model.interactive.chat import chat_with_model
+from apt_model.evaluation.model_evaluator import evaluate_model
+from apt_model.utils.visualization import ModelVisualizer
 from apt_model.utils.time_estimator import TrainingTimeEstimator
 from apt_model.utils import get_device, set_seed
 from apt_model.utils.common import _initialize_common
@@ -68,8 +71,6 @@ def run_train_command(args):
         
         # 创建可视化（如果请求）
         if args.create_plots and model:
-            from apt_model.utils.visualization import ModelVisualizer
-
             visualizer = ModelVisualizer(logger=logger)
             history = {'loss': []}  # 请填充真实的loss历史数据
             # 如果指定了输出目录，则传递到CacheManager
@@ -250,8 +251,6 @@ def run_evaluate_command(args):
     for model_path in args.model_path:
         logger.info(f"Evaluating model: {model_path}")
         try:
-            from apt_model.evaluation.model_evaluator import evaluate_model
-
             evaluation_results = evaluate_model(
                 model_path=model_path,
                 output_dir=args.output_dir,

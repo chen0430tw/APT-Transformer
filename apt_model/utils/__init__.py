@@ -12,24 +12,7 @@ from .error_handler import EnhancedErrorHandler
 from .cache_manager import CacheManager
 from .language_manager import LanguageManager
 from .hardware_check import check_hardware_compatibility
-try:
-    from .visualization import ModelVisualizer
-    _visualization_import_error = None
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised in environments without matplotlib
-    if exc.name == "matplotlib":
-        _visualization_import_error = exc
-
-        class ModelVisualizer:  # type: ignore[misc]
-            """Fallback that raises a helpful error when matplotlib is unavailable."""
-
-            def __init__(self, *_, **__):
-                raise ModuleNotFoundError(
-                    "ModelVisualizer requires the optional dependency 'matplotlib'. "
-                    "Install it to enable visualization utilities."
-                ) from exc
-
-    else:  # pragma: no cover - re-raise unrelated import issues
-        raise
+from .visualization import ModelVisualizer
 from .time_estimator import TrainingTimeEstimator
 
 # Set up common devices and seed utilities
