@@ -27,6 +27,68 @@ from apt_model.modeling.chinese_tokenizer_integration import (
     is_chinese_text
 )
 
+# 导入新的codec系统
+from apt_model.codecs import get_codec_for_language, list_available_codecs
+from apt_model.codecs.compat import CodecTokenizerWrapper
+
+
+# ============================================================================
+# Codec系统集成
+# ============================================================================
+
+def get_tokenizer_from_codec(texts, tokenizer_type=None, language=None):
+    """
+    使用新的codec系统获取tokenizer
+
+    这个函数使用新的插件化codec架构，但返回一个兼容transformers接口的tokenizer包装器。
+
+    参数:
+        texts: 文本列表（用于语言检测）
+        tokenizer_type: 指定的分词器类型（可选）
+        language: 指定的语言（可选，'en', 'zh', 'ja'等）
+
+    返回:
+        (tokenizer_wrapper, detected_language): tokenizer包装器和检测到的语言
+    """
+    import logging
+    logger = logging.getLogger('apt_model.codec')
+
+    # 如果未指定语言，使用旧的语言检测逻辑
+    if language is None:
+        from apt_model.modeling.chinese_tokenizer_integration import detect_language
+        language = detect_language(texts)
+        logger.info(f"自动检测语言: {language}")
+
+    # 映射tokenizer_type到codec名称
+    codec_name = None
+    if tokenizer_type:
+        type_to_codec = {
+            'gpt2': 'en_gpt2',
+            'chinese-char': 'zh_char',
+            'chinese-word': 'zh_char',
+            'ja-mecab': 'ja_mecab',
+        }
+        codec_name = type_to_codec.get(tokenizer_type)
+
+    # 尝试获取codec
+    try:
+        codec = get_codec_for_language(language, prefer=codec_name)
+
+        if codec is None:
+            logger.warning(f"未找到语言 '{language}' 的codec，回退到旧系统")
+            return get_appropriate_tokenizer(texts, tokenizer_type, language)
+
+        logger.info(f"使用codec: {codec.name} (语言: {language})")
+
+        # 包装为tokenizer接口
+        tokenizer_wrapper = CodecTokenizerWrapper(codec)
+
+        return tokenizer_wrapper, language
+
+    except Exception as e:
+        logger.warning(f"Codec系统失败 ({e})，回退到旧分词器系统")
+        return get_appropriate_tokenizer(texts, tokenizer_type, language)
+
 
 # ============================================================================
 # Debug输出辅助函数
@@ -559,7 +621,8 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
 
     # 自动检测语言并选择合适的分词器
     if tokenizer is None:
-        tokenizer, detected_language = get_appropriate_tokenizer(
+        # 优先使用新的codec系统
+        tokenizer, detected_language = get_tokenizer_from_codec(
             train_texts,
             tokenizer_type=tokenizer_type,
             language=language
