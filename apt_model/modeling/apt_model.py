@@ -332,6 +332,7 @@ class AutopoieticAttention(nn.Module):
         self.dropout_layer = nn.Dropout(dropout)
 
         self._reset_parameters()
+        self.res_scale = 1.0
 
     def _reset_parameters(self):
         nn.init.xavier_uniform_(self.q_proj.weight)
