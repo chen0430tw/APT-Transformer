@@ -25,43 +25,7 @@ from apt_model.modeling.chinese_tokenizer_integration import (
     is_chinese_text
 )
 
-def get_training_texts():
-    """Load training texts from the repository datasets.
-
-    The project ships with ``train.txt`` (英文) and ``zh_train.txt`` (中文)
-    files.  When they are available we combine and clean their contents so
-    the training loop never needs to reach out to Hugging Face for
-    datasets.  A small in-memory fallback dataset is returned only when the
-    repository files are missing.
-    """
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidate_files = [
-        os.path.join(project_root, "train.txt"),
-        os.path.join(project_root, "zh_train.txt"),
-    ]
-
-    cleaned_texts = []
-    for path in candidate_files:
-        if not os.path.exists(path):
-            continue
-
-        with open(path, "r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                text = raw_line.strip()
-                if not text:
-                    continue
-                text = re.sub(r"^\d+\s*[\.、:：-]\s*", "", text)
-                if text:
-                    cleaned_texts.append(text)
-
-    if cleaned_texts:
-        return cleaned_texts
-
-    print("未找到仓库提供的训练数据文件，使用预设训练数据。")
-
-    # 预设训练数据集
-    return [
+_FALLBACK_TRAINING_TEXTS = [
         # 基本对话
         "Hello, how are you?",
         "I'm doing well, thank you for asking. How about you?",
@@ -190,7 +154,50 @@ def get_training_texts():
         "数据科学结合了统计学、编程和领域知识来提取数据中的价值。",
         "机器学习算法可以分为监督学习、无监督学习和强化学习。",
         "神经网络是受人脑结构启发而设计的算法。"
+]
+
+
+def get_training_texts():
+    """Load training texts from the repository datasets.
+
+    The project ships with ``train.txt`` (英文) and ``zh_train.txt`` (中文)
+    files.  When they are available we combine and clean their contents so
+    the training loop never needs to reach out to Hugging Face for
+    datasets.  The locally curated fallback samples are *always* appended
+    to keep the multilingual prompts that were originally embedded in this
+    module, ensuring the training loop benefits from the handcrafted
+    dialogues even when the text files are present.
+    """
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidate_files = [
+        os.path.join(project_root, "train.txt"),
+        os.path.join(project_root, "zh_train.txt"),
     ]
+
+    aggregated_texts = []
+    for path in candidate_files:
+        if not os.path.exists(path):
+            continue
+
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                text = raw_line.strip()
+                if not text:
+                    continue
+                text = re.sub(r"^\d+\s*[\.、:：-]\s*", "", text)
+                if text:
+                    aggregated_texts.append(text)
+
+    if not aggregated_texts:
+        print("未找到仓库提供的训练数据文件，使用预设训练数据。")
+
+    aggregated_texts.extend(_FALLBACK_TRAINING_TEXTS)
+
+    # 去重但保持顺序，避免重复样本对训练造成不必要的偏倚
+    deduped_texts = list(dict.fromkeys(aggregated_texts))
+
+    return deduped_texts
 
 def _generate_natural_text(*args, **kwargs):
     from apt_model.generation.generator import generate_natural_text
@@ -343,6 +350,8 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     global_step = 0
     train_losses = []
     best_quality_score = 0.0
+    correct_tokens = 0
+    total_tokens = 0
     
     print(f"开始训练，总共 {epochs} 轮...")
     
@@ -415,10 +424,15 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                     try:
                         loss = F.cross_entropy(
                             shift_logits.view(-1, shift_logits.size(-1)),
-                            shift_labels.view(-1), 
+                            shift_labels.view(-1),
                             ignore_index=tokenizer.pad_token_id,
                             label_smoothing=0.1
                         )
+                        with torch.no_grad():
+                            predictions = shift_logits.argmax(dim=-1)
+                            valid_mask = shift_labels != tokenizer.pad_token_id
+                            correct_tokens += (predictions.eq(shift_labels) & valid_mask).sum().item()
+                            total_tokens += valid_mask.sum().item()
                         # 根据累积步骤缩放损失
                         loss = loss / accumulation_steps
                     except Exception as e:
@@ -488,7 +502,12 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                 continue
         
         avg_loss = total_loss / max(1, len(dataloader))
-        print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}")
+        epoch_accuracy = (correct_tokens / total_tokens * 100.0) if total_tokens else 0.0
+        print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}, 训练集准确率: {epoch_accuracy:.2f}%")
+
+        # 重置准确率统计，避免跨轮次累计
+        correct_tokens = 0
+        total_tokens = 0
         
         if use_tensorboard:
             writer.add_scalar('Loss/epoch', avg_loss, epoch)

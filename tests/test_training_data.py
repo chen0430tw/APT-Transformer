@@ -9,6 +9,8 @@ def test_get_training_texts_uses_repository_files():
 
     assert any("Hello" in text or "hello" in text for text in texts)
     assert any("人工智能" in text for text in texts)
+    # 预设的对话样本应该始终可用，例如派蒙相关的台词
+    assert any("派蒙" in text for text in texts)
 
 
 def test_basic_english_tokenizer_encodes_from_local_vocab():
