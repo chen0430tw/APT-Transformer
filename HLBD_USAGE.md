@@ -4,6 +4,8 @@
 
 **HLBD (Hierarchical Language Bootstrapping Dataset, 分层语言启蒙数据集)** 是一套专为大规模语言模型预训练而设计的数据集，其核心思想在于以分层结构呈现语言的基本组成单元，从最基础的视觉符号到完整的自然语言表达，逐步引导模型建立起符号运算法则和形式逻辑。
 
+**✨ 已重构**: HLBD模块已完全重构，与APT-Transformer的新架构（core/, infrastructure/, data/, evaluation/）无缝集成。
+
 ## 🏗️ 数据集结构
 
 HLBD 包含 **8个层级**，每个层级都承载着不同层次的信息：
@@ -33,11 +35,34 @@ HLBD 包含 **8个层级**，每个层级都承载着不同层次的信息：
 }
 ```
 
+## 🏗️ 架构集成
+
+HLBD模块已完全重构，使用APT-Transformer的新架构：
+
+### 使用的核心模块
+
+| 模块 | 功能 | 文件位置 |
+|------|------|---------|
+| **Core** | 系统初始化、设备管理、资源监控 | `core/system.py`, `core/resources.py` |
+| **Infrastructure** | 彩色日志、错误处理 | `infrastructure/logging.py`, `infrastructure/errors.py` |
+| **Data** | HLBD数据适配器 | `data/hlbd/hlbd_adapter.py` |
+| **Evaluation** | 统一评估API | `evaluation/unified.py` |
+| **Training** | 检查点管理、优化器 | `training/checkpoint.py`, `training/optimizer.py` |
+
+### 重构改进
+
+1. **彩色日志系统** - 使用 `infrastructure.logging.setup_colored_logging`
+2. **资源监控** - 集成 `core.resources.ResourceMonitor` 跟踪CPU/GPU使用
+3. **设备管理** - 使用 `core.system.get_device` 自动检测最佳设备
+4. **随机种子** - 使用 `core.system.set_seed` 确保可重现性
+5. **检查点管理** - 使用 `training.checkpoint.CheckpointManager`
+6. **优化器** - 使用 `training.optimizer.create_optimizer_and_scheduler`
+
 ## 📦 项目文件结构
 
 ```
 apt_model/
-├── hlbd.py                           # HLBD命令行入口点 ⭐
+├── hlbd.py                           # HLBD命令行入口点 ⭐ (已重构)
 ├── 分层语言启蒙数据集.txt              # HLBD数据集文件 (1156行)
 └── data/hlbd/
     ├── hlbd_adapter.py               # HLBD数据适配器 (713行)
@@ -115,6 +140,8 @@ python -m apt_model.hlbd \
 | `--batch-size` | 8 | 批次大小 |
 | `--lr, --learning-rate` | 3e-5 | 学习率 |
 | `--max-length` | 512 | 最大序列长度 |
+| `--warmup-steps` | 1000 | 学习率预热步数 |
+| `--gradient-clip` | 1.0 | 梯度裁剪阈值 |
 
 ### 模型参数
 
@@ -131,13 +158,21 @@ python -m apt_model.hlbd \
 | `--include-multilingual` | True | 包含多语言文本 |
 | `--include-separate-levels` | True | 包含各层级单独的文本 |
 
+### 监控和日志参数 ⭐ (新增)
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--monitor-resources` | False | 启用资源监控（CPU/内存/GPU） |
+| `--monitor-interval` | 30 | 资源监控间隔（秒） |
+| `--log-file` | None | 日志文件路径（默认：output-dir/hlbd_training.log） |
+| `--verbose` | False | 详细输出模式 |
+
 ### 设备和其他参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--device` | auto | 计算设备 (auto/cuda/cpu) |
 | `--seed` | 42 | 随机种子 |
-| `--verbose` | False | 详细输出模式 |
 | `--evaluate-only` | False | 仅评估模式 |
 | `--resume` | None | 从检查点恢复 |
 
