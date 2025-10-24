@@ -43,6 +43,7 @@ class BasicEnglishTokenizer:
     """
 
     pad_token: str = "<pad>"
+    bos_token: str = "<bos>"
     eos_token: str = "<eos>"
     unk_token: str = "<unk>"
 
@@ -56,8 +57,9 @@ class BasicEnglishTokenizer:
 
         self._token_to_id = {
             self.pad_token: 0,
-            self.eos_token: 1,
-            self.unk_token: 2,
+            self.bos_token: 1,
+            self.eos_token: 2,
+            self.unk_token: 3,
         }
         self._id_to_token = {idx: tok for tok, idx in self._token_to_id.items()}
 
@@ -77,6 +79,14 @@ class BasicEnglishTokenizer:
     @property
     def unk_token_id(self) -> int:
         return self._token_to_id[self.unk_token]
+
+    @property
+    def bos_token_id(self) -> int:
+        return self._token_to_id[self.bos_token]
+
+    @property
+    def all_special_ids(self) -> List[int]:
+        return [self.pad_token_id, self.bos_token_id, self.eos_token_id, self.unk_token_id]
 
     @property
     def vocab_size(self) -> int:
@@ -112,6 +122,7 @@ class BasicEnglishTokenizer:
             token = self._id_to_token.get(idx, self.unk_token)
             if skip_special_tokens and token in {
                 self.pad_token,
+                self.bos_token,
                 self.eos_token,
             }:
                 continue

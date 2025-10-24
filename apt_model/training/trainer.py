@@ -297,7 +297,10 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         epsilon=2.0,
         alpha=0.001,
         beta=0.001,
-        base_lr=learning_rate
+        base_lr=learning_rate,
+        pad_token_id=getattr(tokenizer, "pad_token_id", 0),
+        bos_token_id=getattr(tokenizer, "bos_token_id", getattr(tokenizer, "eos_token_id", 0)),
+        eos_token_id=getattr(tokenizer, "eos_token_id", 0),
     )
     
     print("初始化模型...")

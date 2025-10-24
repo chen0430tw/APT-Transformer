@@ -21,3 +21,12 @@ def test_basic_english_tokenizer_encodes_from_local_vocab():
 
     decoded = tokenizer.decode(encoded[0].tolist())
     assert "hello" in decoded
+
+
+def test_basic_english_tokenizer_exposes_special_token_ids():
+    tokenizer = BasicEnglishTokenizer(texts=["Hello"], vocab_size=8)
+
+    assert tokenizer.pad_token_id != tokenizer.eos_token_id
+    assert tokenizer.bos_token_id not in {tokenizer.pad_token_id, tokenizer.eos_token_id}
+    decoded = tokenizer.decode([tokenizer.bos_token_id, tokenizer.eos_token_id])
+    assert decoded == ""
