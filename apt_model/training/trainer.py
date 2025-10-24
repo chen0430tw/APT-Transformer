@@ -18,13 +18,137 @@ from apt_model.config.apt_config import APTConfig
 from apt_model.modeling.apt_model import APTModel, APTLargeModel
 from apt_model.generation.generator import generate_natural_text
 from apt_model.generation.evaluator import evaluate_text_quality
+from apt_model.config.settings_manager import settings
 
 # 导入中文分词器相关函数
 from apt_model.modeling.chinese_tokenizer_integration import (
-    get_appropriate_tokenizer, 
+    get_appropriate_tokenizer,
     save_tokenizer,
     is_chinese_text
 )
+
+
+# ============================================================================
+# Debug输出辅助函数
+# ============================================================================
+
+def debug_print(*args, **kwargs):
+    """仅在Debug模式下打印信息"""
+    if settings.get_debug_enabled():
+        print(*args, **kwargs)
+
+def info_print(*args, **kwargs):
+    """始终打印的关键信息（非Debug模式也显示）"""
+    print(*args, **kwargs)
+
+
+# ============================================================================
+# 数据集类定义
+# ============================================================================
+
+class TextDataset(Dataset):
+    """
+    文本数据集类
+
+    将文本列表转换为模型可用的token序列
+    """
+    def __init__(self, texts, tokenizer, max_length=128):
+        """
+        初始化数据集
+
+        参数:
+            texts: 文本列表
+            tokenizer: 分词器
+            max_length: 最大序列长度
+        """
+        self.texts = texts
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.texts)
+
+    def __getitem__(self, idx):
+        text = self.texts[idx]
+        encoding = self.tokenizer.encode(
+            text,
+            return_tensors="pt",
+            max_length=self.max_length,
+            truncation=True
+        ).squeeze(0)
+        return encoding, encoding
+
+
+def create_collate_fn(tokenizer):
+    """
+    创建批次整理函数
+
+    参数:
+        tokenizer: 分词器，用于获取pad_token_id
+
+    返回:
+        collate_fn: 批次整理函数
+    """
+    def collate_fn(batch):
+        """整理批次数据，进行填充"""
+        src_ids_list, tgt_ids_list = zip(*batch)
+        src_ids = torch.nn.utils.rnn.pad_sequence(
+            src_ids_list,
+            batch_first=True,
+            padding_value=tokenizer.pad_token_id
+        )
+        tgt_ids = torch.nn.utils.rnn.pad_sequence(
+            tgt_ids_list,
+            batch_first=True,
+            padding_value=tokenizer.pad_token_id
+        )
+        return src_ids, tgt_ids
+
+    return collate_fn
+
+
+class DummyGradScaler:
+    """
+    兼容性GradScaler类
+
+    当CUDA不可用或不支持混合精度时使用
+    提供与torch.cuda.amp.GradScaler相同的接口
+    """
+    def scale(self, loss):
+        """不进行缩放，直接返回损失"""
+        return loss
+
+    def step(self, optimizer):
+        """直接执行优化器步骤"""
+        optimizer.step()
+
+    def update(self):
+        """空操作"""
+        pass
+
+
+# ============================================================================
+# 辅助函数
+# ============================================================================
+
+def _log_message(logger, message, level="info"):
+    """
+    统一的日志记录函数
+
+    参数:
+        logger: 日志记录器（可为None）
+        message: 日志消息
+        level: 日志级别 ("info", "warning", "error")
+    """
+    if logger:
+        if level == "info":
+            logger.info(message)
+        elif level == "warning":
+            logger.warning(message)
+        elif level == "error":
+            logger.error(message)
+    else:
+        print(message)
 
 def get_training_texts():
     """
@@ -180,86 +304,50 @@ def get_training_texts():
     ]
 
 # =============================================================================
-# 主训练函数
+# 训练辅助函数
 # =============================================================================
-def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model", 
-                logger=None, resource_monitor=None, multimodal_config=None, 
-                tokenizer_type=None, language=None, texts=None, tokenizer=None):
-    """训练模型的主函数"""
-    # 设置随机种子
-    set_seed(42)
-    
-    if logger:
-        logger.info("开始训练模型...")
-    else:
-        print("\n开始训练模型...\n")
-    
-    # 获取训练数据
-    if texts is None:
-        train_texts = get_training_texts()
-    else:
-        train_texts = texts
-    
-    print(f"训练数据集大小: {len(train_texts)} 条文本")
-    
-    # 如果数据为空，则报错
-    if len(train_texts) == 0:
-        raise ValueError("训练数据为空，请确保数据文件存在或内置数据正确加载。")
-    
-    # 自动检测语言并选择合适的分词器
-    tokenizer, detected_language = get_appropriate_tokenizer(
-        train_texts, 
-        tokenizer_type=tokenizer_type, 
-        language=language
-    )
-    
-    print(f"使用{detected_language}语言分词器: {type(tokenizer).__name__}")
-    
-    # 设置数据集和数据加载器
-    class TextDataset(Dataset):
-        def __init__(self, texts, tokenizer, max_length=128):
-            self.texts = texts
-            self.tokenizer = tokenizer
-            self.max_length = max_length
-        
-        def __len__(self):
-            return len(self.texts)
-        
-        def __getitem__(self, idx):
-            text = self.texts[idx]
-            encoding = self.tokenizer.encode(
-                text, 
-                return_tensors="pt", 
-                max_length=self.max_length, 
-                truncation=True
-            ).squeeze(0)
-            return encoding, encoding
-    
-    def collate_fn(batch):
-        src_ids_list, tgt_ids_list = zip(*batch)
-        src_ids = torch.nn.utils.rnn.pad_sequence(
-            src_ids_list, 
-            batch_first=True, 
-            padding_value=tokenizer.pad_token_id
-        )
-        tgt_ids = torch.nn.utils.rnn.pad_sequence(
-            tgt_ids_list, 
-            batch_first=True, 
-            padding_value=tokenizer.pad_token_id
-        )
-        return src_ids, tgt_ids
-    
-    print("正在准备数据集...")
+
+def _setup_training_data(train_texts, tokenizer, batch_size):
+    """
+    设置训练数据和DataLoader
+
+    参数:
+        train_texts: 训练文本列表
+        tokenizer: 分词器
+        batch_size: 批次大小
+
+    返回:
+        dataloader: DataLoader实例
+    """
+    debug_print("正在准备数据集...")
     dataset = TextDataset(train_texts, tokenizer)
     dataloader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        collate_fn=collate_fn,
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=create_collate_fn(tokenizer),
         pin_memory=True
     )
-    
-    print("创建模型配置...")
+    return dataloader
+
+
+def _setup_model_and_optimizer(tokenizer, learning_rate, dataloader, epochs):
+    """
+    设置模型、优化器和调度器
+
+    参数:
+        tokenizer: 分词器
+        learning_rate: 学习率
+        dataloader: DataLoader实例
+        epochs: 训练轮数
+
+    返回:
+        model: APT模型
+        config: 模型配置
+        optimizer: 优化器
+        scheduler: 学习率调度器
+    """
+    debug_print("创建模型配置...")
     config = APTConfig(
         vocab_size=tokenizer.vocab_size,
         d_model=768,
@@ -274,284 +362,390 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         beta=0.001,
         base_lr=learning_rate
     )
-    
-    print("初始化模型...")
+
+    debug_print("初始化模型...")
     model = APTLargeModel(config).to(device)
     model.train()
-    
-    import inspect
-    #print("===== 模型 forward 方法参数 =====")
-    #print(inspect.signature(model.forward))
-    #print("================================")
 
     # 优化器和学习率调度器设置
     from apt_model.training.optimizer import create_optimizer_and_scheduler
     optimizer, scheduler = create_optimizer_and_scheduler(
         model, learning_rate, len(dataloader), epochs
     )
-    
-    # 早停设置
-    best_loss = float('inf')
-    patience = 5
-    patience_counter = 0
-    
-    # 尝试使用tensorboard记录训练过程
+
+    return model, config, optimizer, scheduler
+
+
+def _setup_grad_scaler():
+    """
+    设置梯度缩放器（混合精度训练）
+
+    返回:
+        scaler: 梯度缩放器实例
+    """
+    try:
+        from torch.cuda.amp import GradScaler
+        scaler = GradScaler()
+        debug_print("混合精度训练已启用")
+    except (ImportError, AttributeError):
+        scaler = DummyGradScaler()
+        debug_print("警告: 混合精度训练不可用，使用标准精度训练")
+
+    return scaler
+
+
+def _setup_tensorboard(save_path):
+    """
+    设置tensorboard记录器
+
+    参数:
+        save_path: 保存路径
+
+    返回:
+        writer: SummaryWriter实例（如果可用）
+        use_tensorboard: 是否使用tensorboard
+    """
     try:
         from torch.utils.tensorboard import SummaryWriter
         writer = SummaryWriter(log_dir=f"{save_path}_logs")
-        use_tensorboard = True
+        debug_print("Tensorboard记录已启用")
+        return writer, True
     except:
-        use_tensorboard = False
-        print("未安装tensorboard，将不使用tensorboard记录训练过程")
-    
-    # 保存函数
-    from apt_model.training.checkpoint import save_model
-    
+        debug_print("未安装tensorboard，将不使用tensorboard记录训练过程")
+        return None, False
+
+
+def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_steps,
+                   batch_idx, logger, resource_monitor):
+    """
+    处理单个批次的训练
+
+    参数:
+        model: 模型
+        batch: 批次数据
+        optimizer: 优化器
+        scaler: 梯度缩放器
+        tokenizer: 分词器
+        accumulation_steps: 梯度累积步数
+        batch_idx: 批次索引
+        logger: 日志记录器
+        resource_monitor: 资源监视器
+
+    返回:
+        loss_value: 损失值（失败返回None）
+        should_update: 是否应该更新参数
+    """
+    try:
+        if resource_monitor:
+            resource_monitor.check_resources()
+
+        src_ids, tgt_ids = batch
+        src_ids = src_ids.to(device)
+        tgt_ids = tgt_ids.to(device)
+
+        src_padding_mask = (src_ids == tokenizer.pad_token_id)
+
+        # 只在累积周期开始时清零梯度
+        if batch_idx % accumulation_steps == 0:
+            optimizer.zero_grad()
+
+        # 混合精度前向计算
+        with torch.amp.autocast('cuda'):
+            try:
+                logits = model(
+                    src_tokens=src_ids,
+                    tgt_tokens=src_ids,
+                    src_key_padding_mask=src_padding_mask,
+                    src_mask=None
+                )
+            except Exception as e:
+                _log_message(logger, f"前向传播出错: {e}", "error")
+                debug_print(f"警告: 前向传播失败: {e}，跳过当前批次")
+                return None, False
+
+            if torch.isnan(logits).any():
+                debug_print(f"警告: 批次{batch_idx+1}的logits包含NaN，跳过此批次")
+                return None, False
+
+            # 计算损失
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_labels = tgt_ids[:, 1:].contiguous()
+
+            try:
+                loss = F.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    ignore_index=tokenizer.pad_token_id,
+                    label_smoothing=0.1
+                )
+                loss = loss / accumulation_steps
+            except Exception as e:
+                _log_message(logger, f"损失计算出错: {e}", "error")
+                debug_print(f"警告: 损失计算失败: {e}，跳过当前批次")
+                return None, False
+
+            if torch.isnan(loss).any():
+                debug_print(f"警告: 批次{batch_idx+1}发现NaN损失，跳过此批次")
+                return None, False
+
+        # 反向传播
+        try:
+            scaler.scale(loss).backward()
+        except Exception as e:
+            _log_message(logger, f"反向传播出错: {e}", "error")
+            debug_print(f"警告: 反向传播失败: {e}，跳过当前批次")
+            optimizer.zero_grad()
+            return None, False
+
+        # 梯度裁剪
+        try:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        except Exception as e:
+            _log_message(logger, f"梯度裁剪出错: {e}", "warning")
+            debug_print(f"警告: 梯度裁剪失败: {e}")
+
+        loss_value = loss.item() * accumulation_steps
+        return loss_value, True
+
+    except Exception as e:
+        _log_message(logger, f"处理批次 {batch_idx} 时出错: {e}", "error")
+        debug_print(f"批次处理错误: {e}，跳过当前批次")
+        return None, False
+
+
+# =============================================================================
+# 主训练函数
+# =============================================================================
+
+def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model",
+                logger=None, resource_monitor=None, multimodal_config=None,
+                tokenizer_type=None, language=None, texts=None, tokenizer=None):
+    """
+    训练模型的主函数
+
+    参数:
+        epochs: 训练轮数
+        batch_size: 批次大小
+        learning_rate: 学习率
+        save_path: 模型保存路径
+        logger: 日志记录器
+        resource_monitor: 资源监视器
+        multimodal_config: 多模态配置（未使用）
+        tokenizer_type: 分词器类型
+        language: 语言类型
+        texts: 训练文本（None则使用默认数据）
+        tokenizer: 分词器（None则自动选择）
+
+    返回:
+        model: 训练后的模型
+        tokenizer: 使用的分词器
+        config: 模型配置
+    """
+    # 设置随机种子
+    set_seed(42)
+
+    _log_message(logger, "开始训练模型...")
+
+    # 获取训练数据
+    if texts is None:
+        train_texts = get_training_texts()
+    else:
+        train_texts = texts
+
+    info_print(f"训练数据集大小: {len(train_texts)} 条文本")
+
+    if len(train_texts) == 0:
+        raise ValueError("训练数据为空，请确保数据文件存在或内置数据正确加载。")
+
+    # 自动检测语言并选择合适的分词器
+    if tokenizer is None:
+        tokenizer, detected_language = get_appropriate_tokenizer(
+            train_texts,
+            tokenizer_type=tokenizer_type,
+            language=language
+        )
+        info_print(f"使用{detected_language}语言分词器: {type(tokenizer).__name__}")
+    else:
+        detected_language = language or "en"
+        debug_print(f"使用提供的分词器: {type(tokenizer).__name__}")
+
+    # 设置数据和模型
+    dataloader = _setup_training_data(train_texts, tokenizer, batch_size)
+    model, config, optimizer, scheduler = _setup_model_and_optimizer(
+        tokenizer, learning_rate, dataloader, epochs
+    )
+
+    # 设置训练工具
+    scaler = _setup_grad_scaler()
+    writer, use_tensorboard = _setup_tensorboard(save_path)
+
     # 保存训练前的模型用于比较
     untrained_model = APTLargeModel(config).to(device)
     untrained_model.load_state_dict(model.state_dict())
     untrained_model.eval()
-    
+
+    # 早停设置
+    best_loss = float('inf')
+    patience = 5
+    patience_counter = 0
+
+    # 训练状态
     global_step = 0
     train_losses = []
     best_quality_score = 0.0
-    
-    print(f"开始训练，总共 {epochs} 轮...")
-    
-    from torch.cuda.amp import autocast, GradScaler
-    
-    # 在训练开始前初始化 GradScaler
-    try:
-        from torch.cuda.amp import GradScaler
-        scaler = GradScaler()
-    except (ImportError, AttributeError):
-        # 创建一个假的 GradScaler 以保持代码兼容性
-        class DummyScaler:
-            def scale(self, loss):
-                return loss
-            def step(self, optimizer):
-                optimizer.step()
-            def update(self):
-                pass
-        scaler = DummyScaler()
-        print("警告: 混合精度训练不可用，使用标准精度训练")
 
-    # 添加梯度累积参数
-    accumulation_steps = 4  # 可以根据需求调整
-    
+    info_print(f"开始训练，总共 {epochs} 轮...")
+
+    # 梯度累积参数
+    accumulation_steps = 4
+
+    # 导入必要的函数
+    from apt_model.training.checkpoint import save_model
+
     # 主训练循环
     for epoch in range(epochs):
         total_loss = 0
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
-        
+
         for i, batch in enumerate(progress_bar):
-            try:
-                if resource_monitor:
-                    resource_monitor.check_resources()
-                
-                src_ids, tgt_ids = batch
-                src_ids = src_ids.to(device)
-                tgt_ids = tgt_ids.to(device)
-                
-                src_padding_mask = (src_ids == tokenizer.pad_token_id)  # 填充掩码 [batch, src_len]
-                tgt_mask = torch.triu(torch.ones(tgt_ids.size(1), tgt_ids.size(1), device=tgt_ids.device) * float('-inf'), diagonal=1)
-                
-                # 只在累积周期开始时清零梯度
-                if i % accumulation_steps == 0:
-                    optimizer.zero_grad()
-                
-                # 使用更新后的 autocast 进行混合精度前向计算和损失计算
-                amp_dtype = torch.bfloat16  # 或使用torch.float32
-                with torch.amp.autocast('cuda'):
-                    try:
-                        # 在这里添加打印语句
-                        import inspect
-                        #print(f"Model type: {type(model)}")
-                        #print(f"Model forward signature: {inspect.signature(model.forward)}")
-                        
-                        logits = model(src_tokens=src_ids, tgt_tokens=src_ids, src_key_padding_mask=src_padding_mask, src_mask=None)
-                    except Exception as e:
-                        if logger:
-                            logger.error(f"前向传播出错: {e}")
-                        print(f"警告: 前向传播失败: {e}，跳过当前批次")
-                        continue
-                    
-                    if torch.isnan(logits).any():
-                        print(f"警告: 第{epoch+1}轮第{i+1}批次的logits包含NaN，跳过此批次")
-                        continue
-                    
-                    # 计算损失
-                    shift_logits = logits[:, :-1, :].contiguous()
-                    shift_labels = tgt_ids[:, 1:].contiguous()
-                    
-                    try:
-                        loss = F.cross_entropy(
-                            shift_logits.view(-1, shift_logits.size(-1)),
-                            shift_labels.view(-1), 
-                            ignore_index=tokenizer.pad_token_id,
-                            label_smoothing=0.1
-                        )
-                        # 根据累积步骤缩放损失
-                        loss = loss / accumulation_steps
-                    except Exception as e:
-                        if logger:
-                            logger.error(f"损失计算出错: {e}")
-                        print(f"警告: 损失计算失败: {e}，跳过当前批次")
-                        continue
-                    
-                    if torch.isnan(loss).any():
-                        print(f"警告: 第{epoch+1}轮第{i+1}批次发现NaN损失，跳过此批次")
-                        continue
-                
-                # 使用 GradScaler 进行反向传播和参数更新
-                try:
-                    scaler.scale(loss).backward()
-                except Exception as e:
-                    if logger:
-                        logger.error(f"反向传播出错: {e}")
-                    print(f"警告: 反向传播失败: {e}，跳过当前批次")
-                    optimizer.zero_grad()
-                    continue
-                
-                # 梯度裁剪（如果需要，可以放在 scaler.step() 前后）
-                try:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                except Exception as e:
-                    if logger:
-                        logger.warning(f"梯度裁剪出错，跳过: {e}")
-                    print(f"警告: 梯度裁剪失败: {e}")
-                
-                # 只在累积完成后更新参数
-                if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
-                    # 进行参数更新
-                    scaler.step(optimizer)
-                    scaler.update()
-                    scheduler.step()
-                
-                    torch.cuda.empty_cache()  # 清理GPU缓存
-                    
-                    try:
-                        current_lr = scheduler.get_last_lr()[0]
-                        model.update_dynamic_taylor_parameters(current_lr)
-                    except Exception as e:
-                        if logger:
-                            logger.warning(f"动态参数更新出错: {e}")
-                        print(f"警告: 动态参数更新失败: {e}")
-                
-                total_loss += loss.item() * accumulation_steps  # 恢复实际损失
-                train_losses.append(loss.item() * accumulation_steps)
-                progress_bar.set_postfix({"loss": f"{loss.item() * accumulation_steps:.4f}", "lr": f"{scheduler.get_last_lr()[0]:.6f}"})
-                
-                if use_tensorboard:
-                    writer.add_scalar('Loss/train', loss.item() * accumulation_steps, global_step)
-                    writer.add_scalar('Learning_rate', scheduler.get_last_lr()[0], global_step)
-                
-                global_step += 1
-                
-                if global_step % 50 == 0 or i == len(dataloader) - 1:
-                    # 测试生成和评估代码保持不变...
-                    pass
-                    
-            except Exception as e:
-                if logger:
-                    logger.error(f"处理批次 {i} 时出错: {e}")
-                    logger.error(traceback.format_exc())
-                print(f"批次处理错误: {e}，跳过当前批次")
+            # 处理批次
+            loss_value, should_update = _process_batch(
+                model, batch, optimizer, scaler, tokenizer,
+                accumulation_steps, i, logger, resource_monitor
+            )
+
+            # 如果批次处理失败，跳过
+            if loss_value is None:
                 continue
-        
+
+            # 累积损失
+            total_loss += loss_value
+            train_losses.append(loss_value)
+            progress_bar.set_postfix({
+                "loss": f"{loss_value:.4f}",
+                "lr": f"{scheduler.get_last_lr()[0]:.6f}"
+            })
+
+            # 只在累积完成后更新参数
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()
+
+                torch.cuda.empty_cache()
+
+                # 更新动态Taylor参数
+                try:
+                    current_lr = scheduler.get_last_lr()[0]
+                    model.update_dynamic_taylor_parameters(current_lr)
+                except Exception as e:
+                    _log_message(logger, f"动态参数更新出错: {e}", "warning")
+                    debug_print(f"警告: 动态参数更新失败: {e}")
+
+            # 记录到tensorboard
+            if use_tensorboard:
+                writer.add_scalar('Loss/train', loss_value, global_step)
+                writer.add_scalar('Learning_rate', scheduler.get_last_lr()[0], global_step)
+
+            global_step += 1
+
+        # Epoch结束处理
         avg_loss = total_loss / max(1, len(dataloader))
-        print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}")
-        
+        info_print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}")
+
         if use_tensorboard:
             writer.add_scalar('Loss/epoch', avg_loss, epoch)
-            
+
+        # 保存最佳模型和早停
         try:
             if avg_loss < best_loss:
                 best_loss = avg_loss
                 save_model(model, tokenizer, path=save_path, config=config)
-                print(f"发现新的最佳模型，已保存到 {save_path}")
+                info_print(f"发现新的最佳模型，已保存到 {save_path}")
                 patience_counter = 0
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
-                    print(f"早停: {patience} 轮没有改善，停止训练")
+                    info_print(f"早停: {patience} 轮没有改善，停止训练")
                     break
-            
-            _test_generation_after_epoch(model, tokenizer, logger, detected_language)
+
+            # 测试生成效果（仅在Debug模式下显示详细信息）
+            if settings.get_debug_enabled():
+                _test_generation_after_epoch(model, tokenizer, logger, detected_language)
         except Exception as e:
-            if logger:
-                logger.error(f"轮次结束处理出错: {e}")
-            print(f"警告: 轮次结束处理失败: {e}")
-    
+            _log_message(logger, f"轮次结束处理出错: {e}", "error")
+            debug_print(f"警告: 轮次结束处理失败: {e}")
+
+    # 训练结束
     if use_tensorboard:
         writer.close()
-    
-    print("训练完成！最终模型已保存。")
-    
-    try:
-        _compare_model_outputs(untrained_model, model, tokenizer, detected_language)
-    except Exception as e:
-        if logger:
-            logger.error(f"模型比较出错: {e}")
-        print(f"警告: 模型比较失败: {e}")
-    
+
+    info_print("训练完成！最终模型已保存。")
+
+    # 模型对比（仅在Debug模式下）
+    if settings.get_debug_enabled():
+        try:
+            _compare_model_outputs(untrained_model, model, tokenizer, detected_language)
+        except Exception as e:
+            _log_message(logger, f"模型比较出错: {e}", "error")
+            debug_print(f"警告: 模型比较失败: {e}")
+
     return model, tokenizer, config
 
 def _test_generation_after_epoch(model, tokenizer, logger=None, language="en"):
-    """测试每个轮次后的生成效果"""
-    # 添加诊断打印
-    #print("\n===== 开始诊断 _test_generation_after_epoch =====")
-    #print(f"模型类型: {type(model)}")
-    #print(f"模型属性: {dir(model)}")
-    #print("检查是否有generate方法:", hasattr(model, 'generate'))
-    #print("检查是否是APTModel的实例:", isinstance(model, APTModel))
-    
-    #if hasattr(model, 'generate'):
-        #print("generate方法的签名:", model.generate.__code__.co_varnames)
-    #print("===== 诊断结束 =====\n")
+    """
+    测试每个轮次后的生成效果
+
+    参数:
+        model: 模型
+        tokenizer: 分词器
+        logger: 日志记录器
+        language: 语言类型
+
+    返回:
+        avg_quality: 平均质量分数
+    """
     # 根据语言选择测试提示
     if language == "zh":
         test_prompts = ["人工智能", "深度学习", "自然语言", "安柏是"]
     else:
         test_prompts = ["Hello", "What is", "The quick", "Artificial"]
-        
+
     model.eval()
-    print("\n本轮训练后的文本生成示例:")
+    debug_print("\n本轮训练后的文本生成示例:")
+
     gen_texts = []
     for prompt in test_prompts:
         with torch.no_grad():
             gen_text, _, _, _ = generate_natural_text(model, tokenizer, prompt, max_steps=15)
-            print(f"提示: '{prompt}'")
-            print(f"生成: '{gen_text}'")
-            print("-" * 30)
+            debug_print(f"提示: '{prompt}'")
+            debug_print(f"生成: '{gen_text}'")
+            debug_print("-" * 30)
             gen_texts.append(gen_text)
+
     avg_quality = sum(evaluate_text_quality(text)[0] for text in gen_texts) / len(gen_texts)
-    print(f"本轮生成文本平均质量: {avg_quality:.2f}/100")
+    debug_print(f"本轮生成文本平均质量: {avg_quality:.2f}/100")
+
     if avg_quality < 40:
-        print("\n安柏：训练...还不够...")
+        debug_print("\n安柏：训练...还不够...")
+
     model.train()
     return avg_quality
 
 def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="en"):
-    """比较训练前后的模型输出"""
-    # 添加诊断打印
-    #print("\n===== 开始诊断 _compare_model_outputs =====")
-    #print(f"未训练模型类型: {type(untrained_model)}")
-    #print(f"已训练模型类型: {type(trained_model)}")
-    #print("未训练模型是否有generate方法:", hasattr(untrained_model, 'generate'))
-    #print("已训练模型是否有generate方法:", hasattr(trained_model, 'generate'))
-    
-    # 检查generate_natural_text函数
-    #import inspect
-    #if 'generate_natural_text' in globals():
-        #print("generate_natural_text函数签名:", inspect.signature(generate_natural_text))
-    #else:
-        #print("generate_natural_text函数不存在于全局空间")
-    #print("===== 诊断结束 =====\n")
-    print("\n====================")
-    print("训练前后效果对比")
-    print("====================")
-    
+    """
+    比较训练前后的模型输出
+
+    参数:
+        untrained_model: 未训练的模型
+        trained_model: 训练后的模型
+        tokenizer: 分词器
+        language: 语言类型
+    """
+    info_print("\n====================")
+    info_print("训练前后效果对比")
+    info_print("====================")
+
     # 根据语言选择测试提示
     if language == "zh":
         test_prompts = [
@@ -569,39 +763,46 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
             "I think that",
             "The best way to"
         ]
-        
+
     trained_model.eval()
     untrained_model.eval()
     untrained_scores = []
     trained_scores = []
-    
+
     for prompt in test_prompts:
-        print(f"\n提示: '{prompt}'")
+        info_print(f"\n提示: '{prompt}'")
+
         with torch.no_grad():
-            untrained_text, _, _, _ = generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
+            untrained_text, _, _, _ = generate_natural_text(
+                untrained_model, tokenizer, prompt, max_steps=20
+            )
             untrained_score, untrained_feedback = evaluate_text_quality(untrained_text)
             untrained_scores.append(untrained_score)
-        print(f"未训练模型: '{untrained_text}'")
-        print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
-        
+
+        info_print(f"未训练模型: '{untrained_text}'")
+        info_print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
+
         with torch.no_grad():
-            trained_text, _, _, _ = generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
+            trained_text, _, _, _ = generate_natural_text(
+                trained_model, tokenizer, prompt, max_steps=20
+            )
             trained_score, trained_feedback = evaluate_text_quality(trained_text)
             trained_scores.append(trained_score)
-        print(f"训练后模型: '{trained_text}'")
-        print(f"质量评分: {trained_score}/100 - {trained_feedback}")
-        print("-" * 50)
-    
+
+        info_print(f"训练后模型: '{trained_text}'")
+        info_print(f"质量评分: {trained_score}/100 - {trained_feedback}")
+        info_print("-" * 50)
+
     avg_untrained = sum(untrained_scores) / len(untrained_scores)
     avg_trained = sum(trained_scores) / len(trained_scores)
     improvement = avg_trained - avg_untrained
-    
-    print(f"\n整体评估:")
-    print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
-    print(f"训练后模型平均质量: {avg_trained:.2f}/100")
-    print(f"质量提升: {improvement:.2f} 分")
-    
+
+    info_print(f"\n整体评估:")
+    info_print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
+    info_print(f"训练后模型平均质量: {avg_trained:.2f}/100")
+    info_print(f"质量提升: {improvement:.2f} 分")
+
     if avg_trained < 50:
-        print("\n安柏：训练...还不够...")
+        info_print("\n安柏：训练...还不够...")
     else:
-        print("\n安柏：训练完成得不错！")
+        info_print("\n安柏：训练完成得不错！")
