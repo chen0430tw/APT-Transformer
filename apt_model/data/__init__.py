@@ -10,10 +10,19 @@ from .external_data import load_external_data, train_with_external_data
 from .huggingface_loader import load_huggingface_dataset
 from .data_processor import get_training_texts
 
+# Export the unified data pipeline (new)
+from .pipeline import DataLoader, DataProcessor, DataPipeline, quick_load
+
 # Define module exports
 __all__ = [
+    # Legacy functions
     'load_external_data',
     'train_with_external_data',
     'load_huggingface_dataset',
-    'get_training_texts'
+    'get_training_texts',
+    # Unified pipeline
+    'DataLoader',
+    'DataProcessor',
+    'DataPipeline',
+    'quick_load',
 ]
