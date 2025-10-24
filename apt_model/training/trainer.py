@@ -4,8 +4,9 @@
 修改APT模型训练器以支持中文分词
 """
 
-import os
-import re
+# NOTE: 训练流程需要遵循项目作者的要求，默认只使用 trainer.py 内置的训练文本
+#       而不是读取仓库里额外提供的 txt 数据集。因此不再导入和使用与文件读取相关
+#       的标准库（例如 os、re），避免误用。
 import torch
 import torch.nn.functional as F
 import traceback
@@ -158,44 +159,19 @@ _FALLBACK_TRAINING_TEXTS = [
 
 
 def get_training_texts():
-    """Load training texts from the repository datasets.
+    """Return the builtin training prompts defined in ``trainer.py``.
 
-    The project ships with ``train.txt`` (英文) and ``zh_train.txt`` (中文)
-    files.  When they are available we combine and clean their contents so
-    the training loop never needs to reach out to Hugging Face for
-    datasets.  The locally curated fallback samples are *always* appended
-    to keep the multilingual prompts that were originally embedded in this
-    module, ensuring the training loop benefits from the handcrafted
-    dialogues even when the text files are present.
+    项目维护者在 ``trainer.py`` 中直接写入了一系列中英文训练样本，
+    并明确要求训练流程使用这些内置的题目而不是仓库附带的 ``train.txt``
+    或 ``zh_train.txt`` 文件。为了保证行为符合这一约束，该函数仅返回
+    内置列表，按原始顺序去重后供训练使用。
     """
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidate_files = [
-        os.path.join(project_root, "train.txt"),
-        os.path.join(project_root, "zh_train.txt"),
-    ]
-
-    aggregated_texts = []
-    for path in candidate_files:
-        if not os.path.exists(path):
-            continue
-
-        with open(path, "r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                text = raw_line.strip()
-                if not text:
-                    continue
-                text = re.sub(r"^\d+\s*[\.、:：-]\s*", "", text)
-                if text:
-                    aggregated_texts.append(text)
-
-    if not aggregated_texts:
-        print("未找到仓库提供的训练数据文件，使用预设训练数据。")
-
-    aggregated_texts.extend(_FALLBACK_TRAINING_TEXTS)
-
     # 去重但保持顺序，避免重复样本对训练造成不必要的偏倚
-    deduped_texts = list(dict.fromkeys(aggregated_texts))
+    deduped_texts = list(dict.fromkeys(_FALLBACK_TRAINING_TEXTS))
+
+    if not deduped_texts:
+        raise RuntimeError("内置训练文本为空，请检查 _FALLBACK_TRAINING_TEXTS 定义。")
 
     return deduped_texts
 

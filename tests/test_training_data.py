@@ -4,13 +4,15 @@ from apt_model.training.trainer import get_training_texts
 from apt_model.modeling.basic_tokenizer import BasicEnglishTokenizer
 
 
-def test_get_training_texts_uses_repository_files():
+def test_get_training_texts_returns_builtin_prompts():
     texts = get_training_texts()
 
-    assert any("Hello" in text or "hello" in text for text in texts)
+    assert "Hello, how are you?" in texts
     assert any("人工智能" in text for text in texts)
     # 预设的对话样本应该始终可用，例如派蒙相关的台词
     assert any("派蒙" in text for text in texts)
+    # 不应出现重复，去重逻辑应生效
+    assert len(texts) == len(set(texts))
 
 
 def test_basic_english_tokenizer_encodes_from_local_vocab():
