@@ -137,7 +137,12 @@ class BasicEnglishTokenizer:
         return dict(self._token_to_id)
 
     def convert_ids_to_tokens(self, ids: Iterable[int]) -> List[str]:
-        return [self._id_to_token.get(idx, self.unk_token) for idx in ids]
+        tokens: List[str] = []
+        for idx in ids:
+            if torch.is_tensor(idx):
+                idx = idx.item()
+            tokens.append(self._id_to_token.get(int(idx), self.unk_token))
+        return tokens
 
     # ------------------------------------------------------------------
     # Core API used by the training loop
@@ -150,7 +155,7 @@ class BasicEnglishTokenizer:
         truncation: bool = False,
     ):
         tokens = self._tokenise(text)
-        ids: List[int] = []
+        ids: List[int] = [self.bos_token_id]
 
         for token in tokens:
             token_id = self._token_to_id.get(token)
@@ -193,7 +198,9 @@ class BasicEnglishTokenizer:
                 char_buffer.clear()
 
         for idx in ids:
-            token = self._id_to_token.get(idx, self.unk_token)
+            if torch.is_tensor(idx):
+                idx = idx.item()
+            token = self._id_to_token.get(int(idx), self.unk_token)
             if skip_special_tokens and token in {
                 self.pad_token,
                 self.bos_token,

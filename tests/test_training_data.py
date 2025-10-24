@@ -31,7 +31,8 @@ def test_basic_english_tokenizer_encodes_from_local_vocab():
 
     encoded = tokenizer.encode("Hello world", return_tensors="pt")
     assert encoded.ndim == 2
-    assert encoded.shape[1] >= 3  # includes EOS token
+    assert encoded.shape[1] >= 4  # includes BOS + EOS tokens
+    assert encoded[0, 0].item() == tokenizer.bos_token_id
 
     decoded = tokenizer.decode(encoded[0].tolist())
     assert "hello" in decoded

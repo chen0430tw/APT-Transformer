@@ -31,6 +31,7 @@ class APTConfig:
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
+        unk_token_id=3,
         # 注意力机制参数
         activation="gelu",  # 激活函数
         use_autopoietic=True,  # 是否使用自生成机制
@@ -75,6 +76,7 @@ class APTConfig:
         self.pad_token_id = pad_token_id
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
+        self.unk_token_id = unk_token_id
         
         # 注意力机制参数 - 平衡自生成机制
         self.activation = activation  # 激活函数
@@ -124,6 +126,7 @@ class APTConfig:
             'pad_token_id': self.pad_token_id,
             'bos_token_id': self.bos_token_id,
             'eos_token_id': self.eos_token_id,
+            'unk_token_id': self.unk_token_id,
             'activation': self.activation,
             'use_autopoietic': self.use_autopoietic,
             'sr_ratio': self.sr_ratio,

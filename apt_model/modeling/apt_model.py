@@ -1336,7 +1336,18 @@ class APTModel(nn.Module):
             
                 # 获取下一个token的logits
                 next_token_logits = self.output_projection(decoder_output[:, -1, :])
-            
+
+                banned_ids = {
+                    getattr(self.config, "pad_token_id", None),
+                    getattr(self.config, "unk_token_id", None),
+                    getattr(self.config, "bos_token_id", None),
+                }
+                for banned_id in banned_ids:
+                    if banned_id is None:
+                        continue
+                    if 0 <= banned_id < next_token_logits.size(-1):
+                        next_token_logits[:, banned_id] = -float("inf")
+
                 # 应用温度
                 next_token_logits = next_token_logits / max(0.1, temperature)  # 避免除零
             
@@ -1361,13 +1372,28 @@ class APTModel(nn.Module):
                 # 采样下一个token - 添加数值稳定性检查
                 try:
                     probs = F.softmax(next_token_logits, dim=-1)
-                    
-                    # 确保概率和为1且不包含NaN或负值
                     probs = torch.nan_to_num(probs, nan=1e-5)
+
                     probs = torch.clamp(probs, min=1e-10)
-                    probs = probs / probs.sum(dim=-1, keepdim=True)
-                    
-                    next_tokens = torch.multinomial(probs, num_samples=1)
+
+                    for banned_id in banned_ids:
+                        if banned_id is None:
+                            continue
+                        if 0 <= banned_id < probs.size(-1):
+                            probs[:, banned_id] = 0.0
+                    probs_sum = probs.sum(dim=-1, keepdim=True)
+                    zero_mask = probs_sum.squeeze(-1) == 0
+
+                    if zero_mask.any():
+                        fallback_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                        if (~zero_mask).any():
+                            normalized = probs / probs_sum.clamp(min=1e-10)
+                            sampled = torch.multinomial(normalized[~zero_mask], num_samples=1)
+                            fallback_tokens[~zero_mask] = sampled
+                        next_tokens = fallback_tokens
+                    else:
+                        probs = probs / probs_sum
+                        next_tokens = torch.multinomial(probs, num_samples=1)
                 except Exception as e:
                     print(f"采样出错，使用argmax替代: {e}")
                     next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
