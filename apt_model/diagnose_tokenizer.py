@@ -1,164 +1,290 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-分词器诊断脚本
-用于检查分词器是否正确初始化
+"""APT tokenizer diagnostic utility.
+
+This script exercises both the English and Chinese tokenizers shipped with the
+repository.  It builds a small sample corpus, instantiates the requested
+tokenizer, and reports vocabulary coverage, encode/decode round-trip behaviour,
+and the unknown-token ratio for every sample.
 """
 
+from __future__ import annotations
+
+import argparse
 import sys
-sys.path.append('.')
+from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple
 
-def diagnose_tokenizer():
-    """诊断分词器问题"""
-    
-    print("=" * 60)
-    print("APT 分词器诊断工具")
-    print("=" * 60)
-    
-    # 1. 准备测试数据
-    test_texts = [
+# Allow execution without installing the package
+sys.path.append(".")
+
+from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+
+DEFAULT_TEST_TEXTS: Mapping[str, Tuple[str, ...]] = {
+    "en": (
+        "The Autonomous Prompt Transformer builds reasoning step by step.",
+        "APT blends self-generated training prompts with curated curricula.",
+        "Language tools must decode punctuation, contractions, and casing.",
+        "This is a diagnostic sentence for the offline English tokenizer.",
+        "Prompt engineering helps align the model with user intent.",
+    ),
+    "zh": (
         "人工智能正在改变世界",
         "深度学习需要大量数据",
         "自然语言处理是AI的重要分支",
         "机器学习模型训练很重要",
-        "这是一个测试样本"
-    ]
-    
-    print(f"\n1. 测试数据: {len(test_texts)} 条")
-    for i, text in enumerate(test_texts[:3], 1):
-        print(f"   {i}. {text}")
-    
-    # 2. 测试分词器初始化
-    print("\n2. 初始化分词器...")
-    
-    from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
-    
+        "这是一个测试样本",
+    ),
+}
+
+KEY_TOKENS: Mapping[str, Tuple[str, ...]] = {
+    "en": ("apt", "transformer", "model", "prompt"),
+    "zh": ("人", "工", "智", "能", "学", "习"),
+}
+
+
+def _normalise_language(language: str) -> str:
+    if language.lower().startswith("zh"):
+        return "zh"
+    return "en"
+
+
+def _resolve_vocab(tokenizer) -> Dict[str, int]:
+    raw_vocab: MutableMapping[str, int] | None = None
+
+    if hasattr(tokenizer, "get_vocab"):
+        try:
+            raw_vocab = dict(tokenizer.get_vocab())
+        except Exception:  # pragma: no cover - defensive guard
+            raw_vocab = None
+    if raw_vocab is None and hasattr(tokenizer, "encoder"):
+        raw_vocab = getattr(tokenizer, "encoder")
+    if raw_vocab is None and hasattr(tokenizer, "vocab"):
+        raw_vocab = getattr(tokenizer, "vocab")
+
+    if raw_vocab is None:
+        return {}
+
+    # Ensure we always operate on a concrete dictionary copy
+    return {str(token): int(idx) for token, idx in raw_vocab.items()}
+
+
+def _sample_vocab(vocab: Mapping[str, int], limit: int = 20) -> List[Tuple[str, int]]:
     try:
-        tokenizer, lang = get_appropriate_tokenizer(
-            texts=test_texts,
-            tokenizer_type="chinese-char",
-            language="zh"
+        items = sorted(vocab.items(), key=lambda item: item[1])
+    except Exception:  # pragma: no cover - safeguard for unusual vocab layouts
+        items = list(vocab.items())
+    return items[:limit]
+
+
+def _to_id_list(encoded: Iterable[int]) -> List[int]:
+    if hasattr(encoded, "tolist"):
+        return list(encoded.tolist())
+    return [int(x) for x in encoded]
+
+
+def _resolve_unk_id(tokenizer, vocab: Mapping[str, int]) -> int | None:
+    for attr in ("unk_token_id", "unk_id"):
+        if hasattr(tokenizer, attr):
+            unk_id = getattr(tokenizer, attr)
+            if unk_id is not None:
+                return int(unk_id)
+    for candidate in ("<unk>", "<|unk|>"):
+        if candidate in vocab:
+            return vocab[candidate]
+    return None
+
+
+def _count_decoded_unknowns(decoded: str) -> int:
+    return decoded.count("<unk>") + decoded.count("<|unk|>")
+
+
+def _print_header(title: str) -> None:
+    print("=" * 72)
+    print(title)
+    print("=" * 72)
+
+
+def diagnose_language(
+    language: str,
+    tokenizer_type: str | None = None,
+    texts: Sequence[str] | None = None,
+    max_preview: int = 3,
+) -> bool:
+    lang = _normalise_language(language)
+    display_name = "English" if lang == "en" else "中文"
+    default_type = "basic" if lang == "en" else "chinese-char"
+    effective_tokenizer_type = tokenizer_type or default_type
+    corpus = list(texts or DEFAULT_TEST_TEXTS[lang])
+
+    _print_header(f"APT Tokenizer Diagnostics — {display_name}")
+
+    print(f"1. 样本文本: {len(corpus)} 条")
+    for idx, sample in enumerate(corpus[:max_preview], start=1):
+        print(f"   {idx}. {sample}")
+
+    print("\n2. 初始化分词器…")
+    try:
+        tokenizer, detected_lang = get_appropriate_tokenizer(
+            texts=corpus,
+            tokenizer_type=effective_tokenizer_type,
+            language=lang,
         )
-        print(f"   ✓ 分词器初始化成功")
-        print(f"   - 语言: {lang}")
-        print(f"   - 词汇表大小: {tokenizer.vocab_size}")
-    except Exception as e:
-        print(f"   ✗ 初始化失败: {e}")
-        return
-    
-    # 3. 检查词汇表
-    print("\n3. 检查词汇表...")
-    
-    if hasattr(tokenizer, 'encoder'):
-        vocab_size = len(tokenizer.encoder)
-        print(f"   - 实际词汇表大小: {vocab_size}")
-        
-        # 显示前20个词
-        print(f"   - 前20个词:")
-        for i, (token, id_) in enumerate(list(tokenizer.encoder.items())[:20]):
-            print(f"      {id_:4d}: {repr(token)}")
-        
-        # 检查关键字符是否在词汇表中
-        test_chars = ['人', '工', '智', '能', '学', '习']
-        missing = [c for c in test_chars if c not in tokenizer.encoder]
-        
-        if missing:
-            print(f"   ⚠️ 警告: 以下字符不在词汇表中: {missing}")
-        else:
-            print(f"   ✓ 关键字符都在词汇表中")
-    
-    # 4. 测试编码
-    print("\n4. 测试编码...")
-    
-    test_text = test_texts[0]
-    print(f"   测试文本: {test_text}")
-    
-    try:
-        encoded = tokenizer.encode(test_text)
-        print(f"   编码结果: {encoded}")
-        print(f"   编码长度: {len(encoded)}")
-        
-        # 检查是否全是未知词
-        if hasattr(tokenizer, 'encoder'):
-            unk_id = tokenizer.encoder.get("<|unk|>", -1)
-            unk_count = encoded.count(unk_id)
-            unk_ratio = unk_count / len(encoded) if encoded else 0
-            
-            print(f"   未知词数量: {unk_count} / {len(encoded)} ({unk_ratio*100:.1f}%)")
-            
-            if unk_ratio > 0.5:
-                print(f"   ✗ 错误: 超过50%是未知词!")
+    except Exception as exc:  # pragma: no cover - runtime diagnostics
+        print(f"   ✗ 初始化失败: {exc}")
+        return False
+
+    print("   ✓ 初始化成功")
+    print(f"   - 指定语言: {lang}")
+    print(f"   - 检测语言: {detected_lang}")
+    print(f"   - 分词器类型: {effective_tokenizer_type}")
+
+    vocab = _resolve_vocab(tokenizer)
+    print("\n3. 词汇表检查…")
+    if vocab:
+        print(f"   - 词汇表大小: {len(vocab)}")
+        print("   - 前20个词条:")
+        for token, idx in _sample_vocab(vocab):
+            print(f"      {idx:5d}: {repr(token)}")
+
+        key_tokens = KEY_TOKENS.get(lang, ())
+        if key_tokens:
+            missing = [token for token in key_tokens if token not in vocab]
+            if missing:
+                print(f"   ⚠️ 词表缺少关键词: {missing}")
             else:
-                print(f"   ✓ 未知词比例正常")
-    except Exception as e:
-        print(f"   ✗ 编码失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return
-    
-    # 5. 测试解码
-    print("\n5. 测试解码...")
-    
+                print("   ✓ 关键词均已收录")
+    else:
+        print("   ⚠️ 无法获取词汇表映射 — 检查分词器实现")
+
+    print("\n4. 单条编码测试…")
+    probe_text = corpus[0]
+    print(f"   输入: {probe_text}")
+    try:
+        encoded = tokenizer.encode(probe_text)
+        encoded_ids = _to_id_list(encoded)
+    except Exception as exc:  # pragma: no cover - runtime diagnostics
+        print(f"   ✗ 编码失败: {exc}")
+        return False
+
+    print(f"   编码长度: {len(encoded_ids)}")
+    print(f"   编码结果: {encoded_ids}")
+
+    unk_id = _resolve_unk_id(tokenizer, vocab)
+    if unk_id is not None and encoded_ids:
+        unk_hits = sum(1 for idx in encoded_ids if idx == unk_id)
+        unk_ratio = unk_hits / len(encoded_ids)
+        print(
+            f"   未知词统计: {unk_hits} / {len(encoded_ids)} ({unk_ratio * 100:.1f}%)"
+        )
+        if unk_ratio > 0.5:
+            print("   ✗ 未知词比例过高 — 请检查词表构建")
+    else:
+        print("   - 未定义未知词标记，跳过比例分析")
+
+    print("\n5. 解码与往返一致性…")
     try:
         decoded = tokenizer.decode(encoded)
-        print(f"   解码结果: {decoded}")
-        
-        # 检查是否包含大量 <unk>
-        unk_in_decoded = decoded.count("<unk>") + decoded.count("<|unk|>")
-        
-        if unk_in_decoded > len(test_text) * 0.3:
-            print(f"   ✗ 错误: 解码结果包含大量 <unk>: {unk_in_decoded}")
-        else:
-            print(f"   ✓ 解码结果正常")
-        
-        # 检查往返一致性
-        if test_text == decoded or decoded.replace(" ", "") == test_text:
-            print(f"   ✓ 编码-解码往返一致")
-        else:
-            print(f"   ⚠️ 警告: 编码-解码不一致")
-    except Exception as e:
-        print(f"   ✗ 解码失败: {e}")
-        return
-    
-    # 6. 批量测试
-    print("\n6. 批量测试所有样本...")
-    
-    success = 0
-    failed = 0
-    
-    for text in test_texts:
-        try:
-            ids = tokenizer.encode(text)
-            decoded = tokenizer.decode(ids)
-            
-            unk_id = tokenizer.encoder.get("<|unk|>", -1)
-            unk_ratio = ids.count(unk_id) / len(ids) if ids else 0
-            
-            if unk_ratio < 0.5:
-                success += 1
-            else:
-                failed += 1
-                print(f"   ✗ 失败: {text[:20]}... (未知词比例: {unk_ratio*100:.1f}%)")
-        except:
-            failed += 1
-    
-    print(f"\n   结果: {success} 成功, {failed} 失败")
-    
-    # 7. 总结
-    print("\n" + "=" * 60)
-    print("诊断总结:")
-    print("=" * 60)
-    
-    if failed == 0:
-        print("✓ 分词器工作正常！")
-        return 0
+    except Exception as exc:  # pragma: no cover - runtime diagnostics
+        print(f"   ✗ 解码失败: {exc}")
+        return False
+
+    print(f"   解码结果: {decoded}")
+    unk_in_decoded = _count_decoded_unknowns(decoded)
+    if unk_in_decoded:
+        print(f"   ⚠️ 解码文本包含 {unk_in_decoded} 个未知标记")
+    normalised_original = probe_text.replace(" ", "")
+    normalised_decoded = decoded.replace(" ", "")
+    if normalised_decoded == normalised_original:
+        print("   ✓ 编码-解码往返一致")
     else:
-        print("✗ 分词器存在问题，建议:")
-        print("  1. 增加词汇表大小 (--vocab-size 100000)")
-        print("  2. 使用更多训练数据构建词汇表")
-        print("  3. 检查 chinese_tokenizer.py 中的 prepare_vocab_from_texts 方法")
-        return 1
+        print("   ⚠️ 往返结果存在差异 — 请人工确认是否合理")
+
+    print("\n6. 批量样本检查…")
+    successes = 0
+    failures = 0
+    for sample in corpus:
+        try:
+            ids = _to_id_list(tokenizer.encode(sample))
+            if not ids:
+                print(f"   ✗ 空编码输出: {sample}")
+                failures += 1
+                continue
+            if unk_id is None:
+                successes += 1
+                continue
+            unk_ratio = sum(1 for idx in ids if idx == unk_id) / len(ids)
+            if unk_ratio <= 0.5:
+                successes += 1
+            else:
+                failures += 1
+                print(
+                    f"   ✗ 未知词比例过高 ({unk_ratio * 100:.1f}%): {sample[:20]}…"
+                )
+        except Exception as exc:  # pragma: no cover - runtime diagnostics
+            failures += 1
+            print(f"   ✗ 样本处理失败: {sample[:20]}… — {exc}")
+
+    print(f"\n   统计: 成功 {successes} 条, 失败 {failures} 条")
+
+    print("\n诊断总结")
+    if failures == 0:
+        print("✓ 分词器工作正常")
+    else:
+        print("✗ 分词器存在问题，建议检查词表或样本文本")
+
+    return failures == 0
+
+
+def parse_tokenizer_overrides(raw_overrides: Sequence[str]) -> Dict[str, str]:
+    overrides: Dict[str, str] = {}
+    for raw in raw_overrides:
+        if ":" in raw:
+            lang, tokenizer_type = raw.split(":", 1)
+            overrides[_normalise_language(lang)] = tokenizer_type
+        else:
+            overrides["default"] = raw
+    return overrides
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Diagnose APT tokenizers")
+    parser.add_argument(
+        "--language",
+        choices=("en", "zh", "both"),
+        default="both",
+        help="选择要诊断的语言",
+    )
+    parser.add_argument(
+        "--tokenizer-type",
+        action="append",
+        default=[],
+        metavar="LANG:TYPE",
+        help="覆盖默认的分词器类型，例如 zh:chinese-word 或 en:basic",
+    )
+    parser.add_argument(
+        "--max-preview",
+        type=int,
+        default=3,
+        help="输出前多少条样本文本",
+    )
+
+    args = parser.parse_args(argv)
+    overrides = parse_tokenizer_overrides(args.tokenizer_type)
+
+    languages = ["en", "zh"] if args.language == "both" else [args.language]
+    overall_success = True
+
+    for lang in languages:
+        override = overrides.get(_normalise_language(lang))
+        if override is None:
+            override = overrides.get("default")
+        ok = diagnose_language(lang, tokenizer_type=override, max_preview=args.max_preview)
+        overall_success = overall_success and ok
+        if lang != languages[-1]:
+            print("\n")
+
+    return 0 if overall_success else 1
 
 
 if __name__ == "__main__":
-    sys.exit(diagnose_tokenizer())
+    raise SystemExit(main())
