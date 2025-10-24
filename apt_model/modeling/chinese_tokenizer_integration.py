@@ -1,18 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-APT模型中文分词器集成
-该模块将中文分词器与APT模型训练系统集成
-"""
+"""APT tokenizer integration helpers."""
 
-import os
 import logging
-from typing import Optional, Dict, List, Any, Tuple
+import os
+from typing import Any, Dict, List, Optional, Tuple
 
-from transformers import GPT2Tokenizer, PreTrainedTokenizer
+from apt_model.modeling.basic_tokenizer import BasicEnglishTokenizer
 from apt_model.modeling.chinese_tokenizer import ChineseTokenizer
 
-def integrate_chinese_tokenizer(*args, **kwargs) -> PreTrainedTokenizer:
+
+def integrate_chinese_tokenizer(*args, **kwargs) -> ChineseTokenizer:
     """
     集成中文分词器。
     
@@ -36,7 +34,13 @@ def integrate_chinese_tokenizer(*args, **kwargs) -> PreTrainedTokenizer:
     return tokenizer
 
 
-def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=50257, cache_dir=None):
+def get_tokenizer(
+    tokenizer_type="gpt2",
+    language="en",
+    texts=None,
+    vocab_size=50257,
+    cache_dir=None,
+):
     """
     获取适合APT模型的分词器
     
@@ -73,44 +77,8 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
         logger.info(f"中文分词器初始化完成，词汇表大小: {tokenizer.vocab_size}")
         return tokenizer
     else:
-        # 使用默认的GPT2分词器
-        logger.info(f"加载GPT2分词器 (语言: {language})")
-        try:
-            tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
-            # GPT2分词器没有pad_token，设置它等于eos_token
-            if tokenizer.pad_token_id is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            return tokenizer
-        except Exception as e:
-            logger.error(f"加载GPT2分词器失败: {e}")
-            logger.warning("创建备用简单分词器")
-            
-            # 简单的备用分词器
-            class SimpleTokenizer:
-                def __init__(self):
-                    self.vocab_size = vocab_size
-                    self.pad_token_id = 0
-                    self.eos_token_id = 1
-                    self.pad_token = "<pad>"
-                    self.eos_token = "<eos>"
-                    
-                def encode(self, text, return_tensors=None, max_length=None, truncation=None):
-                    # 非常简单的分词 - 仅以空格分割
-                    tokens = text.split()
-                    if max_length and truncation and len(tokens) > max_length:
-                        tokens = tokens[:max_length]
-                    # 转换为ID (简单地使用哈希)
-                    ids = [hash(t) % 10000 + 10 for t in tokens]
-                    if return_tensors == "pt":
-                        import torch
-                        return torch.tensor([ids])
-                    return ids
-                
-                def decode(self, ids, skip_special_tokens=True):
-                    # 简单解码（不可逆，仅用于测试）
-                    return " ".join([f"<token_{id}>" for id in ids])
-                
-            return SimpleTokenizer()
+        logger.info("初始化本地英语分词器（无需 Hugging Face 下载）")
+        return BasicEnglishTokenizer(texts=texts, vocab_size=vocab_size)
 
 
 def save_tokenizer(tokenizer, path):
@@ -181,12 +149,8 @@ def load_tokenizer(path):
                 logger.info(f"已加载中文分词器，模式: {mode}, 词汇表大小: {tokenizer.vocab_size}")
                 return tokenizer
         
-        # 默认尝试加载GPT2分词器
-        tokenizer = GPT2Tokenizer.from_pretrained(path)
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        logger.info(f"已加载GPT2分词器")
-        return tokenizer
+        logger.info("未找到兼容配置，回退到基础英语分词器")
+        return BasicEnglishTokenizer()
     except Exception as e:
         logger.error(f"加载分词器失败: {e}")
         return None

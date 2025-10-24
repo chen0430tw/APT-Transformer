@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 import torch
 import torch.nn.functional as F
 import traceback
@@ -16,37 +17,49 @@ from apt_model.utils import set_seed
 from apt_model.utils import get_device, device
 from apt_model.config.apt_config import APTConfig
 from apt_model.modeling.apt_model import APTModel, APTLargeModel
-from apt_model.generation.generator import generate_natural_text
-from apt_model.generation.evaluator import evaluate_text_quality
 
 # 导入中文分词器相关函数
 from apt_model.modeling.chinese_tokenizer_integration import (
-    get_appropriate_tokenizer, 
+    get_appropriate_tokenizer,
     save_tokenizer,
     is_chinese_text
 )
 
 def get_training_texts():
+    """Load training texts from the repository datasets.
+
+    The project ships with ``train.txt`` (英文) and ``zh_train.txt`` (中文)
+    files.  When they are available we combine and clean their contents so
+    the training loop never needs to reach out to Hugging Face for
+    datasets.  A small in-memory fallback dataset is returned only when the
+    repository files are missing.
     """
-    获取训练文本数据。如果在项目根目录下存在 "train.txt" 文件，则读取文件，否则返回内置预设数据。
-    """
-    import os
-    # 获取项目根目录（假设代码文件在项目子目录中）
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    train_file = os.path.join(script_dir, "train.txt")
-    
-    print("检查训练数据文件路径：", train_file)
-    
-    if os.path.exists(train_file):
-        with open(train_file, "r", encoding="utf-8") as f:
-            texts = [line.strip() for line in f if line.strip()]
-        if texts:
-            return texts
-        else:
-            print("训练数据文件 'train.txt' 为空，使用预设训练数据。")
-    else:
-        print("未找到训练数据文件 'train.txt'，使用预设训练数据。")
-    
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidate_files = [
+        os.path.join(project_root, "train.txt"),
+        os.path.join(project_root, "zh_train.txt"),
+    ]
+
+    cleaned_texts = []
+    for path in candidate_files:
+        if not os.path.exists(path):
+            continue
+
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                text = raw_line.strip()
+                if not text:
+                    continue
+                text = re.sub(r"^\d+\s*[\.、:：-]\s*", "", text)
+                if text:
+                    cleaned_texts.append(text)
+
+    if cleaned_texts:
+        return cleaned_texts
+
+    print("未找到仓库提供的训练数据文件，使用预设训练数据。")
+
     # 预设训练数据集
     return [
         # 基本对话
@@ -179,11 +192,23 @@ def get_training_texts():
         "神经网络是受人脑结构启发而设计的算法。"
     ]
 
+def _generate_natural_text(*args, **kwargs):
+    from apt_model.generation.generator import generate_natural_text
+
+    return generate_natural_text(*args, **kwargs)
+
+
+def _evaluate_text_quality(text):
+    from apt_model.generation.evaluator import evaluate_text_quality
+
+    return evaluate_text_quality(text)
+
+
 # =============================================================================
 # 主训练函数
 # =============================================================================
-def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model", 
-                logger=None, resource_monitor=None, multimodal_config=None, 
+def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model",
+                logger=None, resource_monitor=None, multimodal_config=None,
                 tokenizer_type=None, language=None, texts=None, tokenizer=None):
     """训练模型的主函数"""
     # 设置随机种子
@@ -520,12 +545,12 @@ def _test_generation_after_epoch(model, tokenizer, logger=None, language="en"):
     gen_texts = []
     for prompt in test_prompts:
         with torch.no_grad():
-            gen_text, _, _, _ = generate_natural_text(model, tokenizer, prompt, max_steps=15)
+            gen_text, _, _, _ = _generate_natural_text(model, tokenizer, prompt, max_steps=15)
             print(f"提示: '{prompt}'")
             print(f"生成: '{gen_text}'")
             print("-" * 30)
             gen_texts.append(gen_text)
-    avg_quality = sum(evaluate_text_quality(text)[0] for text in gen_texts) / len(gen_texts)
+    avg_quality = sum(_evaluate_text_quality(text)[0] for text in gen_texts) / len(gen_texts)
     print(f"本轮生成文本平均质量: {avg_quality:.2f}/100")
     if avg_quality < 40:
         print("\n安柏：训练...还不够...")
@@ -578,15 +603,15 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
     for prompt in test_prompts:
         print(f"\n提示: '{prompt}'")
         with torch.no_grad():
-            untrained_text, _, _, _ = generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
-            untrained_score, untrained_feedback = evaluate_text_quality(untrained_text)
+            untrained_text, _, _, _ = _generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
+            untrained_score, untrained_feedback = _evaluate_text_quality(untrained_text)
             untrained_scores.append(untrained_score)
         print(f"未训练模型: '{untrained_text}'")
         print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
         
         with torch.no_grad():
-            trained_text, _, _, _ = generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
-            trained_score, trained_feedback = evaluate_text_quality(trained_text)
+            trained_text, _, _, _ = _generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
+            trained_score, trained_feedback = _evaluate_text_quality(trained_text)
             trained_scores.append(trained_score)
         print(f"训练后模型: '{trained_text}'")
         print(f"质量评分: {trained_score}/100 - {trained_feedback}")
