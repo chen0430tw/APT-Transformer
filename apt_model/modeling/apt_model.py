@@ -1276,146 +1276,141 @@ class APTModel(nn.Module):
 
     def generate(
         self,
-        src_tokens: torch.Tensor,
-        max_length: int = 50,
-        temperature: float = 1.0,
-        top_p: float = 0.9,
-        **kwargs
-    ) -> torch.Tensor:
+        input_ids,
+        max_length=50,
+        temperature=1.0,
+        top_p=0.9,
+        top_k=50,
+        repetition_penalty=1.0,
+        do_sample=True,
+        num_beams=1,
+        eos_token_id=None,
+        pad_token_id=None,
+    ):
         """
-        使用自生成变换器生成文本
-    
-        参数:
-            src_tokens: 源序列tokens [batch_size, src_len]
-            max_length: 生成的最大长度
-            temperature: 温度参数，控制生成的随机性
-            top_p: 核采样的概率阈值
-        
-        返回:
-            生成的token序列
+        ⭐ 修复后的文本生成方法
+
+        Args:
+            input_ids: 输入token IDs [batch_size, seq_len]
+            max_length: 最大生成长度
+            temperature: 采样温度
+            top_p: nucleus采样参数
+            top_k: top-k采样参数
+            repetition_penalty: 重复惩罚
+            do_sample: 是否采样(False则贪心解码)
+            num_beams: beam search的beam数量
+            eos_token_id: 结束标记ID
+            pad_token_id: 填充标记ID
+
+        Returns:
+            生成的token IDs [batch_size, generated_length]
         """
-        batch_size = src_tokens.size(0)
-        device = src_tokens.device
-    
+        del num_beams  # 当前实现不支持beam search，避免未使用参数警告
+
+        if input_ids is None:
+            raise ValueError("input_ids 不能为空")
+
+        device = input_ids.device
+        batch_size = input_ids.size(0)
+
+        if max_length <= input_ids.size(1):
+            return input_ids[:, :max_length]
+
+        if eos_token_id is None:
+            eos_token_id = getattr(self.config, "eos_token_id", 2)
+        if pad_token_id is None:
+            pad_token_id = getattr(self.config, "pad_token_id", 0)
+        unk_token_id = getattr(self.config, "unk_token_id", None)
+
+        generated = input_ids.clone()
+
+        was_training = self.training
+        self.eval()
+
         try:
-            # 获取源序列的掩码
-            src_padding_mask = (src_tokens == self.config.pad_token_id)
-        
-            # 编码源序列
-            memory = self.encode(
-                src_tokens=src_tokens,
-                src_key_padding_mask=src_padding_mask
-            )
-        
-            # 初始化解码序列为起始token
-            curr_ids = torch.full(
-                (batch_size, 1),
-                self.config.bos_token_id,
-                dtype=torch.long,
-                device=device
-            )
-        
-            # 逐token生成
-            for _ in range(max_length):
-                # 创建目标掩码
-                tgt_len = curr_ids.size(1)
-                tgt_mask = torch.triu(
-                    torch.full((tgt_len, tgt_len), float('-inf'), device=device),
-                    diagonal=1
-                )
-                tgt_padding_mask = (curr_ids == self.config.pad_token_id)
-            
-                # 解码当前序列
-                decoder_output = self.decode(
-                    tgt_tokens=curr_ids,
-                    memory=memory,
-                    tgt_mask=tgt_mask,
-                    tgt_key_padding_mask=tgt_padding_mask,
-                    memory_key_padding_mask=src_padding_mask
-                )
-            
-                # 获取下一个token的logits
-                next_token_logits = self.output_projection(decoder_output[:, -1, :])
-
-                banned_ids = {
-                    getattr(self.config, "pad_token_id", None),
-                    getattr(self.config, "unk_token_id", None),
-                    getattr(self.config, "bos_token_id", None),
-                }
-                for banned_id in banned_ids:
-                    if banned_id is None:
-                        continue
-                    if 0 <= banned_id < next_token_logits.size(-1):
-                        next_token_logits[:, banned_id] = -float("inf")
-
-                # 应用温度
-                next_token_logits = next_token_logits / max(0.1, temperature)  # 避免除零
-            
-                # Top-p采样(核采样)
-                if top_p < 1.0:
+            with torch.no_grad():
+                total_steps = max_length - input_ids.size(1)
+                for _ in range(total_steps):
                     try:
-                        sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-                    
-                        # 移除超过top_p的token
-                        sorted_indices_to_remove = cumulative_probs > top_p
-                        # 保留至少一个token
-                        sorted_indices_to_remove[..., 0] = 0
-                    
-                        # 屏蔽被移除的token
-                        for b in range(batch_size):
-                            indices_to_remove = sorted_indices[b][sorted_indices_to_remove[b]]
-                            next_token_logits[b, indices_to_remove] = -float("Inf")
-                    except Exception as e:
-                        print(f"Top-p采样出错，跳过: {e}")
-            
-                # 采样下一个token - 添加数值稳定性检查
-                try:
-                    probs = F.softmax(next_token_logits, dim=-1)
-                    probs = torch.nan_to_num(probs, nan=1e-5)
+                        outputs = self.forward(
+                            src_tokens=generated,
+                            tgt_tokens=generated,
+                            src_key_padding_mask=(generated == pad_token_id),
+                            src_mask=None,
+                        )
+                        logits = outputs[:, -1, :]
+                    except Exception as forward_err:
+                        print(f"⚠️ 生成时前向传播错误: {forward_err}")
+                        outputs = self.forward(generated, generated)
+                        logits = outputs[:, -1, :]
 
-                    probs = torch.clamp(probs, min=1e-10)
+                    if repetition_penalty != 1.0:
+                        for i in range(batch_size):
+                            history = set(generated[i].tolist())
+                            if not history:
+                                continue
+                            logits[i, list(history)] /= repetition_penalty
 
+                    temperature = max(float(temperature), 1e-5)
+                    logits = logits / temperature
+
+                    banned_ids = [pad_token_id, eos_token_id, unk_token_id]
+                    vocab_size = logits.size(-1)
                     for banned_id in banned_ids:
                         if banned_id is None:
                             continue
-                        if 0 <= banned_id < probs.size(-1):
-                            probs[:, banned_id] = 0.0
-                    probs_sum = probs.sum(dim=-1, keepdim=True)
-                    zero_mask = probs_sum.squeeze(-1) == 0
+                        if 0 <= banned_id < vocab_size:
+                            logits[:, banned_id] = -float("inf")
 
-                    if zero_mask.any():
-                        fallback_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-                        if (~zero_mask).any():
-                            normalized = probs / probs_sum.clamp(min=1e-10)
-                            sampled = torch.multinomial(normalized[~zero_mask], num_samples=1)
-                            fallback_tokens[~zero_mask] = sampled
-                        next_tokens = fallback_tokens
+                    next_token = None
+                    if do_sample:
+                        if top_k > 0:
+                            k = min(int(top_k), vocab_size)
+                            values, _ = torch.topk(logits, k)
+                            min_values = values[..., -1, None]
+                            mask = logits < min_values
+                            logits = logits.masked_fill(mask, float("-inf"))
+
+                        if 0 < top_p < 1.0:
+                            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                            sorted_probs = F.softmax(sorted_logits, dim=-1)
+                            cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+                            sorted_indices_to_remove = cumulative_probs > top_p
+                            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                            sorted_indices_to_remove[..., 0] = 0
+
+                            for i in range(batch_size):
+                                remove_indices = sorted_indices[i][sorted_indices_to_remove[i]]
+                                logits[i, remove_indices] = float("-inf")
+
+                        probs = F.softmax(logits, dim=-1)
+                        probs = torch.nan_to_num(probs, nan=0.0)
+
+                        prob_sums = probs.sum(dim=-1, keepdim=True)
+                        zero_mask = prob_sums.squeeze(-1) == 0
+                        if zero_mask.any():
+                            fallback = torch.argmax(logits, dim=-1, keepdim=True)
+                            if (~zero_mask).any():
+                                normalized = probs[~zero_mask] / prob_sums[~zero_mask]
+                                sampled = torch.multinomial(normalized, num_samples=1)
+                                fallback[~zero_mask] = sampled
+                            next_token = fallback
+                        else:
+                            probs = probs / prob_sums
+                            next_token = torch.multinomial(probs, num_samples=1)
                     else:
-                        probs = probs / probs_sum
-                        next_tokens = torch.multinomial(probs, num_samples=1)
-                except Exception as e:
-                    print(f"采样出错，使用argmax替代: {e}")
-                    next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-            
-                # 连接到当前序列
-                curr_ids = torch.cat([curr_ids, next_tokens], dim=1)
-            
-                # 检查是否所有序列都生成了结束token
-                if (next_tokens == self.config.eos_token_id).all():
-                    break
-        
-            return curr_ids
-            
-        except Exception as e:
-            print(f"生成过程出错: {e}")
-            # 返回一个简单的结果，避免完全失败
-            return torch.full(
-                (batch_size, 1),
-                self.config.eos_token_id,
-                dtype=torch.long,
-                device=device
-            )
+                        next_token = torch.argmax(logits, dim=-1, keepdim=True)
+
+                    generated = torch.cat([generated, next_token], dim=1)
+
+                    if (next_token == eos_token_id).all():
+                        break
+        finally:
+            if was_training:
+                self.train()
+
+        return generated
 
 
 class APTLargeModel(APTModel):
