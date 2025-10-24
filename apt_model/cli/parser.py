@@ -3,15 +3,35 @@
 """
 Command-line argument parser for APT Model tool.
 Handles all command-line options and arguments for the various functionalities.
+
+重构后的解析器：
+- 支持动态命令（从命令注册中心获取）
+- 插件可以添加自定义命令
 """
 
 import argparse
 import os
 
+
+def get_available_commands():
+    """
+    获取所有可用命令（从命令注册中心）
+
+    返回:
+        list: 可用命令列表
+    """
+    try:
+        from apt_model.cli.command_registry import command_registry
+        return command_registry.list_commands(include_placeholders=True)
+    except ImportError:
+        # 如果命令注册系统还未导入，返回基本命令列表
+        return ['train', 'chat', 'evaluate', 'help']
+
+
 def parse_arguments():
     """
     Parse command-line arguments for APT Model tool.
-    
+
     Returns:
         argparse.Namespace: Parsed arguments
     """
@@ -37,16 +57,14 @@ Examples:
     parser.add_argument('--language', type=str, default="zh_CN",
                         choices=["zh_CN", "en_US"],
                         help='Interface language (default: zh_CN)')
-    
+
     parser.add_argument('--language-file', type=str, default=None,
                         help='Custom language file path')
-    
-    # Action argument
-    parser.add_argument('action', nargs='?', default=None, 
-                        choices=['train', 'test', 'eval', 'evaluate', 'compare', 'chat', 
-                                 'train-custom', 'train-hf', 'distill', 'train-reasoning', 
-                                 'process-data', 'backup', 'upload', 'export-ollama', 
-                                 'clean-cache', 'visualize', 'estimate'],
+
+    # Action argument - 动态从命令注册中心获取可用命令
+    available_commands = get_available_commands()
+    parser.add_argument('action', nargs='?', default=None,
+                        choices=available_commands if available_commands else None,
                         help='Action to perform')
 
     # ===============================
