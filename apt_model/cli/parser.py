@@ -42,11 +42,11 @@ Examples:
                         help='Custom language file path')
     
     # Action argument
-    parser.add_argument('action', nargs='?', default=None, 
-                        choices=['train', 'test', 'eval', 'evaluate', 'compare', 'chat', 
-                                 'train-custom', 'train-hf', 'distill', 'train-reasoning', 
-                                 'process-data', 'backup', 'upload', 'export-ollama', 
-                                 'clean-cache', 'visualize', 'estimate'],
+    parser.add_argument('action', nargs='?', default=None,
+                        choices=['train', 'test', 'eval', 'evaluate', 'compare', 'chat',
+                                 'train-custom', 'train-hf', 'distill', 'train-reasoning',
+                                 'process-data', 'backup', 'upload', 'export-ollama',
+                                 'clean-cache', 'visualize', 'estimate', 'config', 'debug'],
                         help='Action to perform')
 
     # ===============================
@@ -174,6 +174,31 @@ Examples:
     # 用于训练时间估算的 dataset-size 参数
     parser.add_argument('--dataset-size', type=int, default=1000,
                         help='Pseudo dataset size for training time estimation (default: 1000)')
+
+    # ===============================
+    #  Config command arguments
+    # ===============================
+    config_group = parser.add_argument_group('Config Command Options')
+    config_group.add_argument('--show', dest='show_config', action='store_true',
+                             help='Show all current configuration')
+    config_group.add_argument('--set-debug', type=str, metavar='on|off',
+                             help='Enable or disable debug mode (on/off)')
+    config_group.add_argument('--get', dest='get_config', type=str, metavar='KEY',
+                             help='Get specific configuration value')
+    config_group.add_argument('--set-key', dest='set_config_key', type=str, metavar='KEY',
+                             help='Configuration key to set (use with --set-value)')
+    config_group.add_argument('--set-value', dest='set_config_value', type=str, metavar='VALUE',
+                             help='Configuration value to set (use with --set-key)')
+    config_group.add_argument('--reset', dest='reset_config', action='store_true',
+                             help='Reset configuration to default')
+
+    # ===============================
+    #  Debug command arguments
+    # ===============================
+    debug_group = parser.add_argument_group('Debug Command Options')
+    debug_group.add_argument('--type', dest='debug_type', type=str,
+                            choices=['io', 'model', 'data', 'tokenizer', 'all'],
+                            help='Type of debug check to run (default: all)')
 
     return parser.parse_args()
 

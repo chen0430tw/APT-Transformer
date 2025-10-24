@@ -201,7 +201,19 @@ def main():
             logger.info("导出模型到 Ollama 格式...")
             exit_code = run_export_ollama_command(args)
             sys.exit(exit_code)
-            
+
+        elif args.action == "config":
+            # 配置管理命令
+            from apt_model.cli.commands import run_config_command
+            exit_code = run_config_command(args)
+            sys.exit(exit_code)
+
+        elif args.action == "debug":
+            # Debug诊断命令
+            from apt_model.cli.commands import run_debug_command
+            exit_code = run_debug_command(args)
+            sys.exit(exit_code)
+
         elif args.action == "help":
             # 显示帮助信息
             exit_code = show_help(args)
