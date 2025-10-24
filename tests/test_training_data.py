@@ -57,3 +57,20 @@ def test_basic_tokenizer_can_be_serialized(tmp_path):
     assert isinstance(reloaded, BasicEnglishTokenizer)
     assert reloaded.get_vocab() == tokenizer.get_vocab()
     assert reloaded.lowercase == tokenizer.lowercase
+
+
+def test_basic_tokenizer_character_fallback_roundtrip():
+    tokenizer = BasicEnglishTokenizer(texts=["Hello there"], vocab_size=128)
+
+    encoded = tokenizer.encode("Amber: training is not enough", return_tensors=None)
+    assert tokenizer.unk_token_id not in encoded
+
+    decoded = tokenizer.decode(encoded)
+    assert decoded == "amber: training is not enough"
+
+
+def test_basic_tokenizer_convert_ids_to_tokens_exposes_known_tokens():
+    tokenizer = BasicEnglishTokenizer(texts=["Hello there"], vocab_size=128)
+    encoded = tokenizer.encode("Hello", return_tensors=None)
+    tokens = tokenizer.convert_ids_to_tokens(encoded)
+    assert "hello" in tokens

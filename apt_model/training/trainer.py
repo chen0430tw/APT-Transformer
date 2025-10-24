@@ -236,9 +236,15 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         train_texts = get_training_texts()
     else:
         train_texts = texts
-    
+
     print(f"训练数据集大小: {len(train_texts)} 条文本")
-    
+
+    preview_count = min(5, len(train_texts))
+    if preview_count:
+        print("示例训练文本：")
+        for idx, sample in enumerate(train_texts[:preview_count], start=1):
+            print(f"  {idx}. {sample}")
+
     # 如果数据为空，则报错
     if len(train_texts) == 0:
         raise ValueError("训练数据为空，请确保数据文件存在或内置数据正确加载。")

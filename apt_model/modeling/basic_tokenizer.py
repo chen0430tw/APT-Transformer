@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import string
 from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
@@ -32,6 +33,31 @@ _DEFAULT_VOCAB = [
     "data",
     "transformer",
 ]
+
+_ALPHANUMERIC_FALLBACK = set(string.ascii_lowercase + string.digits)
+_PUNCTUATION_FALLBACK = set(
+    [
+        ".",
+        ",",
+        "!",
+        "?",
+        ";",
+        ":",
+        "-",
+        "(",
+        ")",
+        "[",
+        "]",
+        "{",
+        "}",
+        "'",
+        '"',
+        "/",
+    ]
+)
+
+_NO_SPACE_BEFORE = {".", ",", "!", "?", ";", ":", "-", "'", '"', ")", "]", "}"}
+_NO_SPACE_AFTER = {"(", "[", "{", '"', "'", "-"}
 
 
 class BasicEnglishTokenizer:
@@ -56,6 +82,7 @@ class BasicEnglishTokenizer:
         lowercase: bool = True,
     ) -> None:
         self.lowercase = lowercase
+        self._vocab_limit = vocab_size
 
         self._token_to_id = {
             self.pad_token: 0,
@@ -63,9 +90,13 @@ class BasicEnglishTokenizer:
             self.eos_token: 2,
             self.unk_token: 3,
         }
+        self.word_boundary_token = "<wb>"
+        self._token_to_id[self.word_boundary_token] = 4
         self._id_to_token = {idx: tok for tok, idx in self._token_to_id.items()}
+        self._word_boundary_id = self._token_to_id[self.word_boundary_token]
 
         self._build_vocab(texts or (), vocab_size)
+        self._install_fallback_tokens()
 
     # ------------------------------------------------------------------
     # Properties mirroring Hugging Face tokeniser attributes
@@ -88,7 +119,13 @@ class BasicEnglishTokenizer:
 
     @property
     def all_special_ids(self) -> List[int]:
-        return [self.pad_token_id, self.bos_token_id, self.eos_token_id, self.unk_token_id]
+        return [
+            self.pad_token_id,
+            self.bos_token_id,
+            self.eos_token_id,
+            self.unk_token_id,
+            self._word_boundary_id,
+        ]
 
     @property
     def vocab_size(self) -> int:
@@ -98,6 +135,9 @@ class BasicEnglishTokenizer:
         """Return a copy of the internal vocabulary mapping."""
 
         return dict(self._token_to_id)
+
+    def convert_ids_to_tokens(self, ids: Iterable[int]) -> List[str]:
+        return [self._id_to_token.get(idx, self.unk_token) for idx in ids]
 
     # ------------------------------------------------------------------
     # Core API used by the training loop
@@ -110,7 +150,27 @@ class BasicEnglishTokenizer:
         truncation: bool = False,
     ):
         tokens = self._tokenise(text)
-        ids = [self._token_to_id.get(tok, self.unk_token_id) for tok in tokens]
+        ids: List[int] = []
+
+        for token in tokens:
+            token_id = self._token_to_id.get(token)
+            if token_id is not None:
+                ids.append(token_id)
+                continue
+
+            if token and all(char in _ALPHANUMERIC_FALLBACK for char in token):
+                ids.extend(self._token_to_id.get(char, self.unk_token_id) for char in token)
+                ids.append(self._word_boundary_id)
+                continue
+
+            if token in _PUNCTUATION_FALLBACK:
+                ids.append(self._token_to_id.get(token, self.unk_token_id))
+                continue
+
+            ids.append(self.unk_token_id)
+        if ids and ids[-1] == self._word_boundary_id:
+            ids.pop()
+
         ids.append(self.eos_token_id)
 
         if max_length is not None:
@@ -125,20 +185,58 @@ class BasicEnglishTokenizer:
 
     def decode(self, ids: Iterable[int], skip_special_tokens: bool = True) -> str:
         tokens: List[str] = []
+        char_buffer: List[str] = []
+
+        def flush_buffer() -> None:
+            if char_buffer:
+                tokens.append("".join(char_buffer))
+                char_buffer.clear()
+
         for idx in ids:
             token = self._id_to_token.get(idx, self.unk_token)
             if skip_special_tokens and token in {
                 self.pad_token,
                 self.bos_token,
                 self.eos_token,
+                self.word_boundary_token,
             }:
+                flush_buffer()
                 continue
+
+            if token == self.word_boundary_token:
+                flush_buffer()
+                continue
+
+            if token in _ALPHANUMERIC_FALLBACK:
+                char_buffer.append(token)
+                continue
+
+            flush_buffer()
             tokens.append(token)
-        return " ".join(tokens)
+
+        flush_buffer()
+        return self._render_tokens(tokens)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _install_fallback_tokens(self) -> None:
+        for token in sorted(_ALPHANUMERIC_FALLBACK):
+            if len(self._token_to_id) >= self._vocab_limit:
+                return
+            if token not in self._token_to_id:
+                idx = len(self._token_to_id)
+                self._token_to_id[token] = idx
+                self._id_to_token[idx] = token
+
+        for token in sorted(_PUNCTUATION_FALLBACK):
+            if len(self._token_to_id) >= self._vocab_limit:
+                return
+            if token not in self._token_to_id:
+                idx = len(self._token_to_id)
+                self._token_to_id[token] = idx
+                self._id_to_token[idx] = token
+
     def _build_vocab(self, texts: Sequence[str], vocab_size: int) -> None:
         counter: Counter[str] = Counter()
 
@@ -162,6 +260,21 @@ class BasicEnglishTokenizer:
             text = text.lower()
         tokens = self._TOKEN_RE.findall(text)
         return tokens or [self.unk_token]
+
+    def _render_tokens(self, tokens: List[str]) -> str:
+        if not tokens:
+            return ""
+
+        rendered: List[str] = [tokens[0]]
+        for token in tokens[1:]:
+            prev = rendered[-1]
+            if token in _NO_SPACE_BEFORE:
+                rendered[-1] = prev + token
+            elif prev and prev[-1] in _NO_SPACE_AFTER:
+                rendered[-1] = prev + token
+            else:
+                rendered.append(" " + token)
+        return "".join(rendered)
 
 
     # ------------------------------------------------------------------
