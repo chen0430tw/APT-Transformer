@@ -2,29 +2,6 @@
 """
 vft_tva.py  —  Vein-Flow Transformer / Tri-Vein Attention (core modules)
 
-⚠️ DEPRECATION NOTICE:
-This file is kept for backward compatibility only.
-
-The VFT/TVA implementation has been refactored and moved to:
-    apt_model/modeling/blocks/
-
-New imports:
-    from apt_model.modeling.blocks import (
-        VeinProjector,           # Replaces VeinProjector
-        VeinSubspaceShared,      # Alias for compatibility
-        TVAAttention,            # TVA attention
-        VFTFeedForward,          # VFT FFN
-        NormalCompensator,       # Normal compensation
-        VFTBlock,                # Complete VFT block
-        create_vft_block,        # Factory function
-    )
-
-For new code, please use the refactored modules from apt_model.modeling.blocks.
-See VFT_TVA_USAGE.md for documentation.
-
-Original implementation below (for reference):
-===============================================================
-
 Includes:
 - VeinProjector: shared low-rank subspace U_r, V_r
 - TVAAttention: attention computed wholly in r-dim vein subspace
