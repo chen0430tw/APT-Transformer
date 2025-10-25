@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Model (自生成变换器) 训练工具
-一个功能丰富的模型训练和评估工具
+APT Model (自生成变换器) Launcher (启动器)
 
-重构后的主入口：
-- 使用命令注册系统
-- 支持插件动态添加命令
-- 简化的命令分发逻辑
+统一的启动器入口：
+- 初始化控制台核心
+- 加载所有核心模块
+- 分发命令到相应处理器
+- 提供交互式和批处理模式
 """
 
 import os
@@ -19,37 +19,35 @@ from datetime import datetime
 
 from apt_model.cli.parser import parse_arguments
 from apt_model.utils.logging_utils import setup_logging
-from apt_model.utils.resource_monitor import ResourceMonitor
 from apt_model.utils.language_manager import LanguageManager
-from apt_model.utils.hardware_check import check_hardware_compatibility
-from apt_model.utils.cache_manager import CacheManager
-from apt_model.config.apt_config import APTConfig
 from apt_model.utils import set_seed, get_device
-from apt_model.cli.command_registry import command_registry, execute_command
+from apt_model.console.core import initialize_console, get_console
 
 
-def print_banner(lang_manager):
-    """显示欢迎横幅"""
-    _ = lambda key: lang_manager.get(key)
-    banner = f"""
-    ╔═══════════════════════════════════════════════╗
-    ║          {_("app_name")}          ║
-    ╠═══════════════════════════════════════════════╣
-    ║ {_("amber.training")}                          ║
-    ╚═══════════════════════════════════════════════╝
+def print_launcher_banner():
+    """显示启动器横幅"""
+    banner = """
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                                                                   ║
+    ║          APT Launcher - Autopoietic Transformer Launcher          ║
+    ║                    自生成变换器启动器                              ║
+    ║                                                                   ║
+    ║  Unified console system for APT model management                  ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
     """
     print(banner)
 
 
-def initialize_system(args):
+def initialize_launcher(args):
     """
-    初始化系统配置
+    初始化启动器
 
     参数:
         args: 命令行参数
 
     返回:
-        tuple: (logger, lang_manager, device)
+        tuple: (logger, console, device)
     """
     # 设置随机种子
     set_seed(args.seed)
@@ -57,87 +55,112 @@ def initialize_system(args):
     # 设置设备
     device = get_device(args.force_cpu)
 
-    # 初始化语言管理器
-    lang_manager = LanguageManager(args.language, args.language_file)
-    _ = lambda key, *params: lang_manager.get(key).format(*params) if params else lang_manager.get(key)
-
     # 初始化日志记录
-    log_file = f"apt_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_file = f"apt_launcher_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     logger = setup_logging(log_file=log_file)
-    logger.info(_("welcome"))
-    logger.info(_("language") + f": {args.language}")
-    logger.info(_("training.device").format(device))
+    logger.info("APT Launcher starting...")
+    logger.info(f"Device: {device}")
+    logger.info(f"Language: {args.language}")
 
-    # 显示欢迎横幅
-    print_banner(lang_manager)
+    # 构建控制台配置
+    console_config = {
+        'device': str(device),
+        'language': args.language,
+        'seed': args.seed,
+        'cache_dir': getattr(args, 'cache_dir', '.cache'),
+    }
 
-    # 初始化缓存管理器
-    cache_manager = CacheManager(cache_dir=args.cache_dir, logger=logger)
+    # 初始化控制台核心
+    console = initialize_console(config=console_config, auto_start=True)
+    logger.info("Console Core initialized")
 
-    # 创建资源监控器
-    resource_monitor = ResourceMonitor(logger=logger)
-
-    # 检查硬件兼容性（仅在需要模型的命令时）
-    if args.action in ['train', 'train-custom', 'chat', 'evaluate']:
-        model_config = APTConfig()
-        check_hardware_compatibility(model_config, logger)
-
-    return logger, lang_manager, device
+    return logger, console, device
 
 
-def show_default_help():
-    """显示默认帮助信息（当没有指定命令时）"""
-    print("欢迎使用APT模型！")
-    print("\n可用命令:")
+def show_default_help(console):
+    """
+    显示默认帮助信息（当没有指定命令时）
+
+    参数:
+        console: 控制台核心实例
+    """
+    print_launcher_banner()
+    print("\n欢迎使用 APT Launcher！")
+    print("\n这是一个统一的启动器，用于管理和启动所有 APT 功能。\n")
 
     # 从命令注册中心获取所有命令
-    commands_by_category = command_registry.get_commands_by_category(include_placeholders=False)
+    commands_by_category = console.command_registry.get_commands_by_category(include_placeholders=False)
 
+    print("可用命令类别:")
     for category in sorted(commands_by_category.keys()):
-        print(f"\n{category.upper()}:")
-        for metadata in commands_by_category[category]:
-            help_text = metadata.help_text or "无说明"
-            print(f"  {metadata.name:<20} - {help_text}")
-            if metadata.aliases:
-                print(f"    {'':18}别名: {', '.join(metadata.aliases)}")
+        count = len(commands_by_category[category])
+        print(f"  - {category.upper():<15} ({count} 个命令)")
 
-    print("\n获取详细帮助:")
-    print("  python -m apt_model help")
-    print("\n示例:")
-    print("  python -m apt_model train")
-    print("  python -m apt_model chat")
-    print("  python -m apt_model evaluate --model-path my_model")
+    print("\n常用命令:")
+    print("  console-status                - 显示控制台状态")
+    print("  modules-list                  - 列出所有模块")
+    print("  train                         - 训练模型")
+    print("  chat                          - 交互式对话")
+    print("  console-help                  - 显示帮助")
+
+    print("\n获取详细信息:")
+    print("  python -m apt_model console-commands      - 列出所有命令")
+    print("  python -m apt_model console-help <cmd>    - 查看命令帮助")
+
+    print("\n快速开始:")
+    print("  python -m apt_model console-status        - 查看系统状态")
+    print("  python -m apt_model modules-list          - 查看模块列表")
+    print("  python -m apt_model train                 - 开始训练")
 
 
 def main():
-    """主函数"""
-    # 解析命令行参数
-    args = parse_arguments()
+    """
+    Launcher 主函数
 
-    # 初始化系统
-    logger, lang_manager, device = initialize_system(args)
+    启动器流程：
+    1. 解析命令行参数
+    2. 初始化控制台核心
+    3. 加载核心模块
+    4. 分发命令
+    """
+    try:
+        # 解析命令行参数
+        args = parse_arguments()
 
-    # 根据动作选择功能
-    if args.action:
-        # 检查命令是否存在
-        if not command_registry.has_command(args.action):
-            logger.warning(f"未知的动作: {args.action}")
-            print(f"错误: 未知命令 '{args.action}'")
-            print("使用 'python -m apt_model help' 查看可用命令")
-            sys.exit(1)
+        # 初始化启动器
+        logger, console, device = initialize_launcher(args)
 
-        # 执行命令
-        try:
-            exit_code = execute_command(args.action, args)
-            sys.exit(exit_code)
-        except Exception as e:
-            logger.error(f"执行命令 '{args.action}' 时出错: {e}")
-            logger.error(traceback.format_exc())
-            print(f"错误: {e}")
-            sys.exit(1)
-    else:
-        # 显示默认帮助信息
-        show_default_help()
+        # 根据动作选择功能
+        if args.action:
+            # 检查命令是否存在
+            if not console.command_registry.has_command(args.action):
+                logger.warning(f"未知的命令: {args.action}")
+                print(f"错误: 未知命令 '{args.action}'")
+                print("使用 'python -m apt_model console-help' 查看可用命令")
+                sys.exit(1)
+
+            # 执行命令
+            logger.info(f"执行命令: {args.action}")
+            try:
+                exit_code = console.execute_command(args.action, args)
+                logger.info(f"命令执行完成，退出码: {exit_code}")
+                sys.exit(exit_code)
+            except Exception as e:
+                logger.error(f"执行命令 '{args.action}' 时出错: {e}")
+                logger.error(traceback.format_exc())
+                print(f"错误: {e}")
+                sys.exit(1)
+        else:
+            # 显示默认帮助信息
+            show_default_help(console)
+
+    except KeyboardInterrupt:
+        print("\n\n用户中断")
+        sys.exit(130)
+    except Exception as e:
+        print(f"启动器错误: {e}")
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
