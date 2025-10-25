@@ -7,7 +7,7 @@ gpt5_model.py  —  All-in-one (CPU-friendly)
 - Bi-state precision align (vein subspace)
 - Composite feedback (entropy, ΔKL)
 
-Only dependency: torch
+Refactored to use unified VFT/TVA modules from apt_model.modeling.blocks
 """
 
 from __future__ import annotations
@@ -16,6 +16,9 @@ from typing import Any, Dict, Tuple, List, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Use refactored VeinProjector from blocks module
+from apt_model.modeling.blocks import VeinProjector
 
 
 # ========================= utils =========================
@@ -173,23 +176,8 @@ class PrecisionAligner:
         return out, {"alpha": self.alpha, "beta": self.beta}
 
 
-# ================== vein projector & embed =================
-class VeinProjector(nn.Module):
-    """低秩投影 U: R^r->R^d, V: R^d->R^r，用于 VFT/TVA 主干。"""
-    def __init__(self, d_model: int, rank: int):
-        super().__init__()
-        assert 1 <= rank < d_model
-        self.U = nn.Linear(rank, d_model, bias=False)
-        self.V = nn.Linear(d_model, rank, bias=False)
-        nn.init.orthogonal_(self.U.weight)
-        nn.init.orthogonal_(self.V.weight)
-
-    def project(self, x: torch.Tensor) -> torch.Tensor:
-        return self.V(x)
-
-    def reconstruct(self, z: torch.Tensor) -> torch.Tensor:
-        return self.U(z)
-
+# ================== embed =================
+# Note: VeinProjector now imported from apt_model.modeling.blocks
 
 class ToyEmbed(nn.Module):
     def __init__(self, vocab_size: int, d_model: int, max_len: int = 4096):
@@ -223,13 +211,14 @@ class GPT5Block(nn.Module):
             nn.Linear(4 * d_model, d_model),
         )
         self.top_k = int(top_k)
-        self.proj = VeinProjector(d_model, rank)
+        # Use refactored VeinProjector
+        self.proj = VeinProjector(d_model, rank, implementation='linear', init_method='orthogonal')
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, Any]]:
         h = self.norm_in(x)
         h, aux = self.moe(h, self.router, top_k=self.top_k)
         x = x + h + self.ff(h)
-        return x, {"moe": aux, "proj_rank": self.proj.V.out_features}
+        return x, {"moe": aux, "proj_rank": self.proj.rank}
 
 
 # ======================= GPT-5 model ======================
@@ -250,7 +239,8 @@ class GPT5Model(nn.Module):
         self.retriever = StreamingRetriever(threshold=0.6)
         self.ctrl = MoEController(entropy_trig=2.2, retrieval_every=192)
         self.feedback = FeedbackEvaluator()
-        self.projector = VeinProjector(d_model, rank)
+        # Use refactored VeinProjector
+        self.projector = VeinProjector(d_model, rank, implementation='linear', init_method='orthogonal')
         self.align = PrecisionAligner(self.projector, alpha=0.35, beta=0.2, tau=0.15)
         self.memory = MemoryBucket(max_short=8)
 

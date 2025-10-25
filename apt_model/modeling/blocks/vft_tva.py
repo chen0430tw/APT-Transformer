@@ -1,37 +1,15 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-vft_tva.py  —  Vein-Flow Transformer / Tri-Vein Attention (core modules)
+VFT/TVA: Vein-Flow Transformer / Tri-Vein Attention
 
-⚠️ DEPRECATION NOTICE:
-This file is kept for backward compatibility only.
-
-The VFT/TVA implementation has been refactored and moved to:
-    apt_model/modeling/blocks/
-
-New imports:
-    from apt_model.modeling.blocks import (
-        VeinProjector,           # Vein subspace projector
-        VeinSubspaceShared,      # Alias for backward compatibility
-        TVAAttention,            # TVA attention in vein space
-        VFTFeedForward,          # VFT FFN in vein space
-        NormalCompensator,       # Sparse normal compensation
-        VFTBlock,                # Complete VFT transformer block
-        create_vft_block,        # Factory function
-    )
-
-For new code, please use the refactored modules from apt_model.modeling.blocks.
-
-Original implementation below (for reference):
-===============================================================
-
-Includes:
-- VeinProjector: shared low-rank subspace U_r, V_r
+Core implementation based on original vft_tva.py:
 - TVAAttention: attention computed wholly in r-dim vein subspace
 - VFTFeedForward: factorized FFN in the same subspace
 - NormalCompensator: sparse normal corrections for off-manifold tokens
 - VFTBlock: TVA + VFT-FFN + normal compensation + unified tau gating
 
-Only dependency: torch
+Complexity: O(B * H * T² * r) instead of O(B * H * T² * d)
 """
 
 from __future__ import annotations
@@ -41,41 +19,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apt_model.modeling.blocks.vein import VeinProjector
+
 
 # --------------------------- utilities ---------------------------
 
 def _stable_softmax(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     return torch.softmax(x, dim=dim)
 
-def _off_plane_eps(h: torch.Tensor, proj: "VeinProjector") -> torch.Tensor:
+def _off_plane_eps(h: torch.Tensor, proj: VeinProjector) -> torch.Tensor:
     """离面率 ε = ||h - U(Vh)||_2 per token [B,T]."""
     z = proj.project(h)
     h_hat = proj.reconstruct(z)
     return torch.norm(h - h_hat, dim=-1)
-
-
-# ------------------------ vein projector -------------------------
-
-class VeinProjector(nn.Module):
-    """
-    Low-rank projector used by VFT/TVA; provides project() / reconstruct().
-    U: R^r -> R^d, V: R^d -> R^r with orthogonal init.
-    """
-    def __init__(self, d_model: int, rank: int):
-        super().__init__()
-        assert 1 <= rank < d_model, "rank must be in [1, d_model-1]"
-        self.U = nn.Linear(rank, d_model, bias=False)
-        self.V = nn.Linear(d_model, rank, bias=False)
-        nn.init.orthogonal_(self.U.weight)
-        nn.init.orthogonal_(self.V.weight)
-
-    def project(self, x: torch.Tensor) -> torch.Tensor:
-        """x [B,T,D] -> z [B,T,r]"""
-        return self.V(x)
-
-    def reconstruct(self, z: torch.Tensor) -> torch.Tensor:
-        """z [B,T,r] -> x_hat [B,T,D]"""
-        return self.U(z)
 
 
 # ------------------------- TVA attention -------------------------
@@ -299,14 +255,19 @@ class VFTBlock(nn.Module):
         return x, info
 
 
-# -------------------------- demo test ----------------------------
+# ----------------------- factory function ------------------------
 
-if __name__ == "__main__":
-    torch.manual_seed(0)
-    B, T, D = 2, 16, 256
-    H, r = 8, 16
-    x = torch.randn(B, T, D)
+def create_vft_block(d_model: int, n_heads: int = 8, rank: int = 32, **kwargs) -> VFTBlock:
+    """
+    Factory function to create VFT block with common defaults.
 
-    block = VFTBlock(d_model=D, n_heads=H, rank=r, s_normals=1, tau=0.18, attn_dropout=0.0, ffn_dropout=0.0)
-    y, info = block(x)
-    print("out:", tuple(y.shape), "info:", info)
+    Args:
+        d_model: Model dimension
+        n_heads: Number of attention heads
+        rank: Vein subspace rank
+        **kwargs: Additional arguments for VFTBlock
+
+    Returns:
+        VFTBlock instance
+    """
+    return VFTBlock(d_model=d_model, n_heads=n_heads, rank=rank, **kwargs)
