@@ -31,6 +31,12 @@ from apt_model.modeling.chinese_tokenizer_integration import (
 from apt_model.codecs import get_codec_for_language, list_available_codecs
 from apt_model.codecs.compat import CodecTokenizerWrapper
 
+# 导入callback系统
+from apt_model.training.callbacks import (
+    CallbackManager,
+    create_default_callbacks,
+)
+
 
 # ============================================================================
 # Codec系统集成
@@ -665,12 +671,36 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     # 导入必要的函数
     from apt_model.training.checkpoint import save_model
 
+    # 初始化callback系统
+    modules = {}
+    # 尝试提取模型中的可调度模块
+    if hasattr(model, 'moe_layer'):
+        modules['moe'] = model.moe_layer
+    if hasattr(model, 'align_layer'):
+        modules['align'] = model.align_layer
+    if hasattr(model, 'voter'):
+        modules['voter'] = model.voter
+    if hasattr(model, 'router'):
+        modules['router'] = model.router
+
+    total_steps = epochs * len(dataloader)
+    callbacks = create_default_callbacks(config, modules, epochs, total_steps)
+    callback_manager = CallbackManager(callbacks)
+
+    # 触发训练开始回调
+    callback_manager.trigger('on_train_begin', model=model, config=config)
+
     # 主训练循环
     for epoch in range(epochs):
+        # 触发epoch开始回调
+        callback_manager.trigger('on_epoch_begin', epoch=epoch)
+
         total_loss = 0
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
 
         for i, batch in enumerate(progress_bar):
+            # 触发batch开始回调
+            callback_manager.trigger('on_batch_begin', batch_idx=i)
             # 处理批次
             loss_value, should_update = _process_batch(
                 model, batch, optimizer, scaler, tokenizer,
@@ -689,11 +719,17 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                 "lr": f"{scheduler.get_last_lr()[0]:.6f}"
             })
 
+            # 触发batch结束回调
+            callback_manager.trigger('on_batch_end', batch_idx=i, loss=loss_value)
+
             # 只在累积完成后更新参数
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
                 scaler.step(optimizer)
                 scaler.update()
                 scheduler.step()
+
+                # 触发optimization step回调
+                callback_manager.trigger('on_step', step=global_step)
 
                 torch.cuda.empty_cache()
 
@@ -718,6 +754,9 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
 
         if use_tensorboard:
             writer.add_scalar('Loss/epoch', avg_loss, epoch)
+
+        # 触发epoch结束回调
+        callback_manager.trigger('on_epoch_end', epoch=epoch, metrics={'avg_loss': avg_loss})
 
         # 保存最佳模型和早停
         try:
@@ -752,6 +791,9 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         except Exception as e:
             _log_message(logger, f"模型比较出错: {e}", "error")
             debug_print(f"警告: 模型比较失败: {e}")
+
+    # 触发训练结束回调
+    callback_manager.trigger('on_train_end', model=model, config=config)
 
     return model, tokenizer, config
 
