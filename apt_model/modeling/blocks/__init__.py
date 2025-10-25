@@ -1,18 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Model Blocks
+VFT/TVA Blocks Module
 
-Core building blocks for APT models:
-- Vein subspace projection
-- VFT/TVA attention and FFN
-- Block registry system
+Refactored VFT/TVA implementation from original vft_tva.py.
 """
 
 from apt_model.modeling.blocks.vein import (
     VeinProjector,
     VeinSubspaceShared,  # Alias for backward compatibility
-    create_vein_projector,
 )
 
 from apt_model.modeling.blocks.vft_tva import (
@@ -21,35 +17,22 @@ from apt_model.modeling.blocks.vft_tva import (
     NormalCompensator,
     VFTBlock,
     create_vft_block,
-)
-
-from apt_model.modeling.blocks.registry import (
-    register_attn,
-    register_ffn,
-    get_attention,
-    get_ffn,
-    list_attention,
-    list_ffn,
+    _stable_softmax,
+    _off_plane_eps,
 )
 
 __all__ = [
-    # Vein
+    # Vein projector
     'VeinProjector',
     'VeinSubspaceShared',
-    'create_vein_projector',
-
-    # VFT/TVA
+    # VFT/TVA components
     'TVAAttention',
     'VFTFeedForward',
     'NormalCompensator',
     'VFTBlock',
+    # Factory functions
     'create_vft_block',
-
-    # Registry
-    'register_attn',
-    'register_ffn',
-    'get_attention',
-    'get_ffn',
-    'list_attention',
-    'list_ffn',
+    # Utilities
+    '_stable_softmax',
+    '_off_plane_eps',
 ]
