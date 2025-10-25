@@ -689,9 +689,73 @@ def run_distill_command(args):
 
 
 def run_train_reasoning_command(args):
-    """占位符：用于训练推理模型的命令"""
-    print("run_train_reasoning_command 命令尚未实现。")
-    return 0
+    """
+    执行推理模型训练命令
+
+    参数:
+        args: 命令行参数
+
+    返回:
+        int: 退出码
+    """
+    logger, lang_manager, device = _initialize_common(args)
+    logger.info("开始训练推理增强模型...")
+
+    # 设置资源监控
+    resource_monitor = _setup_resource_monitor(args, logger)
+    _start_monitor(resource_monitor)
+
+    try:
+        # Import reasoning training
+        from apt_model.training.train_reasoning import train_reasoning_model, load_reasoning_dataset
+        from apt_model.modeling.gpt4o_model import VeinSubspaceShared
+
+        # Load base model (placeholder - should load actual model)
+        logger.info("加载基础模型...")
+        # TODO: Load actual pre-trained base model
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        model_name = getattr(args, 'base_model', 'gpt2')
+        base_model = AutoModelForCausalLM.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        # Get model dimension
+        d_model = base_model.config.hidden_size
+
+        # Create vein projector
+        rank = getattr(args, 'vein_rank', 4)
+        vein = VeinSubspaceShared(d_model=d_model, rank=rank)
+
+        logger.info(f"使用 Vein 子空间: d_model={d_model}, rank={rank}")
+
+        # Train reasoning model
+        reasoning_controller, training_info = train_reasoning_model(
+            base_model=base_model,
+            vein_projector=vein,
+            tokenizer=tokenizer,
+            data_path=getattr(args, 'data_path', None),
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            max_reasoning_steps=getattr(args, 'max_reasoning_steps', 6),
+            use_budgeted=getattr(args, 'use_budgeted', True),
+            global_budget=getattr(args, 'global_budget', 0.15),
+            save_path=args.save_path,
+            logger=logger,
+            resource_monitor=resource_monitor,
+        )
+
+        logger.info("推理模型训练完成！")
+        logger.info(f"训练信息: {training_info}")
+
+        return 0  # 成功
+    except Exception as e:
+        return _handle_command_error("推理训练", e, logger)
+    finally:
+        _stop_monitor(resource_monitor)
 
 
 def run_process_data_command(args):
