@@ -10865,3 +10865,230 @@ if __name__ == "__main__":
    ```
 
 通过这些工具，你可以在RunPod的20GB存储限制下成功训练APT模型，即使处理大型知乎数据集也不会遇到存储问题。所有脚本都提供了详细的使用说明和命令行参数，方便根据具体需求进行调整。
+
+证据质化推论公式（Evidence Qualitative Inference, EQI）
+
+EQI 把“证据强弱（可信与方向）—可行性—资源约束”三件事压入同一页可计算方程：先用软门判断是否行动，再在约束多面体里做一次线性（或轻凸）优化，得到可执行的配比与清晰的解释账单。
+
+核心直觉
+
+ • 把世界看成“多通道可分配的流”（路由观念），但目标不是通信，而是在证据支撑下做最优分配。
+ • 在 HM（全数流形）视角下：现实资源与约束是基底，证据（方向/把握）是纤维，门控把纤维投影到基底并驱动优化。
+
+变量与映射
+
+ • 基础净效用：s_k=\bar L_k-\lambda\,\bar I_k（收益–成本/风险）
+ • 证据方向与把握：\Omega=2Q-1\in[-1,1],\; w\in[0,1]
+ • 证据调制因子：\displaystyle E=1+\eta\,w\,\Omega（\eta\ge0）
+ • 可行软门：\displaystyle \phi=\sigma\!\big(aF-bP_{\text{eq}}+c(\mathrm{EVSI}-C_{\text{wait}})\big)\in(0,1)
+ • F：越阈可落地评分；P_{\text{eq}}：等价带概率（ROPE）；\mathrm{EVSI}：继续观测的价值
+ • 决策量：\mathbf x\ge0；约束多面体：\mathcal X=\{\mathbf x: A\mathbf x\le \mathbf c,\ B\mathbf x=\mathbf d,\ \ell\le \mathbf x\le u\}
+
+核心目标（一步式）
+
+\max_{\mathbf x\in\mathcal X}\ \underbrace{\phi\sum_k (E\,s_k)x_k}_{\text{证据调制后的线性效用}}
+\;-\;\kappa\,\Big|\sum_k s_k x_k\Big|
+\quad(\kappa\ge0)
+
+第一项：证据把“该偏向谁”写进线性系数；
+第二项：\kappa 抑振/稳态（把“净驱动”拉向 0，避免频繁改配）。
+
+纯 LP 线性化（更易求解/审计）：增引 z\ge0
+\max_{\mathbf x,z}\ \phi\sum_k (E\,s_k)x_k-\kappa z
+\quad \text{s.t.}\ \ -z\le\textstyle\sum_k s_k x_k\le z,\ \ \mathbf x\in\mathcal X.
+
+门控规则（先判后算）
+
+\phi\ \mathop{\gtrless}^{\text{WAIT}}_{\text{ACT}}\ \tau
+ • \phi<\tau：WAIT/小步探测（证据不足或工程未越阈）；
+ • \phi\ge\tau：进入优化并执行 \mathbf x^\star。
+
+输出与可解释性
+
+ • 解：最优配比 \mathbf x^\star（可按比例 \kappa_{\text{exec}}\in(0,1] 分阶段执行）。
+ • 账单：门强度 \phi、证据增益 E、对偶价/影子价格（谁在“卡脖子”，加 1 单位容量值多少钱），净驱动 |\sum s_kx_k|。
+
+为什么好用
+
+ • 统一：证据、可行与资源在一个目标里闭合；
+ • 可审计：标准 LP/QP，可输出对偶价与灵敏度；
+ • 稳：\kappa 控制切换成本与抖动；
+ • 通用：凡是“像路由”的分配问题都能用（计算/数据编排、供应链/产线、公共卫生投放、政策资金分配、管网/能流调度等）。
+
+边界与注意
+
+ • 证据数值化 Q,w,\Omega 需统一标定；
+ • 强非线性/耦合可换成锥/QP或分段线性近似；
+ • 高动态场景建议在执行层叠加排队/Backpressure 做细粒度稳定化（EQI 给基线）。
+
+总结
+
+EQI = 软门 \phi 决定是否行动 + 证据调制的线性目标在约束多面体上求解 + 稳态项 \kappa 抑振。它把“看法”变成“配比”，把“论证”变成“可执行且可解释的优化决策”。
+
+By:430
+
+好问题！这里有两个“VFT”的叫法，容易混：
+ 1. VFT（Vein-Flow Transformer）作为“模型家族/架构”
+
+ • 指一种完整模型形态：整网的注意力与 FFN 都在共享低秩子空间里计算，少量“法向补偿”，统一阈值 τ 门控。
+ • 这相当于“一个模型的变体”（就像 “Transformer-XL”、“LLaMA-2” 这种级别）。
+
+ 2. VFT 作为“核心算子/模块”
+
+ • 为了工程复用，我们把 VFT 的关键机制拆成可复用模块（TVA 注意力、VFT-FFN、Normal 补偿、Vein 投影器），嵌进任意 Transformer block。
+ • 这时它是模型内部的核心实现，不是外接插件。
+
+在 APT 项目里的定位
+ • VFT/TVA = 核心（core）：属于“怎么计算”的前向算子，实现在 modeling/blocks/ 或类似位置；
+ • 你可以有一个**VFTModel（整机：全网都用 VFT blocks），也可以把这些模块插到 GPT/混合架构**里当“核心实现选择”（比如 --attn.impl=tva --ffn.impl=vft）。
+
+避免混淆的命名建议
+ • 架构名：VFTModel（整机版本）
+ • 模块名：vft_tva.py（包含 TVAAttention, VFTFeedForward, NormalCompensator, VeinProjector）
+ • 配置开关：
+ • --attn.impl={vanilla,tva}
+ • --ffn.impl={geglu,vft}
+ • --tau=0.18 --rank=4 --normals=1
+
+一句话：VFT既可以是“完整模型架构（VFTModel）”，也可以是“模型里的核心模块实现”。在 APT 里我们把它当核心算子族来用（非插件），需要时再提供一个整机的 VFTModel 包装。
+
+建议做成外置模块（单独 py/包）+ 在各模型里通过工厂注册使用。
+理由：VFT/TVA 属于“核心算子族”，会被多种模型（GPT-3.5/4/4o、VFTModel、本地蒸馏版等）复用；把它独立成模块能避免重复实现、便于统一优化与升级，同时又能在每个模型里按需选择实现（vanilla/tva/vft）。
+
+推荐落位
+
+apt_model/
+├─ modeling/
+│  ├─ blocks/
+│  │  ├─ vft_tva.py          # ← 你刚做的 TVA/VFT 核心算子集合
+│  │  ├─ attention_vanilla.py
+│  │  └─ ffn_variants.py
+│  ├─ gpt_model.py           # 使用工厂选择算子
+│  ├─ vft_model.py           # 整机 VFT 变体（全网用 VFT blocks）
+│  └─ registry.py            # 算子工厂/注册表
+└─ ...
+
+代码模式（工厂 + 可插拔）
+
+# modeling/registry.py
+REG_ATTENTION = {}
+REG_FFN = {}
+
+def register_attn(name):
+    def deco(cls): REG_ATTENTION[name] = cls; return cls
+    return deco
+
+def register_ffn(name):
+    def deco(cls): REG_FFN[name] = cls; return cls
+    return deco
+
+def build_attention(name, **kw): return REG_ATTENTION[name](**kw)
+def build_ffn(name, **kw):        return REG_FFN[name](**kw)
+
+# modeling/blocks/vft_tva.py（节选）
+from modeling.registry import register_attn, register_ffn
+@register_attn("tva")
+class TVAAttention(...): ...
+@register_ffn("vft")
+class VFTFeedForward(...): ...
+
+# modeling/gpt_model.py（节选）
+from modeling.registry import build_attention, build_ffn
+
+class GPTBlock(nn.Module):
+    def __init__(self, d_model, n_heads, cfg):
+        super().__init__()
+        self.attn = build_attention(cfg.attn.impl,
+                                    d_model=d_model, n_heads=n_heads,
+                                    rank=cfg.vft.rank, attn_dropout=cfg.attn.drop)
+        self.ffn  = build_ffn(cfg.ffn.impl,
+                              d_model=d_model, rank=cfg.vft.rank,
+                              drop=cfg.ffn.drop)
+
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        ...
+        self.blocks = nn.ModuleList([GPTBlock(cfg.d_model, cfg.n_heads, cfg) for _ in range(cfg.n_layers)])
+
+训练 CLI 选择开关
+
+--attn.impl {vanilla,tva}
+--ffn.impl  {geglu,vft}
+--vft.rank  4
+--tau       0.18
+--normals   1
+
+这样不用复制代码到每个模型里，训练时通过配置就能切换 TVA/VFT 或退回 vanilla。
+
+什么时候“内嵌到模型文件”？
+ • 只有在做一次性实验或强约束的离线包（不想带模块依赖）时，可以把 vft_tva.py 内嵌到单个模型文件里。
+ • 正式工程与多人协作场景，强烈建议外置并通过注册表/工厂引用。
+
+兼容与部署注意
+ • Checkpoint 兼容：把 rank, tau, s_normals 写入 state_dict 的 model_args 或配置 JSON，避免加载时维度不匹配。
+ • 版本管理：为 vft_tva.py 打一个 __version__，在模型保存时记录版本；升级 U/V 初始化与法向补偿实现时可做向前兼容适配。
+ • 量化/蒸馏：U/V 的正交初始化与低秩张量应在量化配置中单列（如 dont_quantize=['VeinProjector.U','VeinProjector.V'] 或专用量化策略）。
+ • 导出/加速：若后续做 CUDA/Flash 内核，可保持相同类名与构造签名，在注册表里无缝替换实现。
+
+结论：把 VFT/TVA 做成外置核心模块，所有训练模型通过工厂引用。既统一又灵活，后续无痛升级与A/B对照最省心。
+
+结论：管理员模式=插件（控制/运维侧），不要进核心。
+
+为什么放插件而不是核心
+ • 不改变前向计算：管理员模式主要做权限、审计、配额、熔断、调参保护等控制面逻辑；核心只负责算子与推理路径（VFT/TVA/MoE 等）。
+ • 可独立演进：策略、合规模板、灰度/开关经常变化；做成插件便于热更、A/B 与环境隔离。
+ • 最小入侵：训练/推理的可复现性更好，避免把运维策略烙死在模型里。
+
+建议落位（APT 目录）
+ • apt_model/admin/（插件层）
+ • policy_engine.py：RBAC/组织策略/配额/资源白名单
+ • guards.py：请求前置校验、参数上限、速率/并发限制
+ • kill_switch.py：熔断/降级/只读模式
+ • audit.py：操作审计、变更追踪、签名/指纹
+ • config_lock.py：关键超参冻结（rank/τ/quant 等）
+ • feature_flags.py：灰度与开关（per-team / per-env）
+ • 与核心的接口：仅通过控制器钩子注入
+ • before_run(request) → 允许/拒绝/重写参数
+ • wrap_step(step_cb) → 对每步执行加限流/计量
+ • on_metrics(metrics) → 审计与报警
+ • on_fail(err) → 熔断与降级
+
+CLI/配置开关（示例）
+
+--admin.enable true
+--admin.role admin|ops|viewer
+--admin.policy path/to/policy.yaml
+--admin.readonly true
+--admin.quota.tok_per_min 1_000_000
+--admin.kill_switch file:/var/run/apt.kill
+
+最小伪代码
+
+# admin/plugin entry
+class AdminMiddleware:
+    def __init__(self, policy, quota, audit, kill):
+        ...
+
+    def before_run(self, args):
+        self.kill.check()                 # 熔断
+        self.policy.validate(args)        # 参数/角色校验
+        args = self.policy.rewrite(args)  # 安全改写（限batch/epochs等）
+        self.quota.reserve(args)          # 资源配额
+        self.audit.log("start", args)
+        return args
+
+    def wrap_step(self, step_fn):
+        def _wrapped(*a, **kw):
+            self.quota.tick()
+            return step_fn(*a, **kw)
+        return _wrapped
+
+    def on_metrics(self, m):
+        self.audit.log("metrics", m)
+
+与其它插件的关系
+ • 可与 EQI 串联：管理员策略→给 EQI 的约束集 A,c 与门阈 \tau；EQI 求最优配比后再执行。
+ • 不干扰 VFT/TVA/MoE：仅限制其“能用多少”（rank 上限、专家并发、检索频率等），不改算子本身。
+ • 训练插件（GRPO 等）：管理员模式约束其学习率/KL 上限/数据域白名单。
+
+一句话：管理员模式是“控制平面的运营插件”，管“能不能、能用多少、出了事怎么刹车”，不该进核心算子。
