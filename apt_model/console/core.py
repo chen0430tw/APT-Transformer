@@ -17,6 +17,9 @@ from apt_model.console.eqi_manager import EQIManager
 from apt_model.console.plugin_standards import PluginBase, PluginManifest
 from apt_model.console.auto_loader import AutoPluginLoader
 from apt_model.console.apx_loader import APXLoader
+from apt_model.console.plugin_loader import PluginLoader
+from apt_model.console.plugin_registry import PluginRegistry
+from apt_model.console.cli_organizer import CLIOrganizer
 from apt_model.cli.command_registry import command_registry
 
 logger = logging.getLogger(__name__)
@@ -89,10 +92,25 @@ class ConsoleCore:
         # 新增：APX加载器
         self.apx_loader = APXLoader()
 
+        # 新增：APG插件加载器和注册表（插件打包系统）
+        plugin_dir = self.config.get('plugins', {}).get('plugin_dir', None)
+        if plugin_dir:
+            plugin_dir = Path(plugin_dir)
+        self.plugin_loader = PluginLoader(plugin_dir=plugin_dir)
+
+        registry_file = self.config.get('plugins', {}).get('registry_file', None)
+        if registry_file:
+            registry_file = Path(registry_file)
+        self.plugin_package_registry = PluginRegistry(registry_file=registry_file)
+
+        # 新增：CLI自组织器
+        self.cli_organizer = CLIOrganizer(self.plugin_loader)
+
         self._initialized = True
         self._running = False
 
         logger.info(f"Console Core initialized (engine version: {engine_version})")
+        logger.info(f"Plugin system ready (dir: {self.plugin_loader.plugin_dir})")
 
     def start(self, auto_load_modules: bool = True, auto_load_plugins: bool = True) -> bool:
         """
@@ -134,6 +152,15 @@ class ConsoleCore:
 
             # 注册控制台命令
             self._register_console_commands()
+
+            # 发现并注册插件提供的CLI命令（自组织）
+            try:
+                logger.info("Discovering plugin CLI commands...")
+                self.cli_organizer.discover_and_register_commands()
+                commands = self.cli_organizer.list_commands()
+                logger.info(f"Discovered {len(commands)} plugin commands")
+            except Exception as e:
+                logger.warning(f"Failed to discover plugin commands: {e}")
 
             self._running = True
             logger.info("Console Core started successfully")
@@ -559,6 +586,186 @@ class ConsoleCore:
             ...
         """
         return self.auto_loader.get_recommendations_report(capabilities, format=format)
+
+    # ========================================================================
+    # 插件打包系统管理（新增）
+    # ========================================================================
+
+    def install_plugin_package(
+        self,
+        apg_path: Path,
+        force: bool = False,
+        auto_load: bool = True,
+        auto_register_commands: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        安装APG插件包
+
+        Args:
+            apg_path: APG文件路径
+            force: 是否强制覆盖已安装插件
+            auto_load: 是否自动加载插件
+            auto_register_commands: 是否自动注册CLI命令
+
+        Returns:
+            插件manifest字典
+
+        Example:
+            >>> core = ConsoleCore()
+            >>> manifest = core.install_plugin_package(
+            ...     Path("plugins/route_optimizer-1.0.0.apg"),
+            ...     auto_load=True
+            ... )
+            >>> # 插件已安装并加载，CLI命令已注册
+        """
+        # 安装插件
+        manifest = self.plugin_loader.install(apg_path, force=force)
+
+        # 注册到插件注册表
+        self.plugin_package_registry.register(manifest, enabled=True)
+
+        logger.info(f"Installed plugin package: {manifest['name']} v{manifest['version']}")
+
+        # 自动加载插件
+        if auto_load:
+            try:
+                plugin_instance = self.plugin_loader.load(manifest['name'])
+                self.register_plugin(plugin_instance)
+                logger.info(f"Auto-loaded plugin: {manifest['name']}")
+            except Exception as e:
+                logger.error(f"Failed to auto-load plugin {manifest['name']}: {e}")
+
+        # 自动注册CLI命令
+        if auto_register_commands:
+            try:
+                self.cli_organizer.discover_and_register_commands([manifest['name']])
+                logger.info(f"Registered CLI commands from: {manifest['name']}")
+            except Exception as e:
+                logger.error(f"Failed to register CLI commands from {manifest['name']}: {e}")
+
+        return manifest
+
+    def uninstall_plugin_package(self, plugin_name: str):
+        """
+        卸载插件包
+
+        Args:
+            plugin_name: 插件名称
+
+        Example:
+            >>> core.uninstall_plugin_package("route_optimizer")
+        """
+        # 先从注册表注销
+        try:
+            self.plugin_package_registry.unregister(plugin_name)
+        except Exception as e:
+            logger.warning(f"Failed to unregister plugin from registry: {e}")
+
+        # 注销CLI命令
+        try:
+            self.cli_organizer.unregister_plugin_commands(plugin_name)
+        except Exception as e:
+            logger.warning(f"Failed to unregister CLI commands: {e}")
+
+        # 卸载插件
+        self.plugin_loader.uninstall(plugin_name)
+
+        logger.info(f"Uninstalled plugin: {plugin_name}")
+
+    def list_plugin_packages(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
+        """
+        列出已安装的插件包
+
+        Args:
+            enabled_only: 是否只列出启用的插件
+
+        Returns:
+            插件信息列表
+
+        Example:
+            >>> plugins = core.list_plugin_packages()
+            >>> for plugin in plugins:
+            ...     print(f"{plugin['name']} v{plugin['version']}")
+        """
+        return self.plugin_package_registry.list_plugins(enabled_only=enabled_only)
+
+    def enable_plugin_package(self, plugin_name: str, version: Optional[str] = None):
+        """
+        启用插件包
+
+        Args:
+            plugin_name: 插件名称
+            version: 插件版本（None则启用latest版本）
+
+        Example:
+            >>> core.enable_plugin_package("route_optimizer")
+        """
+        self.plugin_package_registry.set_enabled(plugin_name, enabled=True, version=version)
+        logger.info(f"Enabled plugin package: {plugin_name}")
+
+    def disable_plugin_package(self, plugin_name: str, version: Optional[str] = None):
+        """
+        禁用插件包
+
+        Args:
+            plugin_name: 插件名称
+            version: 插件版本（None则禁用latest版本）
+
+        Example:
+            >>> core.disable_plugin_package("route_optimizer")
+        """
+        self.plugin_package_registry.set_enabled(plugin_name, enabled=False, version=version)
+        logger.info(f"Disabled plugin package: {plugin_name}")
+
+    def execute_plugin_command(self, cmd_name: str, *args, **kwargs) -> Any:
+        """
+        执行插件提供的CLI命令
+
+        Args:
+            cmd_name: 命令名称或别名
+            *args: 位置参数
+            **kwargs: 关键字参数
+
+        Returns:
+            命令执行结果
+
+        Example:
+            >>> core.execute_plugin_command("optimize-routes", model_path="/path/to/model")
+        """
+        return self.cli_organizer.execute_command(cmd_name, *args, **kwargs)
+
+    def list_plugin_commands(self, plugin_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        列出插件提供的CLI命令
+
+        Args:
+            plugin_name: 过滤特定插件的命令（None则列出所有）
+
+        Returns:
+            命令信息列表
+
+        Example:
+            >>> commands = core.list_plugin_commands()
+            >>> for cmd in commands:
+            ...     print(f"{cmd['name']}: {cmd['description']}")
+        """
+        return self.cli_organizer.list_commands(plugin_name=plugin_name)
+
+    def get_plugin_command_help(self, cmd_name: str) -> Optional[str]:
+        """
+        获取插件命令的帮助信息
+
+        Args:
+            cmd_name: 命令名称或别名
+
+        Returns:
+            帮助信息，如果命令不存在则返回None
+
+        Example:
+            >>> help_text = core.get_plugin_command_help("optimize-routes")
+            >>> print(help_text)
+        """
+        return self.cli_organizer.get_command_help(cmd_name)
 
 
 # 全局控制台实例
