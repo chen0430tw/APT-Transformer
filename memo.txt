@@ -12252,6 +12252,48 @@ slot -> {writer: X, observers: [...]}
 
 需要的话，我可以把以上 apx.yaml 校验器 和 Hook 接口 Python 基类 直接写成文件（apt/core/apx.py, apt/core/hooks.py, apt/core/negotiator.py）给你落盘。
 
+太好了，我们直接把APX 转换器做成一个独立脚本：apx_converter.py。它会把现有的“结构化模型工程”（例如 HuggingFace/LLaMA/DeepSeek 风格的目录）打包成符合我们前面约定的 APX 工程包（.apx），包含：
+ • apx.yaml 清单（entrypoints / artifacts / capabilities / compose 等）
+ • model/adapters/ 里的适配器（可选：HF 适配器）
+ • artifacts/ 下的 config.json、权重文件、tokenizer 文件
+ • tests/smoke.py 冒烟测试
+
+支持两种打包模式：
+ • --mode full：把权重等工件一并打进 .apx（可移植，包会较大）
+ • --mode thin：只记录相对路径/占位符（轻量，需要在目标机器上补齐工件）
+
+⸻
+
+用法
+
+# 1) 生成 .apx
+python apx_converter.py \
+  --src /path/to/your/model_repo \
+  --out demo.apx \
+  --name my-llama-cn \
+  --version 0.1.0 \
+  --adapter hf \
+  --mode full \
+  --prefers builtin \
+  --capability router.static:v1 \
+  --compose router=observe_only
+
+# 2) 安装 .apx（用内核里的 apx.install）
+python -c "from apt.core.apx import install_apx; print(install_apx('demo.apx'))"
+
+可选参数（常用）：
+ • --weights-glob：匹配权重文件（默认：*.safetensors|pytorch_model*.bin）
+ • --tokenizer-glob：匹配 tokenizer（默认常见名）
+ • --config-file：显式指定 config.json
+ • --thin 等价 --mode thin
+ • --add-test：自动写入 tests/smoke.py
+
+⸻
+
+脚本：apx_converter.py
+
+把下列代码保存为 apx_converter.py，直接运行即可。
+
 这是个很现实的问题：插件是“野生”的，名字各不相同、实现各有花样。解决思路不是去“认名字”，而是识别“能力/行为”——也就是用一组可扩展的检测器，把源码/配置/依赖/最小运行迹象综合打分，最后在 apx.yaml 里写入能力清单 + 置信度 + 证据。这样即使遇到冷门插件，也能落进正确的“能力桶”（MoE、RAG、RLHF/GRPO、安全层、路由、蒸馏、量化、TVA/VFT…），并提供证据用于审计和冲突处理。
 
 下面给你一个可落地的检测方案 + 可直接并到转换器的代码骨架。
