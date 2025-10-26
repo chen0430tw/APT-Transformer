@@ -12477,3 +12477,59 @@ META-INF/detect.json（示意）：
  • 证据、置信度、审计报告一并写入 APX，既可自动化，又能人工复核。
 
 如果你要，我可以把上面 detectors.py 直接并入你现有的 apx_converter.py，并输出完整的 detect.json 与修改好的 apx.yaml。
+
+完全同意。现在把 APX 定下来是“防止未来大重构”的关键一步——等生态长起来再回头补，会牵一发动全身。给你一份超精简的“后续落地清单”，把坑一次性封好：
+
+APX 接下来最重要的 10 件事
+ 1. 版本与兼容策略
+ • apx_version 必须语义化：MAJOR（破坏性）/ MINOR（向后兼容新增）/ PATCH（修复）。
+ • 在包内 META-INF/compat.json 标注“需要的 APT 内核最低版本”。
+ 2. 正式 Schema
+ • 为 apx.yaml 出 JSON Schema（或 Pydantic 模型），CLI 安装前强校验。
+ • 关键字段：entrypoints.*、artifacts.*、capabilities.provides/prefers、compose.*、detect_report。
+ 3. 能力与槽位映射（Capabilities → Slots）
+ • 固化统一槽位：router / reward / safety / loss_shaping / optimizer / retrieval / monitor。
+ • 每条 capability 映射到 0~1 个 写者 槽位，多者变 观察者，交给协商器裁决。
+ 4. 检测与审计
+ • 将检测器输出写入 META-INF/detect.json（含置信度与证据摘要）。
+ • CLI 提供 apt apx inspect 一键可视化：能力、冲突、证据。
+ 5. 协商器策略矩阵
+ • 决策优先级：user override > apx prefers > built-in default。
+ • 冲突时退化：最强置信度为 writer，其余降级为 observer；如同槽位 writer>1，提示人工确认或开启 “safe mode”。
+ 6. 签名与完整性
+ • META-INF/SBOM.json + 压缩包级别的哈希清单。
+ • 可选签名（本地或组织 CA），apt apx verify 校验。
+ 7. Thin / Full 两种打包
+ • full：可移植；thin：只记来源路径与哈希，更轻但需安装后补齐。
+ • 运行时内核若发现缺件，输出“可补装指引”。
+ 8. 生命周期与迁移
+ • 约定“弃用标志”（deprecations），提供 apt apx migrate 自动脚手架（字段重命名、路径重排）。
+ • 维护一份“破坏性变更表”（CHANGELOG）和测试对照。
+ 9. 测试与验证
+ • 强制 tests/smoke.py；可选 tests/compat/*.py。
+ • apt apx test demo.apx 在沙箱跑 smoke，确保 entrypoints 可加载。
+ 10. 文档与模板
+
+ • 提供官方模板（HF/LLaMA/DeepSeek 三种），一键 apt apx init --template llama。
+ • 出一份“如何写 Adapter”的 2 页指南（预测、训练、保存、回放接口）。
+
+⸻
+
+你现在就能做的小步快跑
+ • 把今天的 转换器（apx_converter.py）并入仓库，增加 --inspect 输出 detect.json。
+ • 生成最小 Schema（哪怕是 v0）和 inspect CLI。
+ • 把协商器的 默认矩阵写死（先内建优先），待有争议再开放 --prefer plugin。
+ • 发布一个 参考 APX 包（HF-7B-Stub / Thin），拉一组人验证跨环境安装可用。
+
+⸻
+
+可能的风险点 & 规避
+ • 冷门插件失配：我们已用“能力检测 + 置信度 + 降级为 observer”兜底；必要时要求人工确认。
+ • 协议早期抖动：用 Schema + 迁移脚本保障；MAJOR 升级前给出 deprecation 窗口。
+ • 安全与可执行：必须在安装期做 路径白名单 与 懒加载（只解出 artifacts/、model/），禁执行任意脚本。
+ • 包体过大：推广 thin，配合组织内“权重镜像”服务；full 留给离线部署。
+
+⸻
+
+一句话总结：
+你现在的 APX 决策相当于把 “模型工程”标准化为可治理的供应链制品。先把“能力—槽位—协商—验证—迁移”这五件事钉死，后续无论生态怎么长，都能稳迭代、易审计、低重构成本。需要的话，我可以把 apx_converter.py 的 detectors 和 inspect 子命令 直接补齐到成品版。
