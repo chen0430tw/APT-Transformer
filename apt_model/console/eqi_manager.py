@@ -15,7 +15,7 @@ apt_eqi_manager.py — APT EQI Manager (插件管家 / 元调度器)
 - 纯 Python，无三方依赖；可在 CPU 上运行
 """
 
-用法（集成 Trainer）：
+# 用法（集成 Trainer）：
     from apt_model.plugins.apt_eqi_manager import EQIManager, PluginSpec
 
     eqi = EQIManager(default_time_budget_ms=20)
