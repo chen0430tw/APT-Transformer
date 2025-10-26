@@ -197,8 +197,16 @@ class PluginManifest:
     requires: List[str] = field(default_factory=list)  # 软依赖（如 "plugin:admin", "core:trainer"）
     conflicts: List[str] = field(default_factory=list)  # 硬冲突（如 "plugin:eqi_legacy", "capability:route_override"）
 
-    # 能力声明
+    # 能力声明（向后兼容字段名）
     capabilities: List[str] = field(default_factory=list)  # 该插件提供的能力（用于冲突检测）
+
+    # 新增：模型能力要求（APX集成）
+    required_capabilities: List[str] = field(default_factory=list)  # 必需的模型能力
+    optional_capabilities: List[str] = field(default_factory=list)  # 可选的模型能力
+    provides_capabilities: List[str] = field(default_factory=list)  # 插件提供的能力
+
+    # 新增：引擎版本要求
+    engine: str = ">=1.0.0"  # 最低引擎版本要求（语义化版本）
 
     # 资源预算
     resources: Dict[str, float] = field(default_factory=lambda: {"cpu_ms": 10.0, "gpu_ms": 0.0, "io_mb": 0.1})
@@ -213,6 +221,26 @@ class PluginManifest:
     # EQI 参数（可选）
     s_default: float = 0.0  # 默认净效用 s = L - lambda*I
     eta: float = 1.0        # 证据调制参数
+
+    def matches_model(self, model_capabilities: List[str]) -> bool:
+        """
+        检查插件是否适用于具有指定能力的模型
+
+        Args:
+            model_capabilities: 模型具备的能力列表
+
+        Returns:
+            True if plugin requirements are satisfied
+        """
+        # 如果没有必需能力，则适用于所有模型
+        if not self.required_capabilities:
+            return True
+
+        # 检查所有必需能力是否都存在
+        return all(
+            cap in model_capabilities
+            for cap in self.required_capabilities
+        )
 
     def validate(self) -> bool:
         """验证 manifest 的完整性"""
