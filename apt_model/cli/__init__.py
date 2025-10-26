@@ -23,6 +23,14 @@ from apt_model.cli.command_registry import (
 # 导入命令（自动注册到命令注册中心）
 import apt_model.cli.commands  # noqa: F401
 
+# Import APX commands and register them
+try:
+    from apt_model.cli.apx_commands import register_apx_commands
+    register_apx_commands()
+except ImportError as e:
+    import logging
+    logging.getLogger(__name__).warning(f"Failed to import APX commands: {e}")
+
 __all__ = [
     # 参数解析
     'parse_arguments',
