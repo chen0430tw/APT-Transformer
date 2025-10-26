@@ -7,7 +7,17 @@ Provides functionality for interacting with trained models through chat interfac
 
 from .chat import chat_with_model
 
+# Try to import Admin Mode (optional feature)
+try:
+    from .admin_mode import APTAdminMode
+    _admin_mode_available = True
+except ImportError:
+    _admin_mode_available = False
+    APTAdminMode = None
+
 __all__ = ['chat_with_model']
+if _admin_mode_available:
+    __all__.append('APTAdminMode')
 
 # Version of the interactive module
 __version__ = '0.1.0'

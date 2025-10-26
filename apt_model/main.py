@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Model (自生成变换器) 训练工具
-一个功能丰富的模型训练和评估工具
+APT Model (自生成变换器) Launcher (启动器)
+
+统一的启动器入口：
+- 初始化控制台核心
+- 加载所有核心模块
+- 分发命令到相应处理器
+- 提供交互式和批处理模式
 """
 
 import os
@@ -14,236 +19,149 @@ from datetime import datetime
 
 from apt_model.cli.parser import parse_arguments
 from apt_model.utils.logging_utils import setup_logging
-from apt_model.utils.resource_monitor import ResourceMonitor
 from apt_model.utils.language_manager import LanguageManager
-from apt_model.utils.hardware_check import check_hardware_compatibility
-from apt_model.utils.cache_manager import CacheManager
-from apt_model.config.apt_config import APTConfig
-from apt_model.training.trainer import train_model
-from apt_model.data.external_data import train_with_external_data
-from apt_model.interactive.chat import chat_with_model
-from apt_model.evaluation.model_evaluator import evaluate_model
-from apt_model.utils.visualization import ModelVisualizer
-from apt_model.utils.time_estimator import TrainingTimeEstimator
-from apt_model.modeling.chinese_tokenizer_integration import (
-    get_appropriate_tokenizer, 
-    detect_language,
-    is_chinese_text
-)
-from apt_model.cli.commands import (
-    run_visualize_command,
-    run_estimate_command,
-    run_clean_cache_command,
-    run_info_command,
-    run_list_command,
-    run_prune_command,
-    run_size_command,
-    run_test_command,
-    run_compare_command,
-    run_train_hf_command,
-    run_distill_command,
-    run_train_reasoning_command,
-    run_process_data_command,
-    run_backup_command,
-    run_upload_command,
-    run_export_ollama_command,
-    run_train_command,
-    run_train_custom_command,
-    run_chat_command,
-    run_evaluate_command,
-    show_help
-)
-from apt_model.utils.common import _initialize_common
+from apt_model.utils import set_seed, get_device
+from apt_model.console.core import initialize_console, get_console
 
-def main():
-    """主函数"""
-    # 解析命令行参数
-    args = parse_arguments()
-    
-    # 设置随机种子
-    from apt_model.utils import set_seed
-    set_seed(args.seed)
-    
-    # 设置设备
-    from apt_model.utils import get_device
-    device = get_device(args.force_cpu)
-    
-    # 初始化语言管理器
-    lang_manager = LanguageManager(args.language, args.language_file)
-    _ = lambda key, *params: lang_manager.get(key).format(*params) if params else lang_manager.get(key)
-    
-    # 初始化日志记录
-    log_file = f"apt_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    logger = setup_logging(log_file=log_file)
-    logger.info(_("welcome"))
-    logger.info(_("language") + f": {args.language}")
-    logger.info(_("training.device").format(device))
-    
-    # 显示欢迎横幅
-    banner = f"""
-    ╔═══════════════════════════════════════════════╗
-    ║          {_("app_name")}          ║
-    ╠═══════════════════════════════════════════════╣
-    ║ {_("amber.training")}                          ║
-    ╚═══════════════════════════════════════════════╝
+
+def print_launcher_banner():
+    """显示启动器横幅"""
+    banner = """
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                                                                   ║
+    ║          APT Launcher - Autopoietic Transformer Launcher          ║
+    ║                    自生成变换器启动器                              ║
+    ║                                                                   ║
+    ║  Unified console system for APT model management                  ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
     """
     print(banner)
-    
-    # 初始化缓存管理器
-    cache_manager = CacheManager(cache_dir=args.cache_dir, logger=logger)
-    
-    # 创建资源监控器
-    resource_monitor = ResourceMonitor(logger=logger)
-    
-    # 检查硬件兼容性
-    model_config = APTConfig()
-    check_hardware_compatibility(model_config, logger)
 
-    # 根据动作选择功能
-    if args.action:
-        # 训练相关命令
-        if args.action == "train":
-            # 调用更新后的命令执行函数
-            exit_code = run_train_command(args)
-            sys.exit(exit_code)
-                
-        elif args.action == "train-custom":
-            # 调用更新后的自定义训练命令
-            exit_code = run_train_custom_command(args)
-            sys.exit(exit_code)
-            
-        elif args.action == "chat":
-            # 调用更新后的聊天命令
-            exit_code = run_chat_command(args)
-            sys.exit(exit_code)
-            
-        elif args.action == "evaluate" or args.action == "eval":
-            # 调用更新后的评估命令
-            exit_code = run_evaluate_command(args)
-            sys.exit(exit_code)
 
-        elif args.action == "visualize":
-            logger.info("生成模型评估可视化图表...")
-            exit_code = run_visualize_command(args)
-            sys.exit(exit_code)
+def initialize_launcher(args):
+    """
+    初始化启动器
 
-        elif args.action == "estimate":
-            logger.info("开始训练时间估算...")
-            exit_code = run_estimate_command(args)
-            sys.exit(exit_code)
+    参数:
+        args: 命令行参数
 
-        elif args.action == "clean-cache":
-            logger.info("开始清理缓存...")
-            exit_code = run_clean_cache_command(args)
-            sys.exit(exit_code)
+    返回:
+        tuple: (logger, console, device)
+    """
+    # 设置随机种子
+    set_seed(args.seed)
 
-        elif args.action == "info":
-            logger.info("显示模型/数据详细信息...")
-            exit_code = run_info_command(args)
-            sys.exit(exit_code)
+    # 设置设备
+    device = get_device(args.force_cpu)
 
-        elif args.action == "list":
-            logger.info("列出可用资源...")
-            exit_code = run_list_command(args)
-            sys.exit(exit_code)
+    # 初始化日志记录
+    log_file = f"apt_launcher_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    logger = setup_logging(log_file=log_file)
+    logger.info("APT Launcher starting...")
+    logger.info(f"Device: {device}")
+    logger.info(f"Language: {args.language}")
 
-        elif args.action == "prune":
-            logger.info("删除旧模型或数据...")
-            exit_code = run_prune_command(args)
-            sys.exit(exit_code)
+    # 构建控制台配置
+    console_config = {
+        'device': str(device),
+        'language': args.language,
+        'seed': args.seed,
+        'cache_dir': getattr(args, 'cache_dir', '.cache'),
+    }
 
-        elif args.action == "size":
-            logger.info("计算数据或模型大小...")
-            exit_code = run_size_command(args)
-            sys.exit(exit_code)
+    # 初始化控制台核心
+    console = initialize_console(config=console_config, auto_start=True)
+    logger.info("Console Core initialized")
 
-        elif args.action == "test":
-            logger.info("开始测试模型...")
-            exit_code = run_test_command(args)
-            sys.exit(exit_code)
+    return logger, console, device
 
-        elif args.action == "compare":
-            logger.info("比较模型性能...")
-            exit_code = run_compare_command(args)
-            sys.exit(exit_code)
 
-        elif args.action == "train-hf":
-            logger.info("训练 Hugging Face 兼容模型...")
-            exit_code = run_train_hf_command(args)
-            sys.exit(exit_code)
+def show_default_help(console):
+    """
+    显示默认帮助信息（当没有指定命令时）
 
-        elif args.action == "distill":
-            logger.info("蒸馏模型...")
-            exit_code = run_distill_command(args)
-            sys.exit(exit_code)
+    参数:
+        console: 控制台核心实例
+    """
+    print_launcher_banner()
+    print("\n欢迎使用 APT Launcher！")
+    print("\n这是一个统一的启动器，用于管理和启动所有 APT 功能。\n")
 
-        elif args.action == "train-reasoning":
-            logger.info("训练逻辑推理能力模型...")
-            exit_code = run_train_reasoning_command(args)
-            sys.exit(exit_code)
+    # 从命令注册中心获取所有命令
+    commands_by_category = console.command_registry.get_commands_by_category(include_placeholders=False)
 
-        elif args.action == "process-data":
-            logger.info("处理数据集...")
-            exit_code = run_process_data_command(args)
-            sys.exit(exit_code)
+    print("可用命令类别:")
+    for category in sorted(commands_by_category.keys()):
+        count = len(commands_by_category[category])
+        print(f"  - {category.upper():<15} ({count} 个命令)")
 
-        elif args.action == "backup":
-            logger.info("备份模型或数据...")
-            exit_code = run_backup_command(args)
-            sys.exit(exit_code)
+    print("\n常用命令:")
+    print("  console-status                - 显示控制台状态")
+    print("  modules-list                  - 列出所有模块")
+    print("  train                         - 训练模型")
+    print("  chat                          - 交互式对话")
+    print("  console-help                  - 显示帮助")
 
-        elif args.action == "upload":
-            logger.info("上传模型或数据...")
-            exit_code = run_upload_command(args)
-            sys.exit(exit_code)
+    print("\n获取详细信息:")
+    print("  python -m apt_model console-commands      - 列出所有命令")
+    print("  python -m apt_model console-help <cmd>    - 查看命令帮助")
 
-        elif args.action == "export-ollama":
-            logger.info("导出模型到 Ollama 格式...")
-            exit_code = run_export_ollama_command(args)
-            sys.exit(exit_code)
-            
-        elif args.action == "help":
-            # 显示帮助信息
-            exit_code = show_help(args)
-            sys.exit(exit_code)
+    print("\n快速开始:")
+    print("  python -m apt_model console-status        - 查看系统状态")
+    print("  python -m apt_model modules-list          - 查看模块列表")
+    print("  python -m apt_model train                 - 开始训练")
 
+
+def main():
+    """
+    Launcher 主函数
+
+    启动器流程：
+    1. 解析命令行参数
+    2. 初始化控制台核心
+    3. 加载核心模块
+    4. 分发命令
+    """
+    try:
+        # 解析命令行参数
+        args = parse_arguments()
+
+        # 初始化启动器
+        logger, console, device = initialize_launcher(args)
+
+        # 根据动作选择功能
+        if args.action:
+            # 检查命令是否存在
+            if not console.command_registry.has_command(args.action):
+                logger.warning(f"未知的命令: {args.action}")
+                print(f"错误: 未知命令 '{args.action}'")
+                print("使用 'python -m apt_model console-help' 查看可用命令")
+                sys.exit(1)
+
+            # 执行命令
+            logger.info(f"执行命令: {args.action}")
+            try:
+                exit_code = console.execute_command(args.action, args)
+                logger.info(f"命令执行完成，退出码: {exit_code}")
+                sys.exit(exit_code)
+            except Exception as e:
+                logger.error(f"执行命令 '{args.action}' 时出错: {e}")
+                logger.error(traceback.format_exc())
+                print(f"错误: {e}")
+                sys.exit(1)
         else:
-            logger.warning(f"未知的动作: {args.action}")
-            print("未知的动作，请使用 help 获取帮助信息。")
-            sys.exit(1)
-    else:
-        # 显示帮助信息
-        print("欢迎使用APT模型！")
-        print("\n可用命令:")
-        print("  train         - 训练模型")
-        print("    --tokenizer-type chinese-char   - 使用字符级中文分词器")
-        print("    --tokenizer-type chinese-word   - 使用词级中文分词器")
-        print("    --model-language zh            - 明确指定中文训练")
-        print("  train-custom  - 使用自定义数据训练模型")
-        print("  chat          - 与模型交互对话")
-        print("  evaluate      - 评估模型性能")
-        print("  visualize     - 生成模型评估可视化图表")
-        print("  estimate      - 估算训练时间")
-        print("  clean-cache   - 清理缓存文件")
-        print("  info          - 显示模型/数据详细信息")
-        print("  list          - 列出可用资源")
-        print("  prune         - 删除旧模型或数据")
-        print("  size          - 计算数据或模型大小")
-        print("  test          - 测试模型")
-        print("  compare       - 比较模型性能")
-        print("  train-hf      - 训练 Hugging Face 兼容模型")
-        print("  distill       - 蒸馏模型")
-        print("  train-reasoning - 训练逻辑推理能力模型")
-        print("  process-data  - 处理数据集")
-        print("  backup        - 备份模型或数据")
-        print("  upload        - 上传模型或数据")
-        print("  export-ollama - 导出模型到 Ollama 格式")
-        print("  help          - 显示更多帮助信息")
-        print("\n示例:")
-        print("  python -m apt_model train --tokenizer-type chinese-char")
-        print("  python -m apt_model train-custom --data-path my_chinese_data.txt --model-language zh")
-        print("  python -m apt_model chat --model-path my_chinese_model")
-        print("  python -m apt_model evaluate --model-path my_model")
-    
+            # 显示默认帮助信息
+            show_default_help(console)
+
+    except KeyboardInterrupt:
+        print("\n\n用户中断")
+        sys.exit(130)
+    except Exception as e:
+        print(f"启动器错误: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()

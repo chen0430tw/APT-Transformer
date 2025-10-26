@@ -1,0 +1,61 @@
+# APT插件元数据
+# 这是一个插件模板，展示了如何创建一个完整的APT插件
+
+# 基础信息
+name: "example_plugin"
+version: "1.0.0"
+display_name: "Example Plugin"
+description: "An example plugin demonstrating the APT plugin system"
+author: "Your Name <your.email@example.com>"
+license: "MIT"
+homepage: "https://github.com/your-org/your-plugin"
+
+# 兼容性要求
+engine: ">=1.0.0"          # APT引擎版本要求
+python: ">=3.8,<4.0"       # Python版本要求
+
+# 插件能力
+capabilities:
+  required: []             # 必需的模型能力（例如：["moe"]）
+  optional: []             # 可选的模型能力
+  provides: ["example"]    # 插件提供的能力
+
+# PluginBus配置
+plugin_bus:
+  priority: 350            # 插件优先级（0-999）
+  category: "training"     # 插件类别
+  events:                  # 监听的事件
+    - "on_init"
+    - "on_batch_start"
+    - "on_batch_end"
+  blocking: false          # 是否阻塞事件
+  conflicting_plugins: []  # 冲突插件列表
+
+# 依赖
+dependencies:
+  plugins: []              # 依赖的其他插件
+  python_packages:         # Python依赖包
+    - "numpy>=1.20.0"
+
+# CLI扩展（可选）
+cli:
+  enabled: true            # 是否启用CLI扩展
+  commands:
+    - name: "example-cmd"
+      module: "commands.example_command"
+      class: "ExampleCommand"
+      description: "Example command from plugin"
+      aliases: ["ex-cmd"]
+
+# EQI集成（可选）
+eqi:
+  decision_required: false  # 是否需要EQI决策
+  evidence_types:           # 收集的证据类型
+    - "example_metric"
+
+# 沙箱配置（可选）
+sandbox:
+  enabled: false           # 是否启用沙箱
+  permissions:             # 权限列表
+    - "read_model"
+    - "write_metrics"

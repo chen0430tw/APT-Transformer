@@ -3,15 +3,35 @@
 """
 Command-line argument parser for APT Model tool.
 Handles all command-line options and arguments for the various functionalities.
+
+重构后的解析器：
+- 支持动态命令（从命令注册中心获取）
+- 插件可以添加自定义命令
 """
 
 import argparse
 import os
 
+
+def get_available_commands():
+    """
+    获取所有可用命令（从命令注册中心）
+
+    返回:
+        list: 可用命令列表
+    """
+    try:
+        from apt_model.cli.command_registry import command_registry
+        return command_registry.list_commands(include_placeholders=True)
+    except ImportError:
+        # 如果命令注册系统还未导入，返回基本命令列表
+        return ['train', 'chat', 'evaluate', 'help']
+
+
 def parse_arguments():
     """
     Parse command-line arguments for APT Model tool.
-    
+
     Returns:
         argparse.Namespace: Parsed arguments
     """
@@ -37,16 +57,14 @@ Examples:
     parser.add_argument('--language', type=str, default="zh_CN",
                         choices=["zh_CN", "en_US"],
                         help='Interface language (default: zh_CN)')
-    
+
     parser.add_argument('--language-file', type=str, default=None,
                         help='Custom language file path')
-    
-    # Action argument
-    parser.add_argument('action', nargs='?', default=None, 
-                        choices=['train', 'test', 'eval', 'evaluate', 'compare', 'chat', 
-                                 'train-custom', 'train-hf', 'distill', 'train-reasoning', 
-                                 'process-data', 'backup', 'upload', 'export-ollama', 
-                                 'clean-cache', 'visualize', 'estimate'],
+
+    # Action argument - 动态从命令注册中心获取可用命令
+    available_commands = get_available_commands()
+    parser.add_argument('action', nargs='?', default=None,
+                        choices=available_commands if available_commands else None,
                         help='Action to perform')
 
     # ===============================
@@ -174,6 +192,44 @@ Examples:
     # 用于训练时间估算的 dataset-size 参数
     parser.add_argument('--dataset-size', type=int, default=1000,
                         help='Pseudo dataset size for training time estimation (default: 1000)')
+
+    # ===============================
+    #  APX Model Packaging arguments
+    # ===============================
+    apx_group = parser.add_argument_group('APX Packaging Options')
+    apx_group.add_argument('--src', type=str, default=None,
+                          help='Source model directory for APX packaging')
+    apx_group.add_argument('--out', type=str, default=None,
+                          help='Output APX file path')
+    apx_group.add_argument('--name', type=str, default=None,
+                          help='Model name for APX package')
+    apx_group.add_argument('--version', type=str, default='1.0.0',
+                          help='Model version for APX package (default: 1.0.0)')
+    apx_group.add_argument('--adapter', type=str, default='hf',
+                          choices=['hf', 'stub'],
+                          help='Adapter type: hf (HuggingFace) or stub (default: hf)')
+    apx_group.add_argument('--mode', type=str, default='full',
+                          choices=['full', 'thin'],
+                          help='Packaging mode: full (copy files) or thin (placeholders) (default: full)')
+    apx_group.add_argument('--weights-glob', type=str, default=None,
+                          help='Weight file glob pattern (e.g., "*.safetensors")')
+    apx_group.add_argument('--tokenizer-glob', type=str, default=None,
+                          help='Tokenizer file glob pattern')
+    apx_group.add_argument('--config-file', type=str, default=None,
+                          help='Explicit config.json file path')
+    apx_group.add_argument('--prefers', type=str, default='builtin',
+                          choices=['builtin', 'plugin'],
+                          help='Preference for builtin vs plugin (default: builtin)')
+    apx_group.add_argument('--capability', type=str, action='append', default=None,
+                          help='Explicit capability (can be specified multiple times)')
+    apx_group.add_argument('--compose', type=str, action='append', default=None,
+                          help='Compose key=value (can be specified multiple times)')
+    apx_group.add_argument('--add-test', action='store_true', default=False,
+                          help='Add smoke test to APX package')
+    apx_group.add_argument('--no-auto-detect', action='store_true', default=False,
+                          help='Disable automatic capability detection')
+    apx_group.add_argument('--apx', type=str, default=None,
+                          help='APX file path for info command')
 
     return parser.parse_args()
 

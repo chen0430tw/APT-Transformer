@@ -3,69 +3,88 @@
 """
 APT Model (自生成变换器) Utils Module
 提供各种辅助功能的工具模块
+
+重构后：
+- 核心功能迁移到 apt_model/core
+- 基础设施迁移到 apt_model/infrastructure
+- 保持向后兼容性
 """
 
-# Import utility functions and classes for easier access from the package level
-from .logging_utils import setup_logging
-from .resource_monitor import ResourceMonitor
-from .error_handler import EnhancedErrorHandler
-from .cache_manager import CacheManager
+# ============================================================================
+# 从core模块导入（向后兼容）
+# ============================================================================
+from apt_model.core.system import (
+    set_seed,
+    get_device,
+    memory_cleanup,
+    device,
+    SystemInitializer,
+    _initialize_common,
+)
+
+from apt_model.core.hardware import (
+    check_hardware_compatibility,
+    get_hardware_profile,
+    HardwareProfiler,
+)
+
+from apt_model.core.resources import (
+    ResourceMonitor,
+    CacheManager,
+)
+
+# ============================================================================
+# 从infrastructure模块导入（向后兼容）
+# ============================================================================
+from apt_model.infrastructure.logging import setup_logging
+from apt_model.infrastructure.errors import ErrorHandler
+
+# ============================================================================
+# 保留的utils模块
+# ============================================================================
 from .language_manager import LanguageManager
-from .hardware_check import check_hardware_compatibility
-try:
-    from .visualization import ModelVisualizer
-except ModuleNotFoundError as exc:
-    if exc.name not in {"matplotlib", "apt_model.utils.visualization"}:
-        raise
-    ModelVisualizer = None  # Optional dependency (matplotlib) is not available.
+from .visualization import ModelVisualizer
 from .time_estimator import TrainingTimeEstimator
 
-# Set up common devices and seed utilities
-# These are sometimes imported from the root but defined here
-import torch
-import random
-import numpy as np
+# ============================================================================
+# 版本信息
+# ============================================================================
+__version__ = '0.3.0'  # 版本更新以反映硬件和资源整合
 
-def set_seed(seed):
-    """设置随机种子以确保可重现性"""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-
-def get_device(force_cpu=False):
-    """获取计算设备"""
-    if force_cpu:
-        return torch.device("cpu")
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-def memory_cleanup():
-    """清理内存"""
-    import gc
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-# Set up default device
-device = get_device()
-
-# Define version
-__version__ = '0.1.0'
-
+# ============================================================================
+# 公共API（向后兼容）
+# ============================================================================
 __all__ = [
-    'setup_logging',
-    'ResourceMonitor',
-    'EnhancedErrorHandler',
-    'CacheManager',
-    'LanguageManager',
-    'check_hardware_compatibility',
-    'ModelVisualizer',
-    'TrainingTimeEstimator',
+    # 从core.system模块导入
     'set_seed',
     'get_device',
     'memory_cleanup',
-    'device'
+    'device',
+    'SystemInitializer',
+    '_initialize_common',
+
+    # 从core.hardware模块导入
+    'check_hardware_compatibility',
+    'get_hardware_profile',
+    'HardwareProfiler',
+
+    # 从core.resources模块导入
+    'ResourceMonitor',
+    'CacheManager',
+
+    # 从infrastructure模块导入
+    'setup_logging',
+    'ErrorHandler',
+
+    # 保留的utils模块
+    'LanguageManager',
+    'ModelVisualizer',
+    'TrainingTimeEstimator',
 ]
+
+# ============================================================================
+# 别名（向后兼容）
+# ============================================================================
+# 保持EnhancedErrorHandler别名
+EnhancedErrorHandler = ErrorHandler
+__all__.append('EnhancedErrorHandler')
