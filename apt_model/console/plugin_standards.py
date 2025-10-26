@@ -59,8 +59,11 @@ class PluginPriority(IntEnum):
     # Reasoning段位 (250-349)
     REASONING = 300
     LEAF_VOTE = 280
+    SC_DECODE = 280            # Self-Consistency Decode
     SELF_CONSISTENCY = 300
+    BEAM_SEARCH = 300          # Beam Search Reasoning
     REASONING_CHAIN = 320
+    PROG_REASON = 320          # Program-Aided Reasoning
 
     # Training段位 (350-449)
     TRAINING = 400
