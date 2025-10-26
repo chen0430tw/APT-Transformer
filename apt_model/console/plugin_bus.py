@@ -27,6 +27,7 @@ from apt_model.console.plugin_standards import (
     PluginEvent,
     PluginCapability
 )
+from apt_model.console.version_checker import VersionChecker
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +111,15 @@ class PluginBus:
 
     def __init__(self,
                  enable_eqi: bool = False,
-                 default_timeout_ms: float = 100.0):
+                 default_timeout_ms: float = 100.0,
+                 engine_version: str = "1.0.0"):
         """
         初始化插件总线
 
         Args:
             enable_eqi: 是否启用 EQI 决策
             default_timeout_ms: 默认超时时间（毫秒）
+            engine_version: 引擎版本（用于插件兼容性检查）
         """
         self.handles: Dict[str, PluginHandle] = {}  # name -> handle
         self.ordered_handles: List[PluginHandle] = []  # 按优先级排序
@@ -124,8 +127,9 @@ class PluginBus:
         self.enable_eqi = enable_eqi
         self.default_timeout_ms = default_timeout_ms
         self.eqi_manager = None  # EQI Manager（可选）
+        self.version_checker = VersionChecker(engine_version)  # 版本检查器
 
-        logger.info("PluginBus initialized")
+        logger.info(f"PluginBus initialized (engine version: {engine_version})")
 
     # ========================================================================
     # 插件注册与加载
@@ -200,7 +204,17 @@ class PluginBus:
                     raise RuntimeError(f"Dependency missing for {manifest.name}: {missing_deps}")
                 continue
 
-            # 2. 硬冲突检查
+            # 2. 版本兼容性检查（新增）
+            is_compatible, version_reason = self.version_checker.check_plugin_compatibility(manifest)
+            if not is_compatible:
+                handle.healthy = False
+                handle.disabled_reason = f"version-incompatible:{version_reason}"
+                logger.warning(f"Plugin '{manifest.name}' disabled: {version_reason}")
+                if fail_fast:
+                    raise RuntimeError(f"Version incompatible for {manifest.name}: {version_reason}")
+                continue
+
+            # 3. 硬冲突检查
             conflict_hit = False
             for conflict in manifest.conflicts:
                 if conflict.startswith("plugin:"):
@@ -215,7 +229,7 @@ class PluginBus:
                 logger.warning(f"Plugin '{manifest.name}' disabled: hard conflict")
                 continue
 
-            # 3. 能力独占检查
+            # 4. 能力独占检查
             cap_conflict = False
             for cap in manifest.capabilities:
                 if PluginCapability.is_exclusive(cap):

@@ -15,6 +15,8 @@ from apt_model.console.module_manager import ModuleManager, ModuleStatus
 from apt_model.console.plugin_bus import PluginBus, EventContext
 from apt_model.console.eqi_manager import EQIManager
 from apt_model.console.plugin_standards import PluginBase, PluginManifest
+from apt_model.console.auto_loader import AutoPluginLoader
+from apt_model.console.apx_loader import APXLoader
 from apt_model.cli.command_registry import command_registry
 
 logger = logging.getLogger(__name__)
@@ -59,10 +61,12 @@ class ConsoleCore:
         # 初始化插件系统
         enable_eqi = self.config.get('plugins', {}).get('enable_eqi', False)
         default_timeout_ms = self.config.get('plugins', {}).get('default_timeout_ms', 100.0)
+        engine_version = self.config.get('engine_version', '1.0.0')
 
         self.plugin_bus = PluginBus(
             enable_eqi=enable_eqi,
-            default_timeout_ms=default_timeout_ms
+            default_timeout_ms=default_timeout_ms,
+            engine_version=engine_version
         )
 
         # 初始化 EQI Manager（可选）
@@ -76,10 +80,19 @@ class ConsoleCore:
             )
             self.plugin_bus.eqi_manager = self.eqi_manager
 
+        # 新增：插件注册表（用于自动加载）
+        self.plugin_registry: Dict[str, type] = {}
+
+        # 新增：自动插件加载器
+        self.auto_loader = AutoPluginLoader(self.plugin_registry)
+
+        # 新增：APX加载器
+        self.apx_loader = APXLoader()
+
         self._initialized = True
         self._running = False
 
-        logger.info("Console Core initialized")
+        logger.info(f"Console Core initialized (engine version: {engine_version})")
 
     def start(self, auto_load_modules: bool = True, auto_load_plugins: bool = True) -> bool:
         """
@@ -416,6 +429,136 @@ class ConsoleCore:
 
         # 设置值
         config[keys[-1]] = value
+
+    # ========================================================================
+    # APX集成与自动插件加载（新增）
+    # ========================================================================
+
+    def register_plugin_class(self, name: str, plugin_class: type):
+        """
+        注册插件类到注册表
+
+        Args:
+            name: 插件名称
+            plugin_class: 插件类
+        """
+        self.plugin_registry[name] = plugin_class
+        logger.info(f"Registered plugin class: {name}")
+
+    def load_apx_model(
+        self,
+        apx_path: Path,
+        auto_configure_plugins: bool = True,
+        score_threshold: float = 0.0,
+    ) -> Dict[str, Any]:
+        """
+        加载APX模型并自动配置插件
+
+        Args:
+            apx_path: APX文件路径
+            auto_configure_plugins: 是否自动配置插件
+            score_threshold: 插件相关性分数阈值
+
+        Returns:
+            APX信息字典
+
+        Example:
+            >>> core = ConsoleCore()
+            >>> apx_info = core.load_apx_model(
+            ...     Path("models/mixtral-moe.apx"),
+            ...     auto_configure_plugins=True
+            ... )
+            >>> # 自动检测到moe能力，加载route_optimizer插件
+        """
+        if auto_configure_plugins:
+            apx_info, plugins = self.apx_loader.load_with_auto_plugins(
+                apx_path,
+                self.auto_loader,
+                auto_enable=True,
+                score_threshold=score_threshold,
+            )
+
+            # 注册自动加载的插件
+            for plugin in plugins:
+                try:
+                    self.register_plugin(plugin)
+                    logger.info(f"Auto-registered plugin: {plugin.get_manifest().name}")
+                except Exception as e:
+                    logger.error(f"Failed to register auto-loaded plugin: {e}")
+
+            logger.info(f"Auto-registered {len(plugins)} plugins for APX model")
+
+            # 重新编译插件（包括新加载的）
+            self.plugin_bus.compile(fail_fast=False)
+
+        else:
+            apx_info = self.apx_loader.load(apx_path)
+
+        return apx_info
+
+    def analyze_model_for_plugins(
+        self,
+        model_path: Path = None,
+        capabilities: List[str] = None,
+        dry_run: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        分析模型并推荐插件（不加载）
+
+        Args:
+            model_path: 模型目录路径（与capabilities二选一）
+            capabilities: 直接指定能力列表（与model_path二选一）
+            dry_run: 是否仅分析（不实例化插件）
+
+        Returns:
+            分析结果
+
+        Example:
+            >>> analysis = core.analyze_model_for_plugins(
+            ...     model_path=Path("models/mixtral-8x7b")
+            ... )
+            >>> print(analysis['available_plugins'])
+            [{'name': 'route_optimizer', 'score': 1.0}]
+        """
+        if capabilities is None:
+            if model_path is None:
+                raise ValueError("Either model_path or capabilities must be provided")
+
+            # 从模型目录检测能力
+            try:
+                from apt_model.tools.apx.detectors import detect_capabilities
+                capabilities = detect_capabilities(model_path)
+            except Exception as e:
+                logger.error(f"Failed to detect capabilities: {e}")
+                capabilities = []
+
+        return self.auto_loader.analyze_model(capabilities)
+
+    def get_plugin_recommendations(
+        self,
+        capabilities: List[str],
+        format: str = "text"
+    ) -> str:
+        """
+        获取插件推荐报告
+
+        Args:
+            capabilities: 模型能力列表
+            format: 输出格式 ("text" 或 "json")
+
+        Returns:
+            格式化的推荐报告
+
+        Example:
+            >>> report = core.get_plugin_recommendations(["moe", "tva"])
+            >>> print(report)
+            ============================================================
+            Plugin Recommendation Report
+            ============================================================
+            Model Capabilities: moe, tva
+            ...
+        """
+        return self.auto_loader.get_recommendations_report(capabilities, format=format)
 
 
 # 全局控制台实例
