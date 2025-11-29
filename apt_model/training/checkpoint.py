@@ -81,7 +81,7 @@ class CheckpointManager:
     def __init__(self, save_dir, model_name="apt_model", save_freq=1, logger=None):
         """
         初始化检查点管理器
-        
+
         参数:
             save_dir (str): 保存目录
             model_name (str): 模型名称
@@ -92,10 +92,14 @@ class CheckpointManager:
         self.model_name = model_name
         self.save_freq = save_freq
         self.logger = logger
-        
+
         # 创建保存目录
         os.makedirs(os.path.join(save_dir, "checkpoints"), exist_ok=True)
-        
+
+        # 创建临时目录（用于原子性保存）
+        self.temp_dir = os.path.join(save_dir, "temp")
+        os.makedirs(self.temp_dir, exist_ok=True)
+
         self.metadata = self._load_metadata()
     
     def _load_metadata(self):
@@ -148,21 +152,61 @@ class CheckpointManager:
         checkpoint_name = f"{self.model_name}_epoch{epoch}_step{global_step}"
         if is_best:
             checkpoint_name += "_best"
-        checkpoint_path = os.path.join(checkpoint_dir, f"{checkpoint_name}.pt")
-        
-        # 保存检查点
-        checkpoint = {
-            'epoch': epoch,
-            'global_step': global_step,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-            'loss_history': loss_history,
-            'metrics': metrics,
-            'config': config.to_dict() if config else None,
-        }
-        
-        torch.save(checkpoint, checkpoint_path)
+        checkpoint_filename = f"{checkpoint_name}.pt"
+        final_checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+
+        # 临时文件路径（用于原子性保存）
+        import tempfile
+        temp_fd, temp_checkpoint_path = tempfile.mkstemp(
+            suffix='.pt',
+            prefix=f'{checkpoint_name}_',
+            dir=self.temp_dir
+        )
+        os.close(temp_fd)  # 关闭文件描述符，让torch.save创建新文件
+
+        try:
+            # 保存检查点到临时文件
+            checkpoint = {
+                'epoch': epoch,
+                'global_step': global_step,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                'loss_history': loss_history,
+                'metrics': metrics,
+                'config': config.to_dict() if config else None,
+            }
+
+            torch.save(checkpoint, temp_checkpoint_path)
+
+            # 验证文件已保存且不为空
+            if not os.path.exists(temp_checkpoint_path):
+                raise IOError(f"临时checkpoint文件保存失败: {temp_checkpoint_path}")
+
+            file_size = os.path.getsize(temp_checkpoint_path)
+            if file_size == 0:
+                raise IOError(f"临时checkpoint文件为空: {temp_checkpoint_path}")
+
+            # 原子性移动到最终位置（这一步要么成功要么失败，不会损坏已有文件）
+            import shutil
+            shutil.move(temp_checkpoint_path, final_checkpoint_path)
+
+            if self.logger:
+                self.logger.info(f"保存检查点: {final_checkpoint_path} ({file_size / 1024 / 1024:.2f} MB)")
+
+            checkpoint_path = final_checkpoint_path
+
+        except Exception as e:
+            # 如果保存失败，清理临时文件
+            if os.path.exists(temp_checkpoint_path):
+                try:
+                    os.remove(temp_checkpoint_path)
+                except:
+                    pass
+
+            if self.logger:
+                self.logger.error(f"保存检查点失败: {e}")
+            raise
         
         # 更新元数据
         self.metadata["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -175,9 +219,25 @@ class CheckpointManager:
             "metrics": metrics
         })
         
-        # 保存元数据
-        with open(os.path.join(self.save_dir, "metadata.json"), 'w') as f:
-            json.dump(self.metadata, f, indent=2)
+        # 保存元数据（也使用原子性保存）
+        metadata_path = os.path.join(self.save_dir, "metadata.json")
+        temp_metadata_fd, temp_metadata_path = tempfile.mkstemp(
+            suffix='.json',
+            prefix='metadata_',
+            dir=self.temp_dir
+        )
+        try:
+            with os.fdopen(temp_metadata_fd, 'w') as f:
+                json.dump(self.metadata, f, indent=2)
+            shutil.move(temp_metadata_path, metadata_path)
+        except Exception as e:
+            if os.path.exists(temp_metadata_path):
+                try:
+                    os.remove(temp_metadata_path)
+                except:
+                    pass
+            if self.logger:
+                self.logger.warning(f"保存元数据失败: {e}")
         
         # 如果有分词器，也保存
         if tokenizer:
@@ -254,5 +314,53 @@ class CheckpointManager:
         # 记录日志
         if self.logger:
             self.logger.info(f"加载检查点: {checkpoint_path} (epoch: {epoch}, step: {global_step})")
-        
+
         return epoch, global_step, loss_history, metrics
+
+    def cleanup_temp(self, max_age_hours=24):
+        """
+        清理临时目录中的旧文件
+
+        参数:
+            max_age_hours (int): 删除超过多少小时的临时文件（默认24小时）
+        """
+        import time
+
+        if not os.path.exists(self.temp_dir):
+            return
+
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+        cleaned_count = 0
+        cleaned_size = 0
+
+        try:
+            for filename in os.listdir(self.temp_dir):
+                file_path = os.path.join(self.temp_dir, filename)
+
+                # 跳过目录
+                if os.path.isdir(file_path):
+                    continue
+
+                # 检查文件年龄
+                file_age = current_time - os.path.getmtime(file_path)
+
+                if file_age > max_age_seconds:
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        os.remove(file_path)
+                        cleaned_count += 1
+                        cleaned_size += file_size
+
+                        if self.logger:
+                            self.logger.debug(f"删除过期临时文件: {filename} (年龄: {file_age/3600:.1f}小时)")
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.warning(f"删除临时文件失败 {filename}: {e}")
+
+            if cleaned_count > 0 and self.logger:
+                self.logger.info(f"清理临时目录: 删除 {cleaned_count} 个文件, 释放 {cleaned_size/1024/1024:.2f} MB")
+
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"清理临时目录失败: {e}")
