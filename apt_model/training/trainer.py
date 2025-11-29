@@ -485,7 +485,7 @@ def _setup_tensorboard(save_path):
 
 
 def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_steps,
-                   batch_idx, logger, resource_monitor):
+                   batch_idx, logger, resource_monitor, gradient_monitor=None, global_step=0):
     """
     处理单个批次的训练
 
@@ -499,6 +499,8 @@ def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_step
         batch_idx: 批次索引
         logger: 日志记录器
         resource_monitor: 资源监视器
+        gradient_monitor: 梯度监控器（可选）
+        global_step: 全局训练步数（用于梯度监控）
 
     返回:
         loss_value: 损失值（失败返回None）
@@ -566,6 +568,28 @@ def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_step
             optimizer.zero_grad()
             return None, False
 
+        # 梯度监控（如果启用）
+        if gradient_monitor is not None:
+            try:
+                # 检查梯度流（梯度消失/爆炸检测）
+                gradients, issues = gradient_monitor.check_gradient_flow()
+                if issues:
+                    for issue in issues[:3]:  # 只显示前3个问题
+                        debug_print(f"  {issue}")
+                    if logger:
+                        logger.warning(f"Step {global_step}: 发现 {len(issues)} 个梯度问题")
+
+                # 记录梯度范数
+                total_norm = gradient_monitor.log_gradient_norms(global_step)
+
+                # 检测梯度异常
+                anomalies = gradient_monitor.detect_gradient_anomalies()
+                if anomalies:
+                    _log_message(logger, f"Step {global_step}: 检测到梯度异常 - {anomalies}", "warning")
+                    debug_print(f"⚠️  梯度异常: {anomalies}")
+            except Exception as e:
+                debug_print(f"梯度监控失败: {e}")
+
         # 梯度裁剪
         try:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -589,7 +613,8 @@ def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_step
 def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model",
                 logger=None, resource_monitor=None, multimodal_config=None,
                 tokenizer_type=None, language=None, texts=None, tokenizer=None,
-                checkpoint_dir="./outputs", resume_from=None, temp_checkpoint_freq=100):
+                checkpoint_dir="./outputs", resume_from=None, temp_checkpoint_freq=100,
+                enable_gradient_monitoring=False):
     """
     训练模型的主函数
 
@@ -608,6 +633,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         checkpoint_dir: checkpoint保存目录（相对路径，可迁移），默认"./outputs"
         resume_from: 恢复训练的checkpoint路径，可选
         temp_checkpoint_freq: 临时checkpoint保存频率（每N步），默认100
+        enable_gradient_monitoring: 启用梯度监控（调试/分析用），默认False
 
     返回:
         model: 训练后的模型
@@ -657,6 +683,20 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     untrained_model = APTLargeModel(config).to(device)
     untrained_model.load_state_dict(model.state_dict())
     untrained_model.eval()
+
+    # 初始化梯度监控器（如果启用）
+    gradient_monitor = None
+    if enable_gradient_monitoring:
+        from apt_model.training.gradient_monitor import GradientMonitor
+        from pathlib import Path
+        gradient_export_dir = Path(checkpoint_dir) / "gradient_monitor"
+        gradient_export_dir.mkdir(parents=True, exist_ok=True)
+        gradient_monitor = GradientMonitor(
+            model,
+            logger=logger,
+            export_dir=gradient_export_dir
+        )
+        info_print(f"✅ 梯度监控已启用，报告将保存到: {gradient_export_dir}")
 
     # 早停设置
     best_loss = float('inf')
@@ -754,7 +794,8 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
             # 处理批次
             loss_value, should_update = _process_batch(
                 model, batch, optimizer, scaler, tokenizer,
-                accumulation_steps, i, logger, resource_monitor
+                accumulation_steps, i, logger, resource_monitor,
+                gradient_monitor, global_step
             )
 
             # 如果批次处理失败，跳过
@@ -898,6 +939,22 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         except Exception as e:
             _log_message(logger, f"模型比较出错: {e}", "error")
             debug_print(f"警告: 模型比较失败: {e}")
+
+    # 生成梯度监控报告（如果启用）
+    if gradient_monitor is not None:
+        try:
+            info_print("\n生成梯度监控报告...")
+            reports = gradient_monitor.generate_all_reports()
+            info_print(f"✅ 梯度监控报告已生成:")
+            for report_type, report_path in reports.items():
+                info_print(f"  - {report_type}: {report_path}")
+
+            # 🔮 WebUI/API伏笔: 导出JSON数据供未来使用
+            webui_data = gradient_monitor.export_for_webui()
+            info_print(f"  - WebUI数据已导出 (未来API可用): {len(webui_data['gradient_timeline'])} 个梯度记录")
+        except Exception as e:
+            _log_message(logger, f"生成梯度监控报告失败: {e}", "warning")
+            debug_print(f"警告: 梯度监控报告生成失败: {e}")
 
     # 触发训练结束回调
     callback_manager.trigger('on_train_end', model=model, config=config)
