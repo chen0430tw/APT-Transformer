@@ -684,19 +684,22 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         modules['router'] = model.router
 
     total_steps = epochs * len(dataloader)
-    callbacks = create_default_callbacks(config, modules, epochs, total_steps)
+    callbacks = create_default_callbacks(config, modules, epochs, total_steps,
+                                        use_rich_progress=False)  # Set to True for rich display
     callback_manager = CallbackManager(callbacks)
 
     # 触发训练开始回调
-    callback_manager.trigger('on_train_begin', model=model, config=config)
+    callback_manager.trigger('on_train_begin', model=model, config=config, total_epochs=epochs)
 
     # 主训练循环
     for epoch in range(epochs):
-        # 触发epoch开始回调
-        callback_manager.trigger('on_epoch_begin', epoch=epoch)
+        # 触发epoch开始回调（传递dataloader给ProgressCallback）
+        callback_manager.trigger('on_epoch_begin', epoch=epoch, dataloader=dataloader)
 
         total_loss = 0
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
+        # 注意：进度条现在由ProgressCallback管理，这里保留tqdm作为后备
+        # 如果想完全使用ProgressCallback，可以注释掉下面这行
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}", disable=True)
 
         for i, batch in enumerate(progress_bar):
             # 触发batch开始回调
@@ -719,8 +722,20 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                 "lr": f"{scheduler.get_last_lr()[0]:.6f}"
             })
 
-            # 触发batch结束回调
-            callback_manager.trigger('on_batch_end', batch_idx=i, loss=loss_value)
+            # 获取GPU使用率（如果可用）
+            gpu_usage = None
+            if torch.cuda.is_available():
+                try:
+                    allocated = torch.cuda.memory_allocated() / 1024**3
+                    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                    gpu_usage = (allocated / total) * 100
+                except:
+                    pass
+
+            # 触发batch结束回调（传递给ProgressCallback）
+            callback_manager.trigger('on_batch_end', batch_idx=i, loss=loss_value,
+                                    lr=scheduler.get_last_lr()[0], gpu_usage=gpu_usage,
+                                    epoch=epoch)
 
             # 只在累积完成后更新参数
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
