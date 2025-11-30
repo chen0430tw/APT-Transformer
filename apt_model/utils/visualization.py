@@ -14,10 +14,14 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 import numpy as np
 import torch
 
-# 为确保中文显示，设置 matplotlib 默认字体（此设置仅在创建图表前生效）
-import matplotlib
-matplotlib.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
-matplotlib.rcParams['axes.unicode_minus'] = False
+# 为确保中文显示，设置 matplotlib 默认字体（此设置仅在创建图表前生效）。
+# matplotlib 是可选依赖，因此在缺失时不要让导入失败。
+try:  # pragma: no cover - executed only when matplotlib is present
+    import matplotlib
+    matplotlib.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+    matplotlib.rcParams['axes.unicode_minus'] = False
+except ImportError:  # pragma: no cover - optional dependency path
+    matplotlib = None
 
 class ModelVisualizer:
     """

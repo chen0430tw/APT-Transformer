@@ -43,8 +43,19 @@ from apt_model.infrastructure.errors import ErrorHandler
 # 保留的utils模块
 # ============================================================================
 from .language_manager import LanguageManager
-from .visualization import ModelVisualizer
-from .time_estimator import TrainingTimeEstimator
+from .hardware_check import check_hardware_compatibility
+# Optional utilities that rely on heavy visualization dependencies may not be
+# available in lightweight environments. Import them lazily so the rest of the
+# training stack can function without matplotlib/plotly.
+try:
+    from .visualization import ModelVisualizer
+except Exception:  # pragma: no cover - best effort fallback for optional deps
+    ModelVisualizer = None
+
+try:
+    from .time_estimator import TrainingTimeEstimator
+except Exception:  # pragma: no cover - best effort fallback for optional deps
+    TrainingTimeEstimator = None
 
 # ============================================================================
 # 版本信息
