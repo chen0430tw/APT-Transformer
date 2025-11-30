@@ -15,20 +15,18 @@ apt_eqi_manager.py — APT EQI Manager (插件管家 / 元调度器)
 - 纯 Python，无三方依赖；可在 CPU 上运行
 """
 
-用法（集成 Trainer）：
-    from apt_model.plugins.apt_eqi_manager import EQIManager, PluginSpec
-
-    eqi = EQIManager(default_time_budget_ms=20)
-    eqi.register(spec, handler=MyPlugin())
-    ...
-    eqi.compile()  # 做静态裁决
-    # 每个阶段：
-    audit = eqi.decide_and_dispatch(event="on_epoch_end",
-                                    step=global_step,
-                                    metrics={"valid": {...}},
-                                    evidence={"Q": {...}, "w": {...}},
-                                    resources={"cpu_budget": 5.0, "io_budget": 1.0})
-"""
+# Usage Example (Trainer Integration):
+#     from apt_model.plugins.apt_eqi_manager import EQIManager, PluginSpec
+#
+#     eqi = EQIManager(default_time_budget_ms=20)
+#     eqi.register(spec, handler=MyPlugin())
+#     ...
+#     eqi.compile()
+#     audit = eqi.decide_and_dispatch(event="on_epoch_end",
+#                                     step=global_step,
+#                                     metrics={"valid": {...}},
+#                                     evidence={"Q": {...}, "w": {...}},
+#                                     resources={"cpu_budget": 5.0, "io_budget": 1.0})
 
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -375,6 +373,413 @@ class EQIManager:
         return self._last_audit
 
 
+# ----------------------------- SAF: System Analysis Filter -----------------------------
+
+@dataclass
+class SAFModule:
+    """SAF分析的模块表示"""
+    name: str
+    S: float  # 即时压力系数 [0,1]
+    D: float  # 发散风险系数 [0,1]
+    R: float  # 可干预性系数 [0,1]
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def P(self) -> float:
+        """SAF优先级分数: P = S × D × R"""
+        return self.S * self.D * self.R
+
+
+class SAFAnalyzer:
+    """
+    系统分析滤镜(SAF): 识别复杂系统中"最需要优先干预的部分"
+
+    核心公式: P[module] = S × D × R
+    - S (即时压力): 系统为维持该模块付出的额外代价
+    - D (发散风险): 问题是否持续恶化
+    - R (可干预性): 能否安全动手调整
+    """
+
+    def __init__(self, threshold: float = 0.3):
+        """
+        Args:
+            threshold: P值阈值，高于此值的模块被标记为优先干预对象
+        """
+        self.threshold = threshold
+
+    def analyze(self, modules: List[SAFModule]) -> List[SAFModule]:
+        """
+        分析模块列表，返回按P值降序排序的结果
+        """
+        # 计算P值并排序
+        sorted_modules = sorted(modules, key=lambda m: m.P, reverse=True)
+        return sorted_modules
+
+    def get_priority_targets(self, modules: List[SAFModule]) -> List[SAFModule]:
+        """
+        获取优先干预对象(P值 > threshold)
+        """
+        return [m for m in self.analyze(modules) if m.P > self.threshold]
+
+    @staticmethod
+    def from_metrics(name: str,
+                     maintenance_cost: float,
+                     incident_rate: float,
+                     drift_trend: float,
+                     has_replacement: bool,
+                     single_point_risk: float) -> SAFModule:
+        """
+        从实际指标构建SAF模块
+
+        Args:
+            name: 模块名称
+            maintenance_cost: 维持成本[0,1]归一化
+            incident_rate: 事故率[0,1]归一化
+            drift_trend: 发散趋势[0,1]归一化
+            has_replacement: 是否有替代方案
+            single_point_risk: 单点风险[0,1]
+
+        Returns:
+            SAFModule实例
+        """
+        # S: 即时压力 = 维持成本 + 事故率
+        S = clamp((maintenance_cost + incident_rate) / 2.0, 0.0, 1.0)
+
+        # D: 发散风险 = 发散趋势
+        D = clamp(drift_trend, 0.0, 1.0)
+
+        # R: 可干预性 = 有替代方案 - 单点风险
+        R = clamp((1.0 if has_replacement else 0.3) - single_point_risk, 0.0, 1.0)
+
+        return SAFModule(
+            name=name,
+            S=S, D=D, R=R,
+            meta={
+                "maintenance_cost": maintenance_cost,
+                "incident_rate": incident_rate,
+                "drift_trend": drift_trend,
+                "has_replacement": has_replacement,
+                "single_point_risk": single_point_risk
+            }
+        )
+
+
+# ----------------------------- COC: Cost-Optimal Complexity -----------------------------
+
+@dataclass
+class COCAnalysis:
+    """COC成本-复杂度分析结果"""
+    module_name: str
+    strategy: str
+    C_fix: float       # 一次性修复成本
+    C_now: float       # 当期维持成本
+    C_drift: float     # 发散成本(每周期)
+    complexity: int    # 复杂度评分
+    variance: float    # 成本方差
+    optimal: bool = False  # 是否为最优策略
+
+    @property
+    def total_cost(self) -> float:
+        """总成本估算(6个周期)"""
+        return self.C_fix + self.C_now * 6 + self.C_drift * 6
+
+
+class COCAnalyzer:
+    """
+    成本优化曲线(COC): 在成本与复杂度之间找到最优平衡点
+
+    为SAF识别的模块提供精确的成本分解和复杂度分析
+    """
+
+    def __init__(self, periods: int = 6, discount_rate: float = 0.95):
+        """
+        Args:
+            periods: 成本评估周期数(默认6个月)
+            discount_rate: 折现率
+        """
+        self.periods = periods
+        self.discount = discount_rate
+
+    def analyze(self,
+                module: SAFModule,
+                scenarios: List[Dict[str, Any]]) -> List[COCAnalysis]:
+        """
+        分析多个修复策略的成本-复杂度权衡
+
+        Args:
+            module: SAF模块
+            scenarios: 策略列表，每个策略包含:
+                - strategy: 策略名称
+                - C_fix: 一次性成本
+                - C_now: 当期成本
+                - C_drift: 发散成本
+                - complexity: 复杂度评分
+                - variance: 成本波动
+
+        Returns:
+            COC分析结果列表
+        """
+        results = []
+        for s in scenarios:
+            # 计算发散成本的净现值
+            drift_npv = sum(
+                s["C_drift"] * (self.discount ** t)
+                for t in range(self.periods)
+            )
+
+            results.append(COCAnalysis(
+                module_name=module.name,
+                strategy=s["strategy"],
+                C_fix=s["C_fix"],
+                C_now=s["C_now"],
+                C_drift=drift_npv / self.periods,  # 平均值
+                complexity=s.get("complexity", 5),
+                variance=s.get("variance", 0.1)
+            ))
+
+        # 找出总成本最低且复杂度可接受的策略
+        if results:
+            min_cost_result = min(results, key=lambda r: r.total_cost)
+            min_cost_result.optimal = True
+
+        return results
+
+    def get_optimal(self, analyses: List[COCAnalysis]) -> Optional[COCAnalysis]:
+        """获取最优策略"""
+        for a in analyses:
+            if a.optimal:
+                return a
+        return None
+
+
+# ----------------------------- SCOI Integration -----------------------------
+
+@dataclass
+class ScoiItem:
+    """SCOI项目(从SAF+COC映射而来)"""
+    key: str
+    # 收益与成本(从COC)
+    G: float
+    C_fix: float
+    C_now: float
+    C_drift: float
+    # 时机门控(从SAF)
+    phi: float
+    # 不确定度
+    sigma_G: float = 0.0
+    sigma_C: float = 0.0
+    # 元数据
+    meta: Optional[Dict[str, Any]] = None
+
+    @staticmethod
+    def from_saf_coc(saf_module: SAFModule,
+                     coc_analysis: COCAnalysis,
+                     savings_multiplier: float = 1.2) -> 'ScoiItem':
+        """从SAF模块和COC分析构建SCOI项目"""
+        # 收益G: 阻止的压力 + 阻止的发散
+        G = (saf_module.S * savings_multiplier * 100.0 +  # 压力节省
+             saf_module.D * coc_analysis.C_drift * 6)      # 发散节省
+
+        # 时机门控φ: 直接使用SAF的R值
+        phi = saf_module.R
+
+        # 不确定度: R低 → 不确定度高
+        sigma_G = G * (1.0 - saf_module.R) * 0.1
+        sigma_C = coc_analysis.C_fix * coc_analysis.variance
+
+        return ScoiItem(
+            key=f"{saf_module.name}_{coc_analysis.strategy}",
+            G=G,
+            C_fix=coc_analysis.C_fix,
+            C_now=coc_analysis.C_now,
+            C_drift=coc_analysis.C_drift,
+            phi=phi,
+            sigma_G=sigma_G,
+            sigma_C=sigma_C,
+            meta={
+                "saf_module": saf_module.name,
+                "saf_P": saf_module.P,
+                "saf_S": saf_module.S,
+                "saf_D": saf_module.D,
+                "saf_R": saf_module.R,
+                "coc_strategy": coc_analysis.strategy,
+                "coc_complexity": coc_analysis.complexity
+            }
+        )
+
+
+# ----------------------------- Decision Pipeline: SAF → COC → EQI×SCOI -----------------------------
+
+class DecisionPipeline:
+    """
+    完整决策流水线: SAF → COC → EQI×SCOI
+
+    工作流程:
+    1. SAF识别优先干预对象
+    2. COC分析每个对象的成本-复杂度权衡
+    3. 构建SCOI项目列表
+    4. EQI判断可行性并分配资源
+    5. SCOI排序并生成执行清单
+    """
+
+    def __init__(self,
+                 saf_threshold: float = 0.3,
+                 coc_periods: int = 6,
+                 eqi_manager: Optional[EQIManager] = None):
+        """
+        Args:
+            saf_threshold: SAF的P值阈值
+            coc_periods: COC分析周期数
+            eqi_manager: EQI管理器实例(可选)
+        """
+        self.saf = SAFAnalyzer(threshold=saf_threshold)
+        self.coc = COCAnalyzer(periods=coc_periods)
+        self.eqi = eqi_manager or EQIManager()
+
+    def run_full_pipeline(self,
+                          modules: List[SAFModule],
+                          scenarios: Dict[str, List[Dict[str, Any]]],
+                          budget: float,
+                          max_parallel: int = 2) -> Dict[str, Any]:
+        """
+        运行完整决策流水线
+
+        Args:
+            modules: SAF模块列表
+            scenarios: 每个模块的修复策略 {module_name: [scenario1, scenario2, ...]}
+            budget: 总预算
+            max_parallel: 最大并行项目数
+
+        Returns:
+            完整决策报告
+        """
+        report = {
+            "saf_analysis": [],
+            "coc_analysis": [],
+            "scoi_items": [],
+            "scoi_ranking": [],
+            "final_decision": {}
+        }
+
+        # Step 1: SAF分析
+        priority_modules = self.saf.get_priority_targets(modules)
+        report["saf_analysis"] = [
+            {
+                "name": m.name,
+                "P": m.P,
+                "S": m.S,
+                "D": m.D,
+                "R": m.R,
+                "decision": "优先干预" if m.P > self.saf.threshold else "暂缓"
+            }
+            for m in self.saf.analyze(modules)
+        ]
+
+        # Step 2: COC分析(针对优先模块)
+        coc_results = {}
+        for module in priority_modules:
+            if module.name in scenarios:
+                analyses = self.coc.analyze(module, scenarios[module.name])
+                coc_results[module.name] = analyses
+                report["coc_analysis"].extend([
+                    {
+                        "module": a.module_name,
+                        "strategy": a.strategy,
+                        "C_fix": a.C_fix,
+                        "C_now": a.C_now,
+                        "C_drift": a.C_drift,
+                        "complexity": a.complexity,
+                        "total_cost": a.total_cost,
+                        "optimal": a.optimal
+                    }
+                    for a in analyses
+                ])
+
+        # Step 3: 构建SCOI项目(使用最优策略)
+        scoi_items = []
+        for module in priority_modules:
+            if module.name in coc_results:
+                optimal_coc = self.coc.get_optimal(coc_results[module.name])
+                if optimal_coc:
+                    item = ScoiItem.from_saf_coc(module, optimal_coc)
+                    scoi_items.append(item)
+                    report["scoi_items"].append({
+                        "key": item.key,
+                        "G": item.G,
+                        "C_fix": item.C_fix,
+                        "phi": item.phi,
+                        "meta": item.meta
+                    })
+
+        # Step 4: SCOI排序(简化版，使用SCOI公式)
+        scoi_ranking = self._scoi_rank(scoi_items, alpha=0.25, beta=0.30,
+                                       kappa_G=0.5, kappa_C=0.3)
+        report["scoi_ranking"] = scoi_ranking
+
+        # Step 5: SCOI排程(预算约束)
+        schedule = self._scoi_schedule(scoi_ranking, budget, max_parallel)
+        report["final_decision"] = schedule
+
+        return report
+
+    def _scoi_rank(self, items: List[ScoiItem],
+                   alpha: float, beta: float,
+                   kappa_G: float, kappa_C: float) -> List[Dict[str, Any]]:
+        """SCOI排序"""
+        ranked = []
+        for item in items:
+            G_eff = max(item.G - kappa_G * item.sigma_G, 0.0)
+            C_eff = (item.C_fix +
+                     alpha * item.C_now +
+                     beta * item.C_drift +
+                     kappa_C * item.sigma_C)
+            C_eff = max(C_eff, 1e-9)
+            scoi = item.phi * (G_eff / C_eff)
+
+            ranked.append({
+                "key": item.key,
+                "SCOI": scoi,
+                "phi": item.phi,
+                "G_eff": G_eff,
+                "C_eff": C_eff,
+                "Payback": item.C_fix / item.G if item.G > 0 else float('inf'),
+                "meta": item.meta
+            })
+
+        ranked.sort(key=lambda x: x["SCOI"], reverse=True)
+        return ranked
+
+    def _scoi_schedule(self, ranking: List[Dict[str, Any]],
+                       budget: float,
+                       max_parallel: int) -> Dict[str, Any]:
+        """SCOI排程"""
+        chosen = []
+        skipped = []
+        used_budget = 0.0
+
+        for item in ranking:
+            # 从meta中获取C_fix
+            c_fix = item["C_eff"] / (1.0 + 0.25 + 0.30)  # 简化估算
+
+            if len(chosen) >= max_parallel:
+                skipped.append({"key": item["key"], "reason": "max_parallel"})
+                continue
+
+            if used_budget + c_fix > budget:
+                skipped.append({"key": item["key"], "reason": "budget"})
+                continue
+
+            chosen.append(item)
+            used_budget += c_fix
+
+        return {
+            "chosen": chosen,
+            "used_budget": used_budget,
+            "remaining_budget": budget - used_budget,
+            "skipped": skipped
+        }
+
+
 # ----------------------------- demo plugins -----------------------------
 
 class DemoGRPO:
@@ -497,3 +902,157 @@ if __name__ == "__main__":
 
     # 打印一次最终审计
     print("[EQI AUDIT] last:", eqi.last_audit)
+
+    print("\n" + "="*80)
+    print("SAF × COC × SCOI 完整决策流水线示例")
+    print("="*80 + "\n")
+
+    # ========== 完整决策流水线示例 ==========
+
+    # Step 1: 创建SAF模块(模拟系统中的问题模块)
+    saf_modules = [
+        SAFAnalyzer.from_metrics(
+            name="legacy_db",
+            maintenance_cost=0.8,
+            incident_rate=0.7,
+            drift_trend=0.75,
+            has_replacement=True,
+            single_point_risk=0.2
+        ),
+        SAFAnalyzer.from_metrics(
+            name="auth_service",
+            maintenance_cost=0.6,
+            incident_rate=0.4,
+            drift_trend=0.3,
+            has_replacement=False,
+            single_point_risk=0.6
+        ),
+        SAFAnalyzer.from_metrics(
+            name="payment_gateway",
+            maintenance_cost=0.9,
+            incident_rate=0.8,
+            drift_trend=0.85,
+            has_replacement=False,
+            single_point_risk=0.7
+        ),
+        SAFAnalyzer.from_metrics(
+            name="logging_system",
+            maintenance_cost=0.3,
+            incident_rate=0.2,
+            drift_trend=0.2,
+            has_replacement=True,
+            single_point_risk=0.1
+        ),
+    ]
+
+    # Step 2: 为每个模块定义修复策略场景
+    scenarios = {
+        "legacy_db": [
+            {
+                "strategy": "直接替换",
+                "C_fix": 50.0,
+                "C_now": 10.0,
+                "C_drift": 15.0,
+                "complexity": 3,
+                "variance": 0.15
+            },
+            {
+                "strategy": "逐步迁移",
+                "C_fix": 70.0,
+                "C_now": 8.0,
+                "C_drift": 12.0,
+                "complexity": 5,
+                "variance": 0.20
+            },
+        ],
+        "auth_service": [
+            {
+                "strategy": "先建隔离层",
+                "C_fix": 80.0,
+                "C_now": 12.0,
+                "C_drift": 8.0,
+                "complexity": 7,
+                "variance": 0.25
+            },
+        ],
+        "payment_gateway": [
+            {
+                "strategy": "先建隔离层再迁移",
+                "C_fix": 200.0,
+                "C_now": 25.0,
+                "C_drift": 35.0,
+                "complexity": 9,
+                "variance": 0.35
+            },
+            {
+                "strategy": "并行部署新系统",
+                "C_fix": 250.0,
+                "C_now": 20.0,
+                "C_drift": 30.0,
+                "complexity": 10,
+                "variance": 0.40
+            },
+        ],
+        "logging_system": [
+            {
+                "strategy": "更换开源方案",
+                "C_fix": 15.0,
+                "C_now": 2.0,
+                "C_drift": 1.0,
+                "complexity": 2,
+                "variance": 0.10
+            },
+        ],
+    }
+
+    # Step 3: 运行完整决策流水线
+    pipeline = DecisionPipeline(
+        saf_threshold=0.3,
+        coc_periods=6
+    )
+
+    budget = 250.0
+    max_parallel = 2
+    result = pipeline.run_full_pipeline(
+        modules=saf_modules,
+        scenarios=scenarios,
+        budget=budget,
+        max_parallel=max_parallel
+    )
+
+    # Step 4: 打印决策报告
+    import json
+
+    print("\n━━━━━━━━━━━ SAF分析结果 ━━━━━━━━━━━")
+    for item in result["saf_analysis"]:
+        print(f"  {item['name']:20s} | P={item['P']:.3f} | S={item['S']:.2f} D={item['D']:.2f} R={item['R']:.2f} | {item['decision']}")
+
+    print("\n━━━━━━━━━━━ COC成本分析 ━━━━━━━━━━━")
+    for item in result["coc_analysis"]:
+        opt_mark = "✓" if item["optimal"] else " "
+        print(f"  [{opt_mark}] {item['module']:20s} | {item['strategy']:25s} | "
+              f"C_fix={item['C_fix']:6.1f} C_now={item['C_now']:5.1f} C_drift={item['C_drift']:5.1f} | "
+              f"Total={item['total_cost']:7.1f} | Complexity={item['complexity']}")
+
+    print("\n━━━━━━━━━━━ SCOI排序结果 ━━━━━━━━━━━")
+    for i, item in enumerate(result["scoi_ranking"][:5], 1):
+        print(f"  {i}. {item['key']:40s} | SCOI={item['SCOI']:.3f} | "
+              f"φ={item['phi']:.2f} G_eff={item['G_eff']:6.1f} C_eff={item['C_eff']:6.1f} | "
+              f"Payback={item['Payback']:.2f}")
+
+    print("\n━━━━━━━━━━━ 最终执行决策 ━━━━━━━━━━━")
+    print(f"  预算: {budget:.1f}")
+    print(f"  已用: {result['final_decision']['used_budget']:.1f}")
+    print(f"  剩余: {result['final_decision']['remaining_budget']:.1f}")
+    print(f"\n  ✅ 本期执行项目 ({len(result['final_decision']['chosen'])}个):")
+    for i, item in enumerate(result['final_decision']['chosen'], 1):
+        print(f"    {i}. {item['key']:40s} | SCOI={item['SCOI']:.3f}")
+
+    if result['final_decision']['skipped']:
+        print(f"\n  ⏸️  跳过项目 ({len(result['final_decision']['skipped'])}个):")
+        for item in result['final_decision']['skipped'][:3]:
+            print(f"    - {item['key']:40s} | 原因: {item['reason']}")
+
+    print("\n" + "="*80)
+    print("决策流水线完成！")
+    print("="*80)
