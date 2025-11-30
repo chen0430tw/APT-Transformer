@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import json
+from transformers import BertTokenizer
 
 # 添加路径
 sys.path.insert(0, '/home/user/APT-Transformer')
@@ -21,7 +22,7 @@ from apt_model.modeling.apt_model import (
 )
 
 
-class SimpleCharTokenizer:
+class SimpleCharTokenizer_BACKUP:
     """简单的字符级分词器"""
     def __init__(self):
         # 创建一个基础字符表（包括中文、英文、emoji等）
@@ -342,7 +343,8 @@ def main():
 
     # 3. 准备分词器
     print(f"\n🔧 准备分词器...")
-    tokenizer = SimpleCharTokenizer()
+    # 使用本地的bert-base-chinese tokenizer
+    tokenizer = BertTokenizer.from_pretrained('/home/user/APT-Transformer/bert/bert-base-chinese')
     print(f"   词汇表大小: {tokenizer.vocab_size}")
 
     # 4. 创建数据集
