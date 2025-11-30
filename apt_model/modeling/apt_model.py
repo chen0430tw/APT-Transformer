@@ -46,6 +46,7 @@ class DBCDAC_Optimizer:
         self.use_quantization = use_quantization
         self.quant_bits = quant_bits
         self.apply_to_gradients = apply_to_gradients
+        self.res_scale = 0.1  # 残差缩放因子
     
     def compute_balance_vector(self, W):
         """计算矩阵W每一行的和作为平衡向量，若绝对值低于threshold则置为1"""
