@@ -782,6 +782,345 @@ def run_export_ollama_command(args):
     return 0
 
 
+def run_config_command(args):
+    """
+    配置管理命令 - 管理全局配置
+
+    用法:
+        python -m apt_model config --show                    # 显示所有配置
+        python -m apt_model config --set-debug on            # 启用Debug模式
+        python -m apt_model config --set-debug off           # 禁用Debug模式
+        python -m apt_model config --get debug.enabled       # 获取特定配置
+        python -m apt_model config --set training.default_epochs 30  # 设置默认epochs
+        python -m apt_model config --reset                   # 重置为默认配置
+    """
+    from apt_model.config.settings_manager import settings, enable_debug, disable_debug
+    import yaml
+
+    print("=" * 60)
+    print("APT Model 配置管理")
+    print("=" * 60)
+    print()
+
+    # 显示所有配置
+    if hasattr(args, 'show_config') and args.show_config:
+        print("当前配置:")
+        print("-" * 60)
+        config = settings.get_all_config()
+        print(yaml.dump(config, allow_unicode=True, default_flow_style=False))
+        print(f"配置文件位置: {settings.CONFIG_FILE}")
+        return 0
+
+    # 设置Debug模式
+    if hasattr(args, 'set_debug'):
+        debug_value = args.set_debug
+        if debug_value in ['on', 'true', '1', 'yes']:
+            enable_debug()
+        elif debug_value in ['off', 'false', '0', 'no']:
+            disable_debug()
+        else:
+            print(f"❌ 无效的debug值: {debug_value}")
+            print("   有效值: on, off, true, false, 1, 0, yes, no")
+            return 1
+        return 0
+
+    # 获取特定配置
+    if hasattr(args, 'get_config') and args.get_config:
+        key = args.get_config
+        value = settings.get(key)
+        if value is not None:
+            print(f"{key} = {value}")
+        else:
+            print(f"❌ 配置键 '{key}' 不存在")
+            return 1
+        return 0
+
+    # 设置特定配置
+    if hasattr(args, 'set_config_key') and hasattr(args, 'set_config_value'):
+        key = args.set_config_key
+        value = args.set_config_value
+        try:
+            settings.set(key, value)
+            print(f"✓ 已设置: {key} = {value}")
+            print(f"  配置文件: {settings.CONFIG_FILE}")
+        except Exception as e:
+            print(f"❌ 设置失败: {e}")
+            return 1
+        return 0
+
+    # 重置配置
+    if hasattr(args, 'reset_config') and args.reset_config:
+        confirm = input("确认要重置所有配置为默认值吗？(y/N): ")
+        if confirm.lower() in ['y', 'yes']:
+            settings.reset_to_default()
+            print("✓ 配置已重置为默认值")
+        else:
+            print("已取消重置")
+        return 0
+
+    # 如果没有指定任何操作，显示帮助
+    print("配置管理命令用法:")
+    print()
+    print("  --show                     显示所有配置")
+    print("  --set-debug on|off         启用/禁用Debug模式")
+    print("  --get KEY                  获取指定配置项")
+    print("  --set KEY VALUE            设置指定配置项")
+    print("  --reset                    重置为默认配置")
+    print()
+    print("示例:")
+    print("  python -m apt_model config --show")
+    print("  python -m apt_model config --set-debug on")
+    print("  python -m apt_model config --set-debug off")
+    print("  python -m apt_model config --get debug.enabled")
+    print("  python -m apt_model config --set training.default_epochs 30")
+    print()
+    print(f"配置文件位置: {settings.CONFIG_FILE}")
+
+    return 0
+
+
+def run_debug_command(args):
+    """
+    执行Debug命令 - 诊断和调试工具
+
+    用法:
+        python -m apt_model debug --type io          # 检查IO和环境
+        python -m apt_model debug --type model       # 检查模型架构
+        python -m apt_model debug --type data        # 检查数据加载
+        python -m apt_model debug --type tokenizer   # 检查分词器
+        python -m apt_model debug                    # 执行所有检查
+    """
+    print("=" * 60)
+    print("APT Debug Mode - 系统诊断工具")
+    print("=" * 60)
+    print()
+
+    debug_type = args.debug_type if hasattr(args, 'debug_type') and args.debug_type else 'all'
+
+    results = {}
+
+    # 1. 调试IO流程
+    if debug_type in ['io', 'all']:
+        print("[1/4] 检查IO和Python环境...")
+        print("-" * 60)
+        results['io'] = debug_io_pipeline(args)
+        print()
+
+    # 2. 调试模型架构
+    if debug_type in ['model', 'all']:
+        print("[2/4] 检查模型架构...")
+        print("-" * 60)
+        results['model'] = debug_model_architecture(args)
+        print()
+
+    # 3. 调试数据加载
+    if debug_type in ['data', 'all']:
+        print("[3/4] 检查数据加载...")
+        print("-" * 60)
+        results['data'] = debug_data_loading(args)
+        print()
+
+    # 4. 调试分词器
+    if debug_type in ['tokenizer', 'all']:
+        print("[4/4] 检查分词器...")
+        print("-" * 60)
+        results['tokenizer'] = debug_tokenizer(args)
+        print()
+
+    # 生成调试报告
+    print("=" * 60)
+    print("诊断报告")
+    print("=" * 60)
+
+    all_success = True
+    for key, result in results.items():
+        status = "✓" if result['success'] else "✗"
+        color = "\033[32m" if result['success'] else "\033[31m"
+        reset = "\033[0m"
+        print(f"{color}{status}{reset} {key:12s}: {result['message']}")
+        if not result['success']:
+            all_success = False
+
+    print()
+    if all_success:
+        print("✓ 所有检查通过！系统运行正常。")
+        return 0
+    else:
+        print("✗ 部分检查失败，请查看上面的详细信息。")
+        return 1
+
+
+def debug_io_pipeline(args):
+    """调试IO流程"""
+    try:
+        import sys
+
+        print(f"  Python版本: {sys.version}")
+        print(f"  工作目录: {os.getcwd()}")
+
+        print(f"  检查PyTorch...")
+        import torch
+        print(f"    ✓ PyTorch版本: {torch.__version__}")
+        print(f"    ✓ CUDA可用: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"    ✓ CUDA版本: {torch.version.cuda}")
+            print(f"    ✓ GPU数量: {torch.cuda.device_count()}")
+
+        print(f"  检查必要的包...")
+        packages = ['transformers', 'numpy', 'tqdm']
+        for pkg in packages:
+            try:
+                __import__(pkg)
+                print(f"    ✓ {pkg}")
+            except ImportError:
+                print(f"    ✗ {pkg} - 未安装")
+
+        return {'success': True, 'message': 'IO流程正常'}
+
+    except Exception as e:
+        return {'success': False, 'message': f'IO流程错误: {e}'}
+
+
+def debug_model_architecture(args):
+    """调试模型架构"""
+    try:
+        print(f"  加载模型配置...")
+
+        from apt_model.config.apt_config import APTConfig
+        from apt_model.modeling.apt_model import APTModel
+
+        # 创建测试配置
+        config = APTConfig(
+            vocab_size=1000,
+            d_model=256,
+            num_encoder_layers=2,
+            num_decoder_layers=2
+        )
+
+        print(f"    ✓ 配置创建成功")
+
+        print(f"  创建模型实例...")
+        model = APTModel(config)
+
+        param_count = sum(p.numel() for p in model.parameters())
+        print(f"    ✓ 模型创建成功")
+        print(f"    - 参数数量: {param_count:,}")
+
+        print(f"  测试前向传播...")
+        import torch
+        batch_size = 2
+        seq_len = 10
+
+        src_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len))
+        tgt_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len))
+
+        with torch.no_grad():
+            outputs = model(src_ids, tgt_ids)
+            print(f"    ✓ 前向传播成功: {outputs.shape}")
+
+        print(f"  测试生成方法...")
+        if hasattr(model, 'generate'):
+            with torch.no_grad():
+                generated = model.generate(input_ids=src_ids, max_length=15)
+                print(f"    ✓ 生成方法成功: {generated.shape}")
+        else:
+            print(f"    ⚠️  没有generate方法")
+
+        return {'success': True, 'message': '模型架构正常'}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': f'模型架构错误: {str(e)[:50]}'}
+
+
+def debug_data_loading(args):
+    """调试数据加载"""
+    try:
+        data_path = args.data_path if hasattr(args, 'data_path') and args.data_path else None
+
+        if not data_path:
+            print(f"    ⚠️  未指定数据路径，使用测试数据")
+            test_texts = ["测试文本1", "测试文本2", "测试文本3"]
+        else:
+            print(f"  加载数据: {data_path}")
+            with open(data_path, 'r', encoding='utf-8') as f:
+                test_texts = [line.strip() for line in f if line.strip()]
+            print(f"    ✓ 加载了 {len(test_texts)} 条数据")
+
+        if len(test_texts) > 0:
+            print(f"    - 第一条: {test_texts[0][:50]}...")
+            print(f"    - 平均长度: {sum(len(t) for t in test_texts) / len(test_texts):.1f}")
+
+        print(f"  测试DataLoader...")
+        from torch.utils.data import Dataset, DataLoader
+
+        class SimpleDataset(Dataset):
+            def __init__(self, texts):
+                self.texts = texts
+
+            def __len__(self):
+                return len(self.texts)
+
+            def __getitem__(self, idx):
+                return self.texts[idx]
+
+        dataset = SimpleDataset(test_texts[:10])
+        dataloader = DataLoader(dataset, batch_size=2)
+
+        batch = next(iter(dataloader))
+        print(f"    ✓ DataLoader正常: 批次大小={len(batch)}")
+
+        return {'success': True, 'message': '数据加载正常'}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': f'数据加载错误: {str(e)[:50]}'}
+
+
+def debug_tokenizer(args):
+    """调试分词器"""
+    try:
+        print(f"  测试分词器...")
+
+        from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+
+        test_texts = ["人工智能", "深度学习", "自然语言处理"]
+
+        print(f"  初始化分词器...")
+        tokenizer, lang = get_appropriate_tokenizer(texts=test_texts)
+
+        print(f"    ✓ 分词器创建成功")
+        print(f"    - 检测语言: {lang}")
+        print(f"    - 词汇表大小: {tokenizer.vocab_size}")
+
+        print(f"  测试编码解码...")
+        test_text = test_texts[0]
+
+        # 编码
+        ids = tokenizer.encode(test_text)
+        print(f"    - 原文: {test_text}")
+        print(f"    - 编码: {ids[:10]}...")
+
+        # 解码
+        decoded = tokenizer.decode(ids)
+        print(f"    - 解码: {decoded}")
+
+        # 检查往返一致性
+        if test_text == decoded or decoded.replace(" ", "") == test_text:
+            print(f"    ✓ 编码解码往返一致")
+        else:
+            print(f"    ⚠️  编码解码存在差异")
+
+        return {'success': True, 'message': '分词器正常'}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': f'分词器错误: {str(e)[:50]}'}
+
+
 def show_help(args=None):
     """
     Show help information

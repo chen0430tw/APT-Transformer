@@ -111,6 +111,8 @@ def show_default_help(console):
     print("  python -m apt_model console-status        - 查看系统状态")
     print("  python -m apt_model modules-list          - 查看模块列表")
     print("  python -m apt_model train                 - 开始训练")
+    print("  python -m apt_model debug                 - Debug诊断")
+    print("  python -m apt_model config                - 配置管理")
 
 
 def main():

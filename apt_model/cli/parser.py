@@ -61,8 +61,13 @@ Examples:
     parser.add_argument('--language-file', type=str, default=None,
                         help='Custom language file path')
 
-    # Action argument - 动态从命令注册中心获取可用命令
+    # Action argument - 动态从命令注册中心获取可用命令，包含debug命令
     available_commands = get_available_commands()
+    if available_commands and 'debug' not in available_commands:
+        available_commands.append('debug')
+    if available_commands and 'config' not in available_commands:
+        available_commands.append('config')
+
     parser.add_argument('action', nargs='?', default=None,
                         choices=available_commands if available_commands else None,
                         help='Action to perform')
@@ -194,6 +199,7 @@ Examples:
                         help='Pseudo dataset size for training time estimation (default: 1000)')
 
     # ===============================
+<<<<<<< HEAD
     #  APX Model Packaging arguments
     # ===============================
     apx_group = parser.add_argument_group('APX Packaging Options')
@@ -230,6 +236,31 @@ Examples:
                           help='Disable automatic capability detection')
     apx_group.add_argument('--apx', type=str, default=None,
                           help='APX file path for info command')
+=======
+    #  Config command arguments
+    # ===============================
+    config_group = parser.add_argument_group('Config Command Options')
+    config_group.add_argument('--show', dest='show_config', action='store_true',
+                             help='Show all current configuration')
+    config_group.add_argument('--set-debug', type=str, metavar='on|off',
+                             help='Enable or disable debug mode (on/off)')
+    config_group.add_argument('--get', dest='get_config', type=str, metavar='KEY',
+                             help='Get specific configuration value')
+    config_group.add_argument('--set-key', dest='set_config_key', type=str, metavar='KEY',
+                             help='Configuration key to set (use with --set-value)')
+    config_group.add_argument('--set-value', dest='set_config_value', type=str, metavar='VALUE',
+                             help='Configuration value to set (use with --set-key)')
+    config_group.add_argument('--reset', dest='reset_config', action='store_true',
+                             help='Reset configuration to default')
+
+    # ===============================
+    #  Debug command arguments
+    # ===============================
+    debug_group = parser.add_argument_group('Debug Command Options')
+    debug_group.add_argument('--type', dest='debug_type', type=str,
+                            choices=['io', 'model', 'data', 'tokenizer', 'all'],
+                            help='Type of debug check to run (default: all)')
+>>>>>>> origin/claude/debug-mode-refactor-011CUQ2B9rjmQ1iNFb5jqNNK
 
     return parser.parse_args()
 
