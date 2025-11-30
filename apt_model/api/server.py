@@ -655,7 +655,8 @@ def run_server(
     checkpoint_dir: Optional[str] = None,
     host: str = "0.0.0.0",
     port: int = 8000,
-    reload: bool = False
+    reload: bool = False,
+    api_key: Optional[str] = None
 ):
     """
     Run FastAPI server with uvicorn
@@ -665,13 +666,100 @@ def run_server(
         host: Server host
         port: Server port
         reload: Enable auto-reload on code changes
+        api_key: Optional API key for authentication
     """
+    import sys
+    import secrets
+
     try:
         import uvicorn
     except ImportError:
         raise ImportError("uvicorn not installed. Install with: pip install uvicorn")
 
+    # Generate API key if not provided
+    if api_key is None:
+        api_key = secrets.token_hex(32)
+        generated_key = True
+    else:
+        generated_key = False
+
+    # Print startup banner
+    print("\n" + "=" * 80)
+    print("🚀 APT Model REST API 启动中...")
+    print("=" * 80)
+    print()
+
+    # Show configuration
+    print("📋 配置信息:")
+    print(f"  🌐 主机地址: {host}")
+    print(f"  🔌 端口: {port}")
+    print(f"  📁 Checkpoint目录: {checkpoint_dir or '(未设置)'}")
+    print(f"  🔄 热重载: {'✅ 已启用' if reload else '❌ 未启用'}")
+    print(f"  🔐 PyTorch: {'✅ 可用' if TORCH_AVAILABLE else '⚠️  不可用'}")
+    print(f"  🚀 FastAPI: {'✅ 可用' if FASTAPI_AVAILABLE else '⚠️  不可用'}")
+    print()
+
+    # Show access URLs
+    print("🌐 API访问地址:")
+    if host in ["0.0.0.0", "127.0.0.1", "localhost"]:
+        print(f"  📍 本地访问: http://localhost:{port}")
+        print(f"  📍 局域网访问: http://<你的IP>:{port}")
+    else:
+        print(f"  📍 访问地址: http://{host}:{port}")
+    print()
+
+    print("📚 API文档:")
+    if host in ["0.0.0.0", "127.0.0.1", "localhost"]:
+        print(f"  📖 Swagger UI: http://localhost:{port}/docs")
+        print(f"  📖 ReDoc: http://localhost:{port}/redoc")
+    else:
+        print(f"  📖 Swagger UI: http://{host}:{port}/docs")
+        print(f"  📖 ReDoc: http://{host}:{port}/redoc")
+    print()
+
+    # Show API key
+    if generated_key:
+        print("🔑 API访问密钥 (自动生成):")
+        print(f"  🔐 API Key: {api_key}")
+        print(f"  💡 请妥善保存此密钥，重启后将重新生成")
+    else:
+        print("🔑 API访问密钥:")
+        print(f"  🔐 API Key: {api_key[:16]}... (已加载)")
+    print()
+
+    print("💡 主要端点:")
+    print("  🤖 推理服务:")
+    print("     POST /api/generate - 单文本生成")
+    print("     POST /api/batch_generate - 批量生成")
+    print("  📊 训练监控:")
+    print("     GET /api/training/status - 训练状态")
+    print("     GET /api/training/gradients - 梯度数据")
+    print("  💾 Checkpoint管理:")
+    print("     GET /api/checkpoints - 列出checkpoints")
+    print("     POST /api/checkpoints/load - 加载checkpoint")
+    print()
+
+    print("📝 使用示例:")
+    if host in ["0.0.0.0", "127.0.0.1", "localhost"]:
+        print(f"  curl -X POST http://localhost:{port}/api/generate \\")
+    else:
+        print(f"  curl -X POST http://{host}:{port}/api/generate \\")
+    print('    -H "Content-Type: application/json" \\')
+    print('    -d \'{"text": "你好", "max_length": 50}\'')
+    print()
+
+    print("=" * 80)
+    print("✅ API服务器已启动！")
+    print("=" * 80)
+    print()
+
+    # Flush output
+    sys.stdout.flush()
+
     app = create_app(checkpoint_dir=checkpoint_dir)
+
+    # Store API key in app state (for future authentication middleware)
+    app.state.api_key = api_key
 
     uvicorn.run(
         app,
@@ -690,6 +778,7 @@ if __name__ == '__main__':
     parser.add_argument('--host', type=str, default='0.0.0.0', help='Server host')
     parser.add_argument('--port', type=int, default=8000, help='Server port')
     parser.add_argument('--reload', action='store_true', help='Enable auto-reload')
+    parser.add_argument('--api-key', type=str, help='API access key (auto-generated if not provided)')
 
     args = parser.parse_args()
 
@@ -697,5 +786,6 @@ if __name__ == '__main__':
         checkpoint_dir=args.checkpoint_dir,
         host=args.host,
         port=args.port,
-        reload=args.reload
+        reload=args.reload,
+        api_key=args.api_key
     )

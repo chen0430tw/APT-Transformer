@@ -719,7 +719,8 @@ def launch_webui(
     checkpoint_dir: Optional[str] = None,
     share: bool = False,
     server_port: int = 7860,
-    server_name: str = "0.0.0.0"
+    server_name: str = "0.0.0.0",
+    auth: Optional[tuple] = None
 ):
     """
     Launch WebUI server
@@ -729,9 +730,60 @@ def launch_webui(
         share: Create public share link
         server_port: Port to run server on
         server_name: Server hostname
+        auth: Optional (username, password) tuple for authentication
     """
+    import sys
+
     if checkpoint_dir:
         webui_state.checkpoint_dir = checkpoint_dir
+
+    # Print startup banner
+    print("\n" + "=" * 80)
+    print("🚀 APT Model WebUI 启动中...")
+    print("=" * 80)
+    print()
+
+    # Show configuration
+    print("📋 配置信息:")
+    print(f"  🌐 主机地址: {server_name}")
+    print(f"  🔌 端口: {server_port}")
+    print(f"  📁 Checkpoint目录: {checkpoint_dir or '(未设置)'}")
+    print(f"  🌍 公共分享: {'✅ 是' if share else '❌ 否'}")
+    if auth:
+        print(f"  🔐 访问控制: ✅ 已启用 (用户名: {auth[0]})")
+    else:
+        print(f"  🔐 访问控制: ⚠️  未启用 (建议生产环境启用)")
+    print()
+
+    # Show access URLs
+    print("🌐 访问地址:")
+    if server_name in ["0.0.0.0", "127.0.0.1", "localhost"]:
+        print(f"  📍 本地访问: http://localhost:{server_port}")
+        print(f"  📍 局域网访问: http://<你的IP>:{server_port}")
+    else:
+        print(f"  📍 访问地址: http://{server_name}:{server_port}")
+    print()
+
+    if auth:
+        print("🔑 登录凭据:")
+        print(f"  👤 用户名: {auth[0]}")
+        print(f"  🔒 密码: {auth[1]}")
+        print()
+
+    print("💡 功能说明:")
+    print("  📊 训练监控 - 实时查看训练loss和学习率曲线")
+    print("  🔍 梯度监控 - 监控梯度流和异常检测")
+    print("  💾 Checkpoint管理 - 管理和加载模型检查点")
+    print("  ✨ 推理测试 - 交互式文本生成")
+    print()
+
+    print("=" * 80)
+    print("✅ WebUI 已启动！请在浏览器中打开上述地址")
+    print("=" * 80)
+    print()
+
+    # Flush output to ensure it's displayed before gradio starts
+    sys.stdout.flush()
 
     app = create_webui()
 
@@ -739,7 +791,10 @@ def launch_webui(
         share=share,
         server_port=server_port,
         server_name=server_name,
-        show_error=True
+        show_error=True,
+        auth=auth,
+        quiet=False,
+        show_api=False
     )
 
 
@@ -751,12 +806,23 @@ if __name__ == '__main__':
     parser.add_argument('--share', action='store_true', help='Create public share link')
     parser.add_argument('--port', type=int, default=7860, help='Server port')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='Server hostname')
+    parser.add_argument('--username', type=str, help='Username for authentication')
+    parser.add_argument('--password', type=str, help='Password for authentication')
 
     args = parser.parse_args()
+
+    # Prepare auth tuple if credentials provided
+    auth = None
+    if args.username and args.password:
+        auth = (args.username, args.password)
+    elif args.username or args.password:
+        print("⚠️  警告: 必须同时提供 --username 和 --password")
+        exit(1)
 
     launch_webui(
         checkpoint_dir=args.checkpoint_dir,
         share=args.share,
         server_port=args.port,
-        server_name=args.host
+        server_name=args.host,
+        auth=auth
     )
