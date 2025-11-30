@@ -245,6 +245,136 @@ class LoggingCallback(TrainingCallback):
         logger.info(f"Epoch {epoch} completed - {metric_str}")
 
 
+class ProgressCallback(TrainingCallback):
+    """
+    Enhanced progress bar callback with rich display.
+
+    Provides LPMM-style progress display with:
+    - Spinner animation
+    - Fancy progress bar
+    - Percentage, count, elapsed/remaining time
+    - Training metrics (loss, lr, gpu usage)
+    """
+
+    def __init__(self, use_rich: bool = False):
+        """
+        Initialize progress callback.
+
+        Args:
+            use_rich: Use rich library for advanced display (requires: pip install rich)
+        """
+        self.use_rich = use_rich
+        self.progress_bar = None
+        self.batch_task = None
+        self.epoch_task = None
+
+        if use_rich:
+            try:
+                from rich.progress import (
+                    Progress, SpinnerColumn, TextColumn, BarColumn,
+                    TaskProgressColumn, TimeRemainingColumn, TimeElapsedColumn,
+                    MofNCompleteColumn
+                )
+                self.Progress = Progress
+                self.progress = Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(bar_width=50),
+                    TaskProgressColumn(),
+                    MofNCompleteColumn(),
+                    TimeElapsedColumn(),
+                    TextColumn("剩余:"),
+                    TimeRemainingColumn(),
+                    refresh_per_second=10
+                )
+            except ImportError:
+                logger.warning("Rich library not found, falling back to tqdm")
+                self.use_rich = False
+
+        if not self.use_rich:
+            from tqdm import tqdm
+            self.tqdm = tqdm
+
+    def on_train_begin(self, total_epochs: int = None, **kwargs):
+        """Start progress tracking at training begin."""
+        if self.use_rich:
+            self.progress.start()
+            if total_epochs:
+                self.epoch_task = self.progress.add_task(
+                    "🎯 训练进度",
+                    total=total_epochs
+                )
+
+    def on_epoch_begin(self, epoch: int, dataloader=None, **kwargs):
+        """Create progress bar for new epoch."""
+        if self.use_rich:
+            if dataloader:
+                self.batch_task = self.progress.add_task(
+                    f"  📊 Epoch {epoch+1}",
+                    total=len(dataloader)
+                )
+        else:
+            # Enhanced tqdm progress bar
+            if dataloader:
+                self.progress_bar = self.tqdm(
+                    total=len(dataloader),
+                    desc=f"📊 Epoch {epoch+1}",
+                    ncols=120,
+                    bar_format=(
+                        "{desc}: {percentage:3.0f}%|{bar:50}| "
+                        "{n_fmt}/{total_fmt} "
+                        "[{elapsed}<{remaining}, {rate_fmt}] "
+                        "{postfix}"
+                    ),
+                    ascii=False,
+                    colour='green',
+                    leave=True
+                )
+
+    def on_batch_end(self, batch_idx: int, loss: float, lr: float = None,
+                     gpu_usage: float = None, **kwargs):
+        """Update progress bar after each batch."""
+        if self.use_rich and self.batch_task:
+            desc = f"  📊 Epoch {kwargs.get('epoch', 0)+1} | 损失: {loss:.4f}"
+            if lr:
+                desc += f" | 学习率: {lr:.2e}"
+            if gpu_usage:
+                desc += f" | GPU: {gpu_usage:.0f}%"
+
+            self.progress.update(
+                self.batch_task,
+                advance=1,
+                description=desc
+            )
+
+        elif self.progress_bar:
+            postfix = {"损失": f"{loss:.4f}"}
+            if lr:
+                postfix["学习率"] = f"{lr:.2e}"
+            if gpu_usage:
+                postfix["GPU"] = f"{gpu_usage:.0f}%"
+
+            self.progress_bar.update(1)
+            self.progress_bar.set_postfix(postfix)
+
+    def on_epoch_end(self, epoch: int, metrics: Dict = None, **kwargs):
+        """Clean up epoch progress bar."""
+        if self.use_rich:
+            if self.batch_task:
+                self.progress.remove_task(self.batch_task)
+                self.batch_task = None
+            if self.epoch_task:
+                self.progress.update(self.epoch_task, advance=1)
+        elif self.progress_bar:
+            self.progress_bar.close()
+            self.progress_bar = None
+
+    def on_train_end(self, **kwargs):
+        """Stop progress tracking."""
+        if self.use_rich:
+            self.progress.stop()
+
+
 # ============================================================================
 # Callback Manager
 # ============================================================================
@@ -270,7 +400,8 @@ class CallbackManager:
 # Convenience Functions
 # ============================================================================
 
-def create_default_callbacks(config, modules: Dict, total_epochs: int, total_steps: int) -> List[TrainingCallback]:
+def create_default_callbacks(config, modules: Dict, total_epochs: int, total_steps: int,
+                             use_rich_progress: bool = False) -> List[TrainingCallback]:
     """
     Create default set of callbacks for APT training.
 
@@ -279,11 +410,16 @@ def create_default_callbacks(config, modules: Dict, total_epochs: int, total_ste
         modules: Dict of model modules
         total_epochs: Total training epochs
         total_steps: Total training steps
+        use_rich_progress: Use rich library for enhanced progress display
 
     Returns:
         List of TrainingCallback instances
     """
     callbacks = []
+
+    # Progress callback (enhanced progress bar)
+    callbacks.append(ProgressCallback(use_rich=use_rich_progress))
+    logger.info(f"Added ProgressCallback (rich={use_rich_progress})")
 
     # Schedule callback (curriculum learning)
     if hasattr(config, 'schedules') and config.schedules:

@@ -5,6 +5,7 @@
 """
 
 import os
+import glob
 import torch
 import torch.nn.functional as F
 import traceback
@@ -484,7 +485,7 @@ def _setup_tensorboard(save_path):
 
 
 def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_steps,
-                   batch_idx, logger, resource_monitor):
+                   batch_idx, logger, resource_monitor, gradient_monitor=None, global_step=0):
     """
     处理单个批次的训练
 
@@ -498,6 +499,8 @@ def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_step
         batch_idx: 批次索引
         logger: 日志记录器
         resource_monitor: 资源监视器
+        gradient_monitor: 梯度监控器（可选）
+        global_step: 全局训练步数（用于梯度监控）
 
     返回:
         loss_value: 损失值（失败返回None）
@@ -565,6 +568,28 @@ def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_step
             optimizer.zero_grad()
             return None, False
 
+        # 梯度监控（如果启用）
+        if gradient_monitor is not None:
+            try:
+                # 检查梯度流（梯度消失/爆炸检测）
+                gradients, issues = gradient_monitor.check_gradient_flow()
+                if issues:
+                    for issue in issues[:3]:  # 只显示前3个问题
+                        debug_print(f"  {issue}")
+                    if logger:
+                        logger.warning(f"Step {global_step}: 发现 {len(issues)} 个梯度问题")
+
+                # 记录梯度范数
+                total_norm = gradient_monitor.log_gradient_norms(global_step)
+
+                # 检测梯度异常
+                anomalies = gradient_monitor.detect_gradient_anomalies()
+                if anomalies:
+                    _log_message(logger, f"Step {global_step}: 检测到梯度异常 - {anomalies}", "warning")
+                    debug_print(f"⚠️  梯度异常: {anomalies}")
+            except Exception as e:
+                debug_print(f"梯度监控失败: {e}")
+
         # 梯度裁剪
         try:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -587,7 +612,9 @@ def _process_batch(model, batch, optimizer, scaler, tokenizer, accumulation_step
 
 def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model",
                 logger=None, resource_monitor=None, multimodal_config=None,
-                tokenizer_type=None, language=None, texts=None, tokenizer=None):
+                tokenizer_type=None, language=None, texts=None, tokenizer=None,
+                checkpoint_dir="./outputs", resume_from=None, temp_checkpoint_freq=100,
+                enable_gradient_monitoring=False):
     """
     训练模型的主函数
 
@@ -595,7 +622,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         epochs: 训练轮数
         batch_size: 批次大小
         learning_rate: 学习率
-        save_path: 模型保存路径
+        save_path: 模型保存路径（已弃用，建议使用checkpoint_dir）
         logger: 日志记录器
         resource_monitor: 资源监视器
         multimodal_config: 多模态配置（未使用）
@@ -603,6 +630,10 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         language: 语言类型
         texts: 训练文本（None则使用默认数据）
         tokenizer: 分词器（None则自动选择）
+        checkpoint_dir: checkpoint保存目录（相对路径，可迁移），默认"./outputs"
+        resume_from: 恢复训练的checkpoint路径，可选
+        temp_checkpoint_freq: 临时checkpoint保存频率（每N步），默认100
+        enable_gradient_monitoring: 启用梯度监控（调试/分析用），默认False
 
     返回:
         model: 训练后的模型
@@ -653,6 +684,20 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     untrained_model.load_state_dict(model.state_dict())
     untrained_model.eval()
 
+    # 初始化梯度监控器（如果启用）
+    gradient_monitor = None
+    if enable_gradient_monitoring:
+        from apt_model.training.gradient_monitor import GradientMonitor
+        from pathlib import Path
+        gradient_export_dir = Path(checkpoint_dir) / "gradient_monitor"
+        gradient_export_dir.mkdir(parents=True, exist_ok=True)
+        gradient_monitor = GradientMonitor(
+            model,
+            logger=logger,
+            export_dir=gradient_export_dir
+        )
+        info_print(f"✅ 梯度监控已启用，报告将保存到: {gradient_export_dir}")
+
     # 早停设置
     best_loss = float('inf')
     patience = 5
@@ -669,7 +714,49 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     accumulation_steps = 4
 
     # 导入必要的函数
-    from apt_model.training.checkpoint import save_model
+    from apt_model.training.checkpoint import save_model, CheckpointManager
+
+    # 初始化CheckpointManager（使用相对路径，可迁移）
+    checkpoint_mgr = CheckpointManager(
+        save_dir=checkpoint_dir,
+        model_name="apt_model",
+        save_freq=1,  # 每个epoch保存
+        logger=logger
+    )
+    info_print(f"Checkpoint将保存到: {checkpoint_dir}/checkpoints/")
+
+    # 创建temp目录用于临时checkpoint
+    temp_dir = os.path.join(".cache", "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    info_print(f"临时checkpoint将保存到: {temp_dir}/")
+
+    # 初始化训练状态
+    start_epoch = 0
+    resume_global_step = 0
+    resume_loss_history = []
+
+    # 如果需要恢复训练
+    if resume_from:
+        try:
+            info_print(f"从checkpoint恢复训练: {resume_from}")
+            start_epoch, resume_global_step, resume_loss_history, resume_metrics = checkpoint_mgr.load_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                checkpoint_path=resume_from
+            )
+            # 恢复后从下一个epoch开始
+            start_epoch += 1
+            global_step = resume_global_step
+            train_losses = resume_loss_history.copy()
+            info_print(f"成功恢复训练: 从Epoch {start_epoch}继续, global_step={global_step}")
+            if resume_metrics:
+                info_print(f"恢复的指标: {resume_metrics}")
+        except Exception as e:
+            _log_message(logger, f"恢复checkpoint失败: {e}", "error")
+            info_print(f"警告: 无法恢复checkpoint，从头开始训练")
+            import traceback
+            debug_print(f"恢复失败详情: {traceback.format_exc()}")
 
     # 初始化callback系统
     modules = {}
@@ -684,19 +771,22 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         modules['router'] = model.router
 
     total_steps = epochs * len(dataloader)
-    callbacks = create_default_callbacks(config, modules, epochs, total_steps)
+    callbacks = create_default_callbacks(config, modules, epochs, total_steps,
+                                        use_rich_progress=False)  # Set to True for rich display
     callback_manager = CallbackManager(callbacks)
 
     # 触发训练开始回调
-    callback_manager.trigger('on_train_begin', model=model, config=config)
+    callback_manager.trigger('on_train_begin', model=model, config=config, total_epochs=epochs)
 
-    # 主训练循环
-    for epoch in range(epochs):
-        # 触发epoch开始回调
-        callback_manager.trigger('on_epoch_begin', epoch=epoch)
+    # 主训练循环（从start_epoch开始，支持恢复训练）
+    for epoch in range(start_epoch, epochs):
+        # 触发epoch开始回调（传递dataloader给ProgressCallback）
+        callback_manager.trigger('on_epoch_begin', epoch=epoch, dataloader=dataloader)
 
         total_loss = 0
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
+        # 注意：进度条现在由ProgressCallback管理，这里保留tqdm作为后备
+        # 如果想完全使用ProgressCallback，可以注释掉下面这行
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}", disable=True)
 
         for i, batch in enumerate(progress_bar):
             # 触发batch开始回调
@@ -704,7 +794,8 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
             # 处理批次
             loss_value, should_update = _process_batch(
                 model, batch, optimizer, scaler, tokenizer,
-                accumulation_steps, i, logger, resource_monitor
+                accumulation_steps, i, logger, resource_monitor,
+                gradient_monitor, global_step
             )
 
             # 如果批次处理失败，跳过
@@ -719,8 +810,20 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                 "lr": f"{scheduler.get_last_lr()[0]:.6f}"
             })
 
-            # 触发batch结束回调
-            callback_manager.trigger('on_batch_end', batch_idx=i, loss=loss_value)
+            # 获取GPU使用率（如果可用）
+            gpu_usage = None
+            if torch.cuda.is_available():
+                try:
+                    allocated = torch.cuda.memory_allocated() / 1024**3
+                    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                    gpu_usage = (allocated / total) * 100
+                except:
+                    pass
+
+            # 触发batch结束回调（传递给ProgressCallback）
+            callback_manager.trigger('on_batch_end', batch_idx=i, loss=loss_value,
+                                    lr=scheduler.get_last_lr()[0], gpu_usage=gpu_usage,
+                                    epoch=epoch)
 
             # 只在累积完成后更新参数
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
@@ -748,6 +851,24 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
 
             global_step += 1
 
+            # 每N步保存临时checkpoint（用于崩溃恢复）
+            if temp_checkpoint_freq > 0 and global_step % temp_checkpoint_freq == 0:
+                try:
+                    temp_checkpoint_path = os.path.join(temp_dir, f"temp_epoch{epoch}_step{global_step}.pt")
+                    torch.save({
+                        'epoch': epoch,
+                        'global_step': global_step,
+                        'batch_idx': i,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict(),
+                        'train_losses': train_losses,
+                    }, temp_checkpoint_path)
+                    debug_print(f"临时checkpoint已保存: {temp_checkpoint_path}")
+                except Exception as e:
+                    _log_message(logger, f"保存临时checkpoint失败: {e}", "warning")
+                    debug_print(f"警告: 临时checkpoint保存失败: {e}")
+
         # Epoch结束处理
         avg_loss = total_loss / max(1, len(dataloader))
         info_print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}")
@@ -758,18 +879,45 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         # 触发epoch结束回调
         callback_manager.trigger('on_epoch_end', epoch=epoch, metrics={'avg_loss': avg_loss})
 
-        # 保存最佳模型和早停
+        # 保存checkpoint（每个epoch）
         try:
-            if avg_loss < best_loss:
+            is_best = avg_loss < best_loss
+            if is_best:
                 best_loss = avg_loss
-                save_model(model, tokenizer, path=save_path, config=config)
-                info_print(f"发现新的最佳模型，已保存到 {save_path}")
                 patience_counter = 0
             else:
                 patience_counter += 1
-                if patience_counter >= patience:
-                    info_print(f"早停: {patience} 轮没有改善，停止训练")
-                    break
+
+            # 使用CheckpointManager保存完整训练状态
+            checkpoint_path = checkpoint_mgr.save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                epoch=epoch,
+                global_step=global_step,
+                loss_history=train_losses,
+                metrics={'avg_loss': avg_loss, 'best_loss': best_loss},
+                tokenizer=tokenizer,
+                config=config,
+                is_best=is_best
+            )
+            info_print(f"Checkpoint已保存: {checkpoint_path}")
+            if is_best:
+                info_print(f"✨ 发现新的最佳模型! 损失: {best_loss:.4f}")
+
+            # 清理temp文件夹（epoch结束后）
+            try:
+                temp_files = glob.glob(os.path.join(temp_dir, "temp_*.pt"))
+                for temp_file in temp_files:
+                    os.remove(temp_file)
+                debug_print(f"已清理 {len(temp_files)} 个临时checkpoint文件")
+            except Exception as e:
+                debug_print(f"清理临时文件失败: {e}")
+
+            # 早停检查
+            if patience_counter >= patience:
+                info_print(f"早停: {patience} 轮没有改善，停止训练")
+                break
 
             # 测试生成效果（仅在Debug模式下显示详细信息）
             if settings.get_debug_enabled():
@@ -791,6 +939,22 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         except Exception as e:
             _log_message(logger, f"模型比较出错: {e}", "error")
             debug_print(f"警告: 模型比较失败: {e}")
+
+    # 生成梯度监控报告（如果启用）
+    if gradient_monitor is not None:
+        try:
+            info_print("\n生成梯度监控报告...")
+            reports = gradient_monitor.generate_all_reports()
+            info_print(f"✅ 梯度监控报告已生成:")
+            for report_type, report_path in reports.items():
+                info_print(f"  - {report_type}: {report_path}")
+
+            # 🔮 WebUI/API伏笔: 导出JSON数据供未来使用
+            webui_data = gradient_monitor.export_for_webui()
+            info_print(f"  - WebUI数据已导出 (未来API可用): {len(webui_data['gradient_timeline'])} 个梯度记录")
+        except Exception as e:
+            _log_message(logger, f"生成梯度监控报告失败: {e}", "warning")
+            debug_print(f"警告: 梯度监控报告生成失败: {e}")
 
     # 触发训练结束回调
     callback_manager.trigger('on_train_end', model=model, config=config)
