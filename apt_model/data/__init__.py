@@ -13,6 +13,16 @@ from .data_processor import get_training_texts
 # Export the unified data pipeline (new)
 from .pipeline import DataLoader, DataProcessor, DataPipeline, quick_load
 
+# Export multimodal dataset components
+from .multimodal_dataset import (
+    MultimodalDataset,
+    MultimodalCollator,
+    create_multimodal_dataloader,
+    TextOnlyDataset,
+    VisionOnlyDataset,
+    AudioOnlyDataset
+)
+
 # Define module exports
 __all__ = [
     # Legacy functions
@@ -25,4 +35,11 @@ __all__ = [
     'DataProcessor',
     'DataPipeline',
     'quick_load',
+    # Multimodal
+    'MultimodalDataset',
+    'MultimodalCollator',
+    'create_multimodal_dataloader',
+    'TextOnlyDataset',
+    'VisionOnlyDataset',
+    'AudioOnlyDataset',
 ]
