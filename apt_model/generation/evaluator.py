@@ -14,8 +14,13 @@ import logging
 from typing import Tuple, Dict, List, Optional, Union, Any
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+except ImportError:  # pragma: no cover - optional dependency path
+    TfidfVectorizer = None
+    cosine_similarity = None
 
 logger = logging.getLogger('apt_model.generation.evaluator')
 
@@ -56,11 +61,9 @@ class TextQualityEvaluator:
         if not self.use_external_metrics:
             return
             
-        try:
-            # Check if sklearn is available for TF-IDF and cosine similarity
-            import sklearn
+        if TfidfVectorizer is not None and cosine_similarity is not None:
             self.has_nlp_metrics = True
-        except ImportError:
+        else:
             logger.warning("sklearn not available, some evaluation metrics will be disabled")
     
     def evaluate_text_quality(self, text: str, reference: Optional[str] = None, context: Optional[str] = None) -> Tuple[float, str]:
@@ -230,7 +233,7 @@ class TextQualityEvaluator:
         Returns a score between 0-100.
         """
         # If we have NLP metrics and both text and reference
-        if self.has_nlp_metrics and reference:
+        if self.has_nlp_metrics and reference and TfidfVectorizer is not None and cosine_similarity is not None:
             try:
                 # Use TF-IDF and cosine similarity
                 vectorizer = TfidfVectorizer(stop_words='english')

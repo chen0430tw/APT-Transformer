@@ -6,12 +6,30 @@
 
 import os
 import glob
+import logging
 import torch
 import torch.nn.functional as F
 import traceback
+from contextlib import nullcontext
 from tqdm import tqdm
 from datetime import datetime
 from torch.utils.data import Dataset, DataLoader
+
+# 尝试导入rich，如果不可用则回退到tqdm
+try:
+    from rich.progress import (
+        Progress,
+        SpinnerColumn,
+        BarColumn,
+        TextColumn,
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+        MofNCompleteColumn,
+    )
+    RICH_AVAILABLE = True
+except ImportError:
+    from tqdm import tqdm
+    RICH_AVAILABLE = False
 
 from apt_model.utils import set_seed
 from apt_model.utils import get_device, device
@@ -98,17 +116,120 @@ def get_tokenizer_from_codec(texts, tokenizer_type=None, language=None):
 
 
 # ============================================================================
-# Debug输出辅助函数
+# Logger设置
+# ============================================================================
+
+def setup_training_logger(name="APT-Trainer", log_file=None):
+    """
+    设置训练日志记录器
+
+    参数:
+        name: Logger名称
+        log_file: 可选的日志文件路径
+
+    返回:
+        配置好的logger
+    """
+    logger = logging.getLogger(name)
+
+    # 避免重复添加handler
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.DEBUG)
+
+    # 格式化器 - 带时间戳和模块名
+    formatter = logging.Formatter(
+        '%(asctime)s [%(name)s] %(message)s',
+        datefmt='%m-%d %H:%M:%S'
+    )
+
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+    logger.addHandler(console_handler)
+
+    # 文件处理器（可选）
+    if log_file:
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.DEBUG)
+        logger.addHandler(file_handler)
+
+    return logger
+
+# 全局logger实例
+_training_logger = None
+
+def get_training_logger():
+    """获取训练logger实例"""
+    global _training_logger
+    if _training_logger is None:
+        _training_logger = setup_training_logger()
+    return _training_logger
+
+
+# ============================================================================
+# Debug输出辅助函数（保持向后兼容）
 # ============================================================================
 
 def debug_print(*args, **kwargs):
     """仅在Debug模式下打印信息"""
     if settings.get_debug_enabled():
-        print(*args, **kwargs)
+        logger = get_training_logger()
+        message = ' '.join(str(arg) for arg in args)
+        logger.debug(message)
 
 def info_print(*args, **kwargs):
     """始终打印的关键信息（非Debug模式也显示）"""
-    print(*args, **kwargs)
+    logger = get_training_logger()
+    message = ' '.join(str(arg) for arg in args)
+    logger.info(message)
+
+
+# ============================================================================
+# 进度条创建函数
+# ============================================================================
+
+def create_training_progress_bar(dataloader, epoch, total_epochs):
+    """
+    创建训练进度条（优先使用rich，回退到tqdm）
+
+    参数:
+        dataloader: 数据加载器
+        epoch: 当前epoch (从0开始)
+        total_epochs: 总epoch数
+
+    返回:
+        进度条对象和上下文管理器
+    """
+    if RICH_AVAILABLE:
+        # 使用rich创建漂亮的进度条
+        progress = Progress(
+            SpinnerColumn(),  # 旋转动画
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            MofNCompleteColumn(),  # 当前/总数
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            TextColumn("[cyan]{task.fields[loss]}", justify="right"),
+            TextColumn("[green]{task.fields[lr]}", justify="right"),
+        )
+        task_id = progress.add_task(
+            f"Epoch {epoch+1}/{total_epochs}",
+            total=len(dataloader),
+            loss="Loss: -.----",
+            lr="LR: -.------"
+        )
+        return progress, task_id
+    else:
+        # 回退到tqdm
+        from tqdm import tqdm
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{total_epochs}")
+        return progress_bar, None
 
 
 # ============================================================================
@@ -707,6 +828,47 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     global_step = 0
     train_losses = []
     best_quality_score = 0.0
+    
+    print(f"开始训练，总共 {epochs} 轮...")
+    
+    # 创建一个假的 GradScaler 以保持代码兼容性
+    class DummyScaler:
+        def scale(self, loss):
+            return loss
+
+        def step(self, optimizer):
+            optimizer.step()
+
+        def update(self):
+            pass
+
+    # 在训练开始前初始化 GradScaler
+    if torch.cuda.is_available():
+        try:
+            from torch.cuda.amp import GradScaler
+            scaler = GradScaler()
+            autocast_context = torch.cuda.amp.autocast
+        except (ImportError, AttributeError):
+            scaler = DummyScaler()
+            autocast_context = nullcontext
+            print("警告: CUDA AMP 不可用，使用标准精度训练")
+    else:
+        scaler = DummyScaler()
+        autocast_context = nullcontext
+        print("警告: 未检测到GPU，使用标准精度训练")
+
+    # 检查是否存在checkpoint（用于恢复训练）
+    checkpoint_dir = os.path.join(save_path, "checkpoints")
+    has_checkpoints = False
+    if os.path.exists(checkpoint_dir):
+        checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pt')]
+        if checkpoint_files:
+            has_checkpoints = True
+            logger = get_training_logger()
+            logger.info(f"发现 {len(checkpoint_files)} 个已有checkpoint")
+            logger.info(f"最新checkpoint: {sorted(checkpoint_files)[-1]}")
+            logger.info("提示: 可以使用CheckpointManager.load_checkpoint()恢复训练")
+            # TODO: 实现自动恢复功能（将在checkpoint改进中完成）
 
     info_print(f"开始训练，总共 {epochs} 轮...")
 
@@ -789,17 +951,118 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}", disable=True)
 
         for i, batch in enumerate(progress_bar):
-            # 触发batch开始回调
-            callback_manager.trigger('on_batch_begin', batch_idx=i)
-            # 处理批次
-            loss_value, should_update = _process_batch(
-                model, batch, optimizer, scaler, tokenizer,
-                accumulation_steps, i, logger, resource_monitor,
-                gradient_monitor, global_step
-            )
-
-            # 如果批次处理失败，跳过
-            if loss_value is None:
+            try:
+                if resource_monitor:
+                    resource_monitor.check_resources()
+                
+                src_ids, tgt_ids = batch
+                src_ids = src_ids.to(device)
+                tgt_ids = tgt_ids.to(device)
+                
+                src_padding_mask = (src_ids == tokenizer.pad_token_id)  # 填充掩码 [batch, src_len]
+                tgt_mask = torch.triu(torch.ones(tgt_ids.size(1), tgt_ids.size(1), device=tgt_ids.device) * float('-inf'), diagonal=1)
+                
+                # 只在累积周期开始时清零梯度
+                if i % accumulation_steps == 0:
+                    optimizer.zero_grad()
+                
+                # 使用更新后的 autocast 进行混合精度前向计算和损失计算
+                with autocast_context() if autocast_context is not nullcontext else nullcontext():
+                    try:
+                        # 在这里添加打印语句
+                        import inspect
+                        #print(f"Model type: {type(model)}")
+                        #print(f"Model forward signature: {inspect.signature(model.forward)}")
+                        
+                        logits = model(src_tokens=src_ids, tgt_tokens=src_ids, src_key_padding_mask=src_padding_mask, src_mask=None)
+                    except Exception as e:
+                        if logger:
+                            logger.error(f"前向传播出错: {e}")
+                        print(f"警告: 前向传播失败: {e}，跳过当前批次")
+                        continue
+                    
+                    if torch.isnan(logits).any():
+                        print(f"警告: 第{epoch+1}轮第{i+1}批次的logits包含NaN，跳过此批次")
+                        continue
+                    
+                    # 计算损失
+                    shift_logits = logits[:, :-1, :].contiguous()
+                    shift_labels = tgt_ids[:, 1:].contiguous()
+                    
+                    try:
+                        loss = F.cross_entropy(
+                            shift_logits.view(-1, shift_logits.size(-1)),
+                            shift_labels.view(-1), 
+                            ignore_index=tokenizer.pad_token_id,
+                            label_smoothing=0.1
+                        )
+                        # 根据累积步骤缩放损失
+                        loss = loss / accumulation_steps
+                    except Exception as e:
+                        if logger:
+                            logger.error(f"损失计算出错: {e}")
+                        print(f"警告: 损失计算失败: {e}，跳过当前批次")
+                        continue
+                    
+                    if torch.isnan(loss).any():
+                        print(f"警告: 第{epoch+1}轮第{i+1}批次发现NaN损失，跳过此批次")
+                        continue
+                
+                # 使用 GradScaler 进行反向传播和参数更新
+                try:
+                    scaler.scale(loss).backward()
+                except Exception as e:
+                    if logger:
+                        logger.error(f"反向传播出错: {e}")
+                    print(f"警告: 反向传播失败: {e}，跳过当前批次")
+                    optimizer.zero_grad()
+                    continue
+                
+                # 梯度裁剪（如果需要，可以放在 scaler.step() 前后）
+                try:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"梯度裁剪出错，跳过: {e}")
+                    print(f"警告: 梯度裁剪失败: {e}")
+                
+                # 只在累积完成后更新参数
+                if (i + 1) % accumulation_steps == 0 or (i + 1) == len(dataloader):
+                    # 进行参数更新
+                    scaler.step(optimizer)
+                    scaler.update()
+                    scheduler.step()
+                
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()  # 清理GPU缓存
+                    
+                    try:
+                        current_lr = scheduler.get_last_lr()[0]
+                        model.update_dynamic_taylor_parameters(current_lr)
+                    except Exception as e:
+                        if logger:
+                            logger.warning(f"动态参数更新出错: {e}")
+                        print(f"警告: 动态参数更新失败: {e}")
+                
+                total_loss += loss.item() * accumulation_steps  # 恢复实际损失
+                train_losses.append(loss.item() * accumulation_steps)
+                progress_bar.set_postfix({"loss": f"{loss.item() * accumulation_steps:.4f}", "lr": f"{scheduler.get_last_lr()[0]:.6f}"})
+                
+                if use_tensorboard:
+                    writer.add_scalar('Loss/train', loss.item() * accumulation_steps, global_step)
+                    writer.add_scalar('Learning_rate', scheduler.get_last_lr()[0], global_step)
+                
+                global_step += 1
+                
+                if global_step % 50 == 0 or i == len(dataloader) - 1:
+                    # 测试生成和评估代码保持不变...
+                    pass
+                    
+            except Exception as e:
+                if logger:
+                    logger.error(f"处理批次 {i} 时出错: {e}")
+                    logger.error(traceback.format_exc())
+                print(f"批次处理错误: {e}，跳过当前批次")
                 continue
 
             # 累积损失

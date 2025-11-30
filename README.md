@@ -1,4 +1,10 @@
-# APT Model (自生成变换器) — Repo Overview
+# APT Model (自生成变换器)
+
+APT Model - 一个功能完整的PyTorch Transformer训练平台
+
+**📖 完整文档**: [APT Model 使用手册](APT_MODEL_HANDBOOK.md)
+
+---
 
 ## Quickstart
 ```bash
