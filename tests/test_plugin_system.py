@@ -1,339 +1,427 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Plugin System Integration Tests
+Test script to verify APT plugin system works correctly.
 
-测试插件系统的完整集成，包括：
-- Console Core 与 PluginBus 集成
-- 插件注册和编译
-- 事件派发
-- 冲突检测
-- 统计信息
+This script validates:
+1. Plugin base class
+2. PluginManager functionality
+3. HookManager functionality
+4. Plugin lifecycle
+5. Provider registration via plugins
 """
 
 import sys
-import os
-
-# 添加项目根目录到路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-from apt_model.console.core import ConsoleCore, initialize_console
-from apt_model.console.plugin_standards import PluginEvent
-from apt_model.console.plugins import (
-    GRPOPlugin,
-    EQIReporterPlugin,
-    RouteOptimizerPlugin
-)
+import traceback
 
 
-def test_plugin_registration():
-    """测试插件注册"""
-    print("\n" + "="*80)
-    print(" 测试插件注册")
-    print("="*80)
-
-    # 创建控制台
-    console = ConsoleCore(config={})
-
-    # 注册插件
-    print("\n1. 注册 GRPO 插件...")
-    grpo = GRPOPlugin()
-    console.register_plugin(grpo)
-    print("   ✓ GRPO 插件注册成功")
-
-    print("\n2. 注册 EQI Reporter 插件...")
-    eqi_reporter = EQIReporterPlugin()
-    console.register_plugin(eqi_reporter)
-    print("   ✓ EQI Reporter 插件注册成功")
-
-    print("\n3. 注册 Route Optimizer 插件...")
-    route_optimizer = RouteOptimizerPlugin()
-    console.register_plugin(route_optimizer)
-    print("   ✓ Route Optimizer 插件注册成功")
-
-    # 检查插件状态
-    stats = console.get_plugin_statistics()
-    print(f"\n✓ 插件注册测试完成: {stats['total_plugins']} 个插件已注册")
-
-    return True
-
-
-def test_plugin_compilation():
-    """测试插件编译（静态冲突检查）"""
-    print("\n" + "="*80)
-    print(" 测试插件编译")
-    print("="*80)
-
-    # 创建控制台并注册插件
-    console = ConsoleCore(config={})
-    console.register_plugin(GRPOPlugin())
-    console.register_plugin(EQIReporterPlugin())
-    console.register_plugin(RouteOptimizerPlugin())
-
-    # 编译插件
-    print("\n1. 执行插件编译（静态冲突检查）...")
-    console.compile_plugins(fail_fast=False)
-    print("   ✓ 插件编译成功")
-
-    # 打印插件状态
-    print("\n2. 插件状态:")
-    console.print_plugin_status()
-
-    print("\n✓ 插件编译测试完成")
-    return True
-
-
-def test_event_dispatch():
-    """测试事件派发"""
-    print("\n" + "="*80)
-    print(" 测试事件派发")
-    print("="*80)
-
-    # 创建控制台并注册插件
-    console = ConsoleCore(config={})
-    console.register_plugin(GRPOPlugin())
-    console.register_plugin(EQIReporterPlugin())
-    console.register_plugin(RouteOptimizerPlugin())
-    console.compile_plugins()
-
-    # 测试 on_batch_start 事件
-    print("\n1. 派发 on_batch_start 事件...")
-    context = console.emit_event(
-        PluginEvent.ON_BATCH_START,
-        step=1,
-        context_data={
-            'routing': {
-                'expert_ids': [0, 1, 2, 3, 0, 1, 0, 2]
-            }
-        }
-    )
-    print(f"   ✓ 事件已派发 (event={context.event}, step={context.step})")
-
-    # 测试 on_batch_end 事件
-    print("\n2. 派发 on_batch_end 事件...")
-    context = console.emit_event(
-        PluginEvent.ON_BATCH_END,
-        step=1,
-        context_data={
-            'rewards': [0.5, 0.6, 0.4, 0.7, 0.3, 0.8, 0.5, 0.6]
-        }
-    )
-    print(f"   ✓ 事件已派发")
-
-    # 测试 on_step_end 事件
-    print("\n3. 派发 on_step_end 事件...")
-    context = console.emit_event(
-        PluginEvent.ON_STEP_END,
-        step=1,
-        context_data={
-            'loss': 0.35,
-            'metrics': {
-                'accuracy': 0.85
-            }
-        }
-    )
-    print(f"   ✓ 事件已派发")
-    print(f"   - 公共数据: {context.data}")
-
-    # 测试 on_step_eval 事件
-    print("\n4. 派发 on_step_eval 事件...")
-    context = console.emit_event(
-        PluginEvent.ON_STEP_EVAL,
-        step=10,
-        context_data={
-            'metrics': {
-                'accuracy': 0.88,
-                'loss': 0.32
-            },
-            'evidence': 1.2,
-            'utility': 0.5
-        }
-    )
-    print(f"   ✓ 事件已派发")
-
-    # 测试 on_epoch_end 事件
-    print("\n5. 派发 on_epoch_end 事件...")
-    context = console.emit_event(
-        PluginEvent.ON_EPOCH_END,
-        step=100,
-        context_data={'epoch': 1}
-    )
-    context.epoch = 1
-    print(f"   ✓ 事件已派发 (epoch={context.epoch})")
-
-    print("\n✓ 事件派发测试完成")
-    return True
-
-
-def test_plugin_statistics():
-    """测试插件统计"""
-    print("\n" + "="*80)
-    print(" 测试插件统计")
-    print("="*80)
-
-    # 创建控制台并注册插件
-    console = ConsoleCore(config={})
-    console.register_plugin(GRPOPlugin())
-    console.register_plugin(EQIReporterPlugin())
-    console.register_plugin(RouteOptimizerPlugin())
-    console.compile_plugins()
-
-    # 派发一些事件
-    for step in range(1, 21):
-        console.emit_event(
-            PluginEvent.ON_BATCH_START,
-            step=step,
-            context_data={'routing': {'expert_ids': [0, 1, 2]}}
-        )
-        console.emit_event(
-            PluginEvent.ON_BATCH_END,
-            step=step,
-            context_data={'rewards': [0.5, 0.6, 0.4, 0.7]}
-        )
-        console.emit_event(
-            PluginEvent.ON_STEP_END,
-            step=step,
-            context_data={'loss': 0.3}
-        )
-
-        if step % 10 == 0:
-            console.emit_event(
-                PluginEvent.ON_STEP_EVAL,
-                step=step,
-                context_data={'evidence': 1.0, 'utility': 0.5}
-            )
-
-    # 获取统计信息
-    print("\n1. 插件统计信息:")
-    stats = console.get_plugin_statistics()
-    print(f"   - 总插件数: {stats['total_plugins']}")
-    print(f"   - 活跃插件: {stats['active_plugins']}")
-    print(f"   - 总调用次数: {stats['total_invocations']}")
-    print(f"   - 总耗时: {stats['total_time_ms']:.2f} ms")
-
-    print("\n2. 各插件详细统计:")
-    for name, plugin_stats in stats['plugins'].items():
-        print(f"   {name}:")
-        print(f"     - 调用次数: {plugin_stats['invocations']}")
-        print(f"     - 总耗时: {plugin_stats['total_time_ms']:.2f} ms")
-        print(f"     - 平均耗时: {plugin_stats['avg_time_ms']:.2f} ms")
-        print(f"     - 状态: {'✓ Active' if plugin_stats['healthy'] else '✗ Disabled'}")
-
-    print("\n✓ 插件统计测试完成")
-    return True
-
-
-def test_plugin_enable_disable():
-    """测试插件启用/禁用"""
-    print("\n" + "="*80)
-    print(" 测试插件启用/禁用")
-    print("="*80)
-
-    # 创建控制台并注册插件
-    console = ConsoleCore(config={})
-    console.register_plugin(GRPOPlugin())
-    console.compile_plugins()
-
-    # 测试禁用插件
-    print("\n1. 禁用 GRPO 插件...")
-    console.disable_plugin("grpo", reason="test")
-    stats = console.get_plugin_statistics()
-    assert stats['plugins']['grpo']['healthy'] == False
-    print("   ✓ 插件已禁用")
-
-    # 测试启用插件
-    print("\n2. 启用 GRPO 插件...")
-    console.enable_plugin("grpo")
-    stats = console.get_plugin_statistics()
-    assert stats['plugins']['grpo']['healthy'] == True
-    print("   ✓ 插件已启用")
-
-    print("\n✓ 插件启用/禁用测试完成")
-    return True
-
-
-def test_console_integration():
-    """测试 Console Core 完整集成"""
-    print("\n" + "="*80)
-    print(" 测试 Console Core 集成")
-    print("="*80)
-
-    # 初始化控制台（不自动加载模块）
-    print("\n1. 初始化控制台...")
-    console = initialize_console(auto_start=False)
-    print("   ✓ 控制台初始化成功")
-
-    # 注册插件
-    print("\n2. 注册插件...")
-    console.register_plugin(GRPOPlugin())
-    console.register_plugin(EQIReporterPlugin())
-    console.register_plugin(RouteOptimizerPlugin())
-    print("   ✓ 插件注册完成")
-
-    # 启动控制台（包括插件编译）
-    print("\n3. 启动控制台...")
-    console.start(auto_load_modules=False, auto_load_plugins=True)
-    print("   ✓ 控制台启动成功")
-
-    # 打印状态
-    print("\n4. 控制台状态:")
-    console.print_status()
-
-    # 停止控制台
-    print("\n5. 停止控制台...")
-    console.stop()
-    print("   ✓ 控制台已停止")
-
-    print("\n✓ Console Core 集成测试完成")
-    return True
-
-
-def main():
-    """主测试函数"""
-    print("\n" + "="*80)
-    print(" APT Plugin System Integration Tests")
-    print("="*80)
+def test_imports():
+    """Test that all plugin modules can be imported."""
+    print("=" * 60)
+    print("Test 1: Plugin Module Imports")
+    print("=" * 60)
 
     try:
-        # 运行所有测试
-        tests = [
-            ("插件注册", test_plugin_registration),
-            ("插件编译", test_plugin_compilation),
-            ("事件派发", test_event_dispatch),
-            ("插件统计", test_plugin_statistics),
-            ("插件启用/禁用", test_plugin_enable_disable),
-            ("Console Core 集成", test_console_integration),
-        ]
-
-        passed = 0
-        failed = 0
-
-        for test_name, test_func in tests:
-            try:
-                if test_func():
-                    passed += 1
-                else:
-                    failed += 1
-            except Exception as e:
-                print(f"\n✗ {test_name} 测试失败: {e}")
-                import traceback
-                traceback.print_exc()
-                failed += 1
-
-        # 打印总结
-        print("\n" + "="*80)
-        print(f" 测试总结: {passed} 通过, {failed} 失败")
-        print("="*80 + "\n")
-
-        return failed == 0
-
+        from apt.plugins import (
+            Plugin,
+            PluginManager,
+            plugin_manager,
+            HookManager,
+            hook_manager,
+            Hook,
+            HookEvents,
+            hook
+        )
+        print("✅ All plugin modules imported successfully")
+        return True
     except Exception as e:
-        print(f"\n测试过程中出错: {e}")
-        import traceback
+        print(f"❌ Import failed: {e}")
         traceback.print_exc()
         return False
 
 
+def test_hook_manager():
+    """Test HookManager functionality."""
+    print("\n" + "=" * 60)
+    print("Test 2: HookManager")
+    print("=" * 60)
+
+    try:
+        from apt.plugins import HookManager
+
+        # Create manager
+        manager = HookManager()
+        print("✅ HookManager created")
+
+        # Register a hook
+        call_count = [0]  # Use list for mutable closure
+
+        def test_hook(epoch, **kwargs):
+            call_count[0] += 1
+
+        manager.register('on_epoch_start', test_hook, priority=10)
+        print("✅ Hook registered")
+
+        # Trigger hook
+        manager.trigger('on_epoch_start', epoch=1)
+        assert call_count[0] == 1, "Hook should have been called once"
+        print(f"✅ Hook triggered ({call_count[0]} call)")
+
+        # Trigger again
+        manager.trigger('on_epoch_start', epoch=2)
+        assert call_count[0] == 2, "Hook should have been called twice"
+        print(f"✅ Hook triggered again ({call_count[0]} calls total)")
+
+        # Check statistics
+        stats = manager.get_statistics()
+        assert stats['on_epoch_start'] == 2
+        print(f"✅ Hook statistics: {stats}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ HookManager test failed: {e}")
+        traceback.print_exc()
+        return False
+
+
+def test_conditional_hooks():
+    """Test conditional hook execution."""
+    print("\n" + "=" * 60)
+    print("Test 3: Conditional Hooks")
+    print("=" * 60)
+
+    try:
+        from apt.plugins import HookManager, every_n_epochs
+
+        manager = HookManager()
+
+        call_count = [0]
+
+        def periodic_hook(epoch, **kwargs):
+            call_count[0] += 1
+
+        # Register hook that runs every 5 epochs
+        manager.register(
+            'on_epoch_start',
+            periodic_hook,
+            condition=every_n_epochs(5)
+        )
+
+        # Trigger for epochs 0-10
+        for epoch in range(11):
+            manager.trigger('on_epoch_start', epoch=epoch)
+
+        # Should be called at epochs 0, 5, 10 = 3 times
+        expected = 3
+        assert call_count[0] == expected, f"Expected {expected} calls, got {call_count[0]}"
+        print(f"✅ Conditional hook called {call_count[0]} times (expected {expected})")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Conditional hooks test failed: {e}")
+        traceback.print_exc()
+        return False
+
+
+def test_plugin_base():
+    """Test Plugin base class."""
+    print("\n" + "=" * 60)
+    print("Test 4: Plugin Base Class")
+    print("=" * 60)
+
+    try:
+        from apt.plugins import Plugin
+
+        # Create a test plugin
+        class TestPlugin(Plugin):
+            def get_name(self):
+                return "test"
+
+            def get_version(self):
+                return "1.0.0"
+
+        # Instantiate
+        plugin = TestPlugin({'key': 'value'})
+        print(f"✅ Plugin created: {plugin}")
+
+        # Check properties
+        assert plugin.get_name() == "test"
+        assert plugin.get_version() == "1.0.0"
+        assert plugin.is_enabled() == True
+        assert plugin.is_setup() == False
+        print("✅ Plugin properties verified")
+
+        # Test enable/disable
+        plugin.disable()
+        assert plugin.is_enabled() == False
+        print("✅ Plugin disabled")
+
+        plugin.enable()
+        assert plugin.is_enabled() == True
+        print("✅ Plugin enabled")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Plugin base test failed: {e}")
+        traceback.print_exc()
+        return False
+
+
+def test_plugin_manager():
+    """Test PluginManager functionality."""
+    print("\n" + "=" * 60)
+    print("Test 5: PluginManager")
+    print("=" * 60)
+
+    try:
+        from apt.plugins import Plugin, PluginManager
+
+        # Create test plugin
+        class TestPlugin(Plugin):
+            def __init__(self, config=None):
+                super().__init__(config)
+                self.setup_called = False
+
+            def get_name(self):
+                return "test"
+
+            def get_version(self):
+                return "1.0.0"
+
+            def setup(self, registry, hook_manager):
+                super().setup(registry, hook_manager)
+                self.setup_called = True
+
+        # Create manager
+        manager = PluginManager()
+        print("✅ PluginManager created")
+
+        # Register plugin
+        manager.register_plugin('test', TestPlugin)
+        print("✅ Plugin registered")
+
+        # Check registration
+        assert manager.has_plugin('test') == False  # Not loaded yet
+        print("✅ Plugin not yet loaded (correct)")
+
+        # Load plugin
+        plugin = manager.load_plugin('test', {'config_key': 'value'})
+        assert plugin is not None
+        assert manager.has_plugin('test') == True
+        print(f"✅ Plugin loaded: {plugin}")
+
+        # Setup plugin
+        manager.setup_plugin('test')
+        assert plugin.setup_called == True
+        assert plugin.is_setup() == True
+        print("✅ Plugin setup called")
+
+        # Test event triggering
+        manager.trigger_event('on_epoch_start', epoch=1)
+        print("✅ Event triggered")
+
+        # Teardown
+        manager.teardown_plugin('test')
+        assert plugin.is_setup() == False
+        print("✅ Plugin teardown")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ PluginManager test failed: {e}")
+        traceback.print_exc()
+        return False
+
+
+def test_plugin_with_provider():
+    """Test plugin that registers a provider."""
+    print("\n" + "=" * 60)
+    print("Test 6: Plugin with Provider Registration")
+    print("=" * 60)
+
+    try:
+        from apt.plugins import Plugin, PluginManager
+        from apt.core import Provider, registry
+
+        # Create test provider
+        class TestProvider(Provider):
+            def __init__(self, config):
+                self.config = config
+
+            def get_name(self):
+                return "test_provider"
+
+            def get_version(self):
+                return "1.0.0"
+
+        # Create plugin that registers provider
+        class TestPlugin(Plugin):
+            def get_name(self):
+                return "test_with_provider"
+
+            def get_version(self):
+                return "1.0.0"
+
+            def setup(self, registry, hook_manager):
+                super().setup(registry, hook_manager)
+                registry.register('test_kind', 'test_provider', TestProvider)
+
+        # Register and load plugin
+        manager = PluginManager()
+        manager.register_plugin('test_with_provider', TestPlugin)
+        manager.load_plugin('test_with_provider')
+        manager.setup_plugin('test_with_provider')
+        print("✅ Plugin registered and setup")
+
+        # Check provider is registered
+        providers = registry.list_providers('test_kind')
+        assert 'test_kind' in providers
+        assert 'test_provider' in providers['test_kind']
+        print(f"✅ Provider registered: {providers}")
+
+        # Get provider
+        provider = registry.get('test_kind', 'test_provider')
+        assert provider is not None
+        assert provider.get_name() == "test_provider"
+        print(f"✅ Provider retrieved: {provider}")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Plugin with provider test failed: {e}")
+        traceback.print_exc()
+        return False
+
+
+def test_plugin_lifecycle():
+    """Test complete plugin lifecycle."""
+    print("\n" + "=" * 60)
+    print("Test 7: Complete Plugin Lifecycle")
+    print("=" * 60)
+
+    try:
+        from apt.plugins import Plugin, PluginManager
+
+        # Track lifecycle calls
+        lifecycle = []
+
+        class LifecyclePlugin(Plugin):
+            def get_name(self):
+                return "lifecycle"
+
+            def get_version(self):
+                return "1.0.0"
+
+            def setup(self, registry, hook_manager):
+                super().setup(registry, hook_manager)
+                lifecycle.append('setup')
+
+            def on_train_begin(self, **kwargs):
+                lifecycle.append('train_begin')
+
+            def on_epoch_begin(self, epoch, **kwargs):
+                lifecycle.append(f'epoch_{epoch}_begin')
+
+            def on_epoch_end(self, epoch, **kwargs):
+                lifecycle.append(f'epoch_{epoch}_end')
+
+            def on_train_end(self, **kwargs):
+                lifecycle.append('train_end')
+
+            def teardown(self):
+                lifecycle.append('teardown')
+                super().teardown()
+
+        # Create and setup
+        manager = PluginManager()
+        manager.register_plugin('lifecycle', LifecyclePlugin)
+        manager.load_plugin('lifecycle')
+        manager.setup_all()
+
+        # Simulate training
+        manager.trigger_event('on_train_begin')
+        for epoch in range(3):
+            manager.trigger_event('on_epoch_begin', epoch=epoch)
+            manager.trigger_event('on_epoch_end', epoch=epoch)
+        manager.trigger_event('on_train_end')
+
+        # Teardown
+        manager.teardown_all()
+
+        # Check lifecycle
+        expected = [
+            'setup',
+            'train_begin',
+            'epoch_0_begin', 'epoch_0_end',
+            'epoch_1_begin', 'epoch_1_end',
+            'epoch_2_begin', 'epoch_2_end',
+            'train_end',
+            'teardown'
+        ]
+
+        print(f"Lifecycle calls: {lifecycle}")
+        assert lifecycle == expected, f"Expected {expected}, got {lifecycle}"
+        print("✅ Complete lifecycle verified")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Plugin lifecycle test failed: {e}")
+        traceback.print_exc()
+        return False
+
+
+def main():
+    """Run all tests."""
+    print("\n" + "=" * 60)
+    print("APT Plugin System Tests")
+    print("=" * 60 + "\n")
+
+    tests = [
+        ("Imports", test_imports),
+        ("HookManager", test_hook_manager),
+        ("Conditional Hooks", test_conditional_hooks),
+        ("Plugin Base", test_plugin_base),
+        ("PluginManager", test_plugin_manager),
+        ("Plugin with Provider", test_plugin_with_provider),
+        ("Plugin Lifecycle", test_plugin_lifecycle),
+    ]
+
+    results = []
+    for name, test_func in tests:
+        try:
+            passed = test_func()
+            results.append((name, passed))
+        except Exception as e:
+            print(f"\n❌ Test '{name}' crashed: {e}")
+            traceback.print_exc()
+            results.append((name, False))
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("Test Summary")
+    print("=" * 60)
+
+    passed_count = sum(1 for _, passed in results if passed)
+    total_count = len(results)
+
+    for name, passed in results:
+        status = "✅ PASS" if passed else "❌ FAIL"
+        print(f"{status}: {name}")
+
+    print("\n" + "=" * 60)
+    if passed_count == total_count:
+        print(f"✅ All {total_count} tests PASSED")
+        print("=" * 60)
+        return 0
+    else:
+        print(f"❌ {total_count - passed_count}/{total_count} tests FAILED")
+        print("=" * 60)
+        return 1
+
+
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    sys.exit(main())
