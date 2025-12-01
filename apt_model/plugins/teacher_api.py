@@ -8,58 +8,32 @@
 - Anthropic API (Claude系列)
 - 硅基流动API (Qwen, DeepSeek, GLM等国产模型)
 - 自定义API接口
-- API调用管理和错误处理
+
+注意: 此模块专门用于知识蒸馏场景
+     通用的API配置请使用 apt_model.core.api_providers
 """
 
 import torch
 import torch.nn as nn
 from typing import Optional, Dict, Any, List, Union
-import time
-import json
+
+# 导入通用API提供商
+from apt_model.core.api_providers import (
+    APIProviderInterface,
+    OpenAIProvider,
+    AnthropicProvider,
+    SiliconFlowProvider,
+    CustomProvider,
+    create_api_provider
+)
 
 
-class TeacherAPIInterface:
+class TeacherAPIInterface(APIProviderInterface):
     """
-    教师模型API接口基类
+    教师模型API接口（继承自通用API提供商）
+
+    扩展了蒸馏所需的特殊功能
     """
-
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.api_key = config.get('api_key')
-        self.base_url = config.get('base_url')
-        self.model_name = config.get('model_name')
-        self.timeout = config.get('timeout', 30)
-        self.max_retries = config.get('max_retries', 3)
-        self.retry_delay = config.get('retry_delay', 1.0)
-
-        # 统计信息
-        self.stats = {
-            'total_calls': 0,
-            'successful_calls': 0,
-            'failed_calls': 0,
-            'total_tokens': 0,
-        }
-
-    def generate_text(
-        self,
-        input_text: str,
-        max_tokens: int = 100,
-        temperature: float = 1.0,
-        **kwargs
-    ) -> str:
-        """
-        生成文本（需要子类实现）
-
-        Args:
-            input_text: 输入文本
-            max_tokens: 最大生成token数
-            temperature: 生成温度
-            **kwargs: 其他参数
-
-        Returns:
-            生成的文本
-        """
-        raise NotImplementedError("Subclass must implement generate_text()")
 
     def get_logits(
         self,
@@ -68,7 +42,9 @@ class TeacherAPIInterface:
         **kwargs
     ) -> torch.Tensor:
         """
-        获取logits（需要子类实现）
+        获取logits（用于蒸馏）
+
+        注意: 大多数API不直接返回logits，这里通过文本生成模拟
 
         Args:
             input_text: 输入文本
@@ -77,94 +53,6 @@ class TeacherAPIInterface:
 
         Returns:
             logits tensor
-        """
-        raise NotImplementedError("Subclass must implement get_logits()")
-
-    def retry_on_failure(self, func, *args, **kwargs):
-        """
-        失败重试装饰器
-
-        Args:
-            func: 要执行的函数
-            *args, **kwargs: 函数参数
-
-        Returns:
-            函数执行结果
-        """
-        for attempt in range(self.max_retries):
-            try:
-                result = func(*args, **kwargs)
-                self.stats['successful_calls'] += 1
-                return result
-            except Exception as e:
-                self.stats['failed_calls'] += 1
-                print(f"[API] 调用失败 (尝试 {attempt + 1}/{self.max_retries}): {e}")
-
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2 ** attempt))  # 指数退避
-                else:
-                    raise
-
-        return None
-
-
-class OpenAITeacherAPI(TeacherAPIInterface):
-    """
-    OpenAI API教师模型
-
-    支持: GPT-4, GPT-3.5-turbo, GPT-3.5等
-    """
-
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-
-        # 导入OpenAI库
-        try:
-            import openai
-            self.openai = openai
-            self.openai.api_key = self.api_key
-            if self.base_url:
-                self.openai.api_base = self.base_url
-        except ImportError:
-            raise ImportError("需要安装openai库: pip install openai")
-
-    def generate_text(
-        self,
-        input_text: str,
-        max_tokens: int = 100,
-        temperature: float = 1.0,
-        **kwargs
-    ) -> str:
-        """使用OpenAI API生成文本"""
-
-        def _call_api():
-            response = self.openai.ChatCompletion.create(
-                model=self.model_name or "gpt-3.5-turbo",
-                messages=[
-                    {"role": "user", "content": input_text}
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                **kwargs
-            )
-
-            self.stats['total_calls'] += 1
-            self.stats['total_tokens'] += response['usage']['total_tokens']
-
-            return response['choices'][0]['message']['content']
-
-        return self.retry_on_failure(_call_api)
-
-    def get_logits(
-        self,
-        input_text: str,
-        vocab_size: int,
-        **kwargs
-    ) -> torch.Tensor:
-        """
-        获取logits（模拟）
-
-        注意: OpenAI API不直接返回logits，这里通过文本生成模拟
         """
         # 生成文本
         generated_text = self.generate_text(input_text, max_tokens=50, temperature=0.7)
@@ -177,50 +65,23 @@ class OpenAITeacherAPI(TeacherAPIInterface):
         return logits
 
 
-class AnthropicTeacherAPI(TeacherAPIInterface):
-    """
-    Anthropic API教师模型
+class OpenAITeacherAPI(OpenAIProvider, TeacherAPIInterface):
+    """OpenAI API教师模型"""
+    pass
 
-    支持: Claude-3, Claude-2等
-    """
 
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
+class AnthropicTeacherAPI(AnthropicProvider, TeacherAPIInterface):
+    """Anthropic API教师模型"""
+    pass
 
-        # 导入Anthropic库
-        try:
-            import anthropic
-            self.anthropic = anthropic
-            self.client = anthropic.Anthropic(api_key=self.api_key)
-        except ImportError:
-            raise ImportError("需要安装anthropic库: pip install anthropic")
 
-    def generate_text(
-        self,
-        input_text: str,
-        max_tokens: int = 100,
-        temperature: float = 1.0,
-        **kwargs
-    ) -> str:
-        """使用Anthropic API生成文本"""
+class SiliconFlowTeacherAPI(SiliconFlowProvider, TeacherAPIInterface):
+    """硅基流动API教师模型"""
+    pass
 
-        def _call_api():
-            message = self.client.messages.create(
-                model=self.model_name or "claude-3-sonnet-20240229",
-                max_tokens=max_tokens,
-                temperature=temperature,
-                messages=[
-                    {"role": "user", "content": input_text}
-                ],
-                **kwargs
-            )
 
-            self.stats['total_calls'] += 1
-            self.stats['total_tokens'] += message.usage.input_tokens + message.usage.output_tokens
-
-            return message.content[0].text
-
-        return self.retry_on_failure(_call_api)
+class CustomTeacherAPI(CustomProvider, TeacherAPIInterface):
+    """自定义API教师模型"""
 
     def get_logits(
         self,
@@ -228,134 +89,17 @@ class AnthropicTeacherAPI(TeacherAPIInterface):
         vocab_size: int,
         **kwargs
     ) -> torch.Tensor:
-        """获取logits（模拟）"""
-        generated_text = self.generate_text(input_text, max_tokens=50, temperature=0.7)
-        seq_len = len(generated_text.split())
-        logits = torch.randn(1, seq_len, vocab_size)
-        return logits
+        """
+        获取logits（自定义API可能支持直接返回logits）
 
+        Args:
+            input_text: 输入文本
+            vocab_size: 词表大小
+            **kwargs: 其他参数
 
-class SiliconFlowTeacherAPI(TeacherAPIInterface):
-    """
-    硅基流动API教师模型
-
-    支持: Qwen系列, DeepSeek系列, GLM系列, Llama系列等国产开源模型
-    官网: https://siliconflow.cn
-    """
-
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-
-        # 硅基流动API兼容OpenAI格式
-        self.base_url = self.base_url or "https://api.siliconflow.cn/v1"
-
-        # 导入OpenAI库（硅基流动兼容OpenAI接口）
-        try:
-            import openai
-            self.openai = openai
-            self.openai.api_key = self.api_key
-            self.openai.api_base = self.base_url
-        except ImportError:
-            raise ImportError("需要安装openai库: pip install openai")
-
-    def generate_text(
-        self,
-        input_text: str,
-        max_tokens: int = 100,
-        temperature: float = 1.0,
-        **kwargs
-    ) -> str:
-        """使用硅基流动API生成文本"""
-
-        def _call_api():
-            response = self.openai.ChatCompletion.create(
-                model=self.model_name or "Qwen/Qwen2-7B-Instruct",
-                messages=[
-                    {"role": "user", "content": input_text}
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                **kwargs
-            )
-
-            self.stats['total_calls'] += 1
-            self.stats['total_tokens'] += response['usage']['total_tokens']
-
-            return response['choices'][0]['message']['content']
-
-        return self.retry_on_failure(_call_api)
-
-    def get_logits(
-        self,
-        input_text: str,
-        vocab_size: int,
-        **kwargs
-    ) -> torch.Tensor:
-        """获取logits（模拟）"""
-        generated_text = self.generate_text(input_text, max_tokens=50, temperature=0.7)
-        seq_len = len(generated_text.split())
-        logits = torch.randn(1, seq_len, vocab_size)
-        return logits
-
-
-class CustomTeacherAPI(TeacherAPIInterface):
-    """
-    自定义API教师模型
-
-    支持任何符合规范的自定义API
-    """
-
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-
-        import requests
-        self.requests = requests
-
-        self.headers = {
-            'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json'
-        }
-
-    def generate_text(
-        self,
-        input_text: str,
-        max_tokens: int = 100,
-        temperature: float = 1.0,
-        **kwargs
-    ) -> str:
-        """使用自定义API生成文本"""
-
-        def _call_api():
-            payload = {
-                'input': input_text,
-                'max_tokens': max_tokens,
-                'temperature': temperature,
-                **kwargs
-            }
-
-            response = self.requests.post(
-                f"{self.base_url}/generate",
-                headers=self.headers,
-                json=payload,
-                timeout=self.timeout
-            )
-
-            response.raise_for_status()
-            result = response.json()
-
-            self.stats['total_calls'] += 1
-
-            return result.get('text', result.get('output', ''))
-
-        return self.retry_on_failure(_call_api)
-
-    def get_logits(
-        self,
-        input_text: str,
-        vocab_size: int,
-        **kwargs
-    ) -> torch.Tensor:
-        """获取logits"""
+        Returns:
+            logits tensor
+        """
 
         def _call_api():
             payload = {
@@ -391,7 +135,7 @@ class APITeacherModel(nn.Module):
     """
     API教师模型包装器
 
-    将API接口包装成类似PyTorch模型的接口
+    将API接口包装成类似PyTorch模型的接口，可直接用于蒸馏
     """
 
     def __init__(
@@ -535,7 +279,7 @@ def create_teacher_api(
         **kwargs: 其他配置
 
     Returns:
-        API接口实例
+        教师API接口实例
     """
     config = {
         'api_key': api_key,
@@ -579,11 +323,35 @@ def create_api_teacher_model(
 
     Returns:
         API教师模型
+
+    Examples:
+        >>> from transformers import AutoTokenizer
+        >>> tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        >>>
+        >>> # 创建硅基流动教师模型
+        >>> teacher = create_api_teacher_model(
+        ...     provider='siliconflow',
+        ...     api_key='sk-...',
+        ...     model_name='Qwen/Qwen2-7B-Instruct',
+        ...     tokenizer=tokenizer,
+        ...     vocab_size=50000
+        ... )
+        >>>
+        >>> # 直接用于蒸馏
+        >>> from apt_model.plugins.visual_distillation_plugin import quick_visual_distill
+        >>> quick_visual_distill(
+        ...     student_model=student,
+        ...     teacher_model=teacher,
+        ...     train_dataloader=dataloader,
+        ...     tokenizer=tokenizer,
+        ...     num_epochs=3
+        ... )
     """
     api = create_teacher_api(
         provider=provider,
         api_key=api_key,
         model_name=model_name,
+        base_url=kwargs.pop('base_url', None),
         **kwargs
     )
 
@@ -594,13 +362,13 @@ def create_api_teacher_model(
 
 if __name__ == "__main__":
     print("【教师模型API接口演示】\n")
+    print("[提示] 此模块已重构为使用通用API配置 (apt_model.core.api_providers)\n")
 
     # 示例1: OpenAI API
     print("=" * 60)
     print("[示例1] 使用OpenAI API作为教师模型")
     print("=" * 60)
 
-    # 配置（需要实际的API key）
     openai_config = {
         'provider': 'openai',
         'api_key': 'your-openai-api-key',
@@ -666,9 +434,9 @@ from transformers import AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 teacher_model = create_api_teacher_model(
-    provider='openai',
+    provider='siliconflow',  # 使用硅基流动（成本最低）
     api_key='your-api-key',
-    model_name='gpt-4',
+    model_name='Qwen/Qwen2-7B-Instruct',
     tokenizer=tokenizer,
     vocab_size=50000
 )
@@ -688,11 +456,33 @@ quick_visual_distill(
     num_epochs=3,
     device='cuda'
 )
+
+# 5. 查看API调用统计和成本
+print(f"总调用: {teacher_model.api.stats['total_calls']}")
+print(f"总tokens: {teacher_model.api.stats['total_tokens']}")
+print(f"总成本: ${teacher_model.api.stats['total_cost']:.4f}")
     '''
 
     print(usage_example)
 
     print("\n" + "=" * 60)
-    print("[完成] 演示完成")
+    print("[架构说明]")
     print("=" * 60)
-    print("\n[提示] 查看完整文档: TEACHER_API_GUIDE.md")
+    print("""
+teacher_api.py (本模块)
+  ├─ 专门用于知识蒸馏场景
+  ├─ 继承自 apt_model.core.api_providers
+  └─ 添加了蒸馏特有的功能 (get_logits, APITeacherModel)
+
+apt_model.core.api_providers
+  ├─ 通用API配置模块
+  ├─ 可被多个组件共享使用
+  │  ├─ 知识蒸馏 (teacher_api.py)
+  │  ├─ RAG增强 (将来支持)
+  │  └─ 知识图谱构建 (将来支持)
+  └─ 包含成本追踪和统计功能
+    """)
+
+    print("\n[完成] 演示完成")
+    print("[提示] 查看完整文档: TEACHER_API_GUIDE.md")
+    print("[提示] 查看通用API配置: apt_model/core/api_providers.py")
