@@ -200,31 +200,31 @@ class VisualDistillationPlugin:
         """
         if laziness < 20 and loss < 0.5:
             comments = [
-                "🌟 优秀！完全掌握了教师的知识",
-                "🎉 太棒了！学习得非常好",
-                "✨ 完美！已经接近教师水平",
-                "🏆 卓越！超出预期的表现",
+                "[优秀] 完全掌握了教师的知识",
+                "[极好] 学习得非常好",
+                "[完美] 已经接近教师水平",
+                "[卓越] 超出预期的表现",
             ]
         elif laziness < 40 and loss < 1.0:
             comments = [
-                "👍 很好！大部分知识已掌握",
-                "😊 不错！继续保持这个节奏",
-                "💪 良好！学习态度很认真",
-                "🎯 进步明显！加油",
+                "[很好] 大部分知识已掌握",
+                "[不错] 继续保持这个节奏",
+                "[良好] 学习态度很认真",
+                "[进步] 进步明显，加油",
             ]
         elif laziness < 60 and loss < 2.0:
             comments = [
-                "🤔 还可以，但需要更努力",
-                "📚 主题不够熟练，需要再多学习",
-                "⚡ 有进步空间，继续加油",
-                "🔄 理解还不够深入，多练习",
+                "[一般] 还可以，但需要更努力",
+                "[需加强] 主题不够熟练，需要再多学习",
+                "[有提升空间] 继续加油",
+                "[待改进] 理解还不够深入，多练习",
             ]
         else:
             comments = [
-                "😓 偷懒太多了！需要认真学习",
-                "❌ 学习不够专注，重新来过",
-                "⚠️ 严重偏离教师输出，需要改进",
-                "🚨 注意！学习效果不理想",
+                "[偷懒] 偷懒太多了，需要认真学习",
+                "[不合格] 学习不够专注，重新来过",
+                "[警告] 严重偏离教师输出，需要改进",
+                "[注意] 学习效果不理想",
             ]
 
         import random
@@ -260,17 +260,17 @@ class VisualDistillationPlugin:
     def print_header(self):
         """打印训练开始的标题"""
         print("\n" + "="*70)
-        print("🎓 可视化知识蒸馏训练".center(70))
+        print("【可视化知识蒸馏训练】".center(70))
         print("="*70)
-        print(f"⚙️  配置: 温度={self.temperature}, α={self.alpha}, β={self.beta}")
-        print(f"📊 显示频率: 每 {self.sample_frequency} 个batch显示一次样本")
+        print(f"[配置] 温度={self.temperature}, alpha={self.alpha}, beta={self.beta}")
+        print(f"[频率] 每 {self.sample_frequency} 个batch显示一次样本")
         print("="*70 + "\n")
 
     def print_epoch_header(self, epoch: int, total_epochs: int):
         """打印Epoch标题"""
-        print("\n" + "─"*70)
-        print(f"📖 Epoch {epoch}/{total_epochs}".center(70))
-        print("─"*70)
+        print("\n" + "-"*70)
+        print(f"Epoch {epoch}/{total_epochs}".center(70))
+        print("-"*70)
 
     def print_sample_comparison(
         self,
@@ -293,37 +293,37 @@ class VisualDistillationPlugin:
         teacher_display = teacher_text[:max_len] + "..." if len(teacher_text) > max_len else teacher_text
         student_display = student_text[:max_len] + "..." if len(student_text) > max_len else student_text
 
-        print("\n" + "┌" + "─"*68 + "┐")
-        print(f"│ 📍 Batch {batch_idx:<10} │ 📚 教学主题:【{topic}】".ljust(70) + "│")
-        print("├" + "─"*68 + "┤")
-        print(f"│ 👨‍🏫 教师模型: {teacher_display}".ljust(70) + "│")
-        print(f"│ 👨‍🎓 学生模型: {student_display}".ljust(70) + "│")
-        print("├" + "─"*68 + "┤")
+        print("\n" + "+" + "-"*68 + "+")
+        print(f"| [Batch {batch_idx:<6}] 教学主题:【{topic}】".ljust(70) + "|")
+        print("+" + "-"*68 + "+")
+        print(f"| [教师] {teacher_display}".ljust(70) + "|")
+        print(f"| [学生] {student_display}".ljust(70) + "|")
+        print("+" + "-"*68 + "+")
 
         # 偷懒程度进度条
         bar_length = 30
         filled_length = int(bar_length * laziness / 100)
-        bar = "█" * filled_length + "░" * (bar_length - filled_length)
+        bar = "#" * filled_length + "." * (bar_length - filled_length)
 
-        # 根据偷懒程度选择颜色标记
+        # 根据偷懒程度选择标记
         if laziness < 30:
-            laziness_icon = "🟢"
+            laziness_mark = "[优]"
         elif laziness < 60:
-            laziness_icon = "🟡"
+            laziness_mark = "[中]"
         else:
-            laziness_icon = "🔴"
+            laziness_mark = "[差]"
 
-        print(f"│ {laziness_icon} 偷懒程度: [{bar}] {laziness:.2f}%".ljust(70) + "│")
-        print(f"│ 📉 训练损失: {loss:.4f}".ljust(70) + "│")
-        print(f"│ 💬 评语: {comment}".ljust(70) + "│")
-        print("└" + "─"*68 + "┘")
+        print(f"| {laziness_mark} 偷懒程度: [{bar}] {laziness:.2f}%".ljust(70) + "|")
+        print(f"| [损失] 训练损失: {loss:.4f}".ljust(70) + "|")
+        print(f"| [评语] {comment}".ljust(70) + "|")
+        print("+" + "-"*68 + "+")
 
     def print_text_diff(self, text1: str, text2: str):
         """打印文本差异（可选）"""
         if not self.show_diff:
             return
 
-        print("\n📝 文本差异对比:")
+        print("\n[差异] 文本差异对比:")
 
         # 使用difflib生成差异
         diff = difflib.unified_diff(
@@ -347,52 +347,52 @@ class VisualDistillationPlugin:
         topic_stats: Dict[str, int]
     ):
         """打印Epoch汇总"""
-        print("\n" + "╔" + "═"*68 + "╗")
-        print(f"║ 📊 Epoch {epoch} 总结".ljust(70) + "║")
-        print("╠" + "═"*68 + "╣")
-        print(f"║ 📉 平均损失: {avg_loss:.4f}".ljust(70) + "║")
-        print(f"║ 😴 平均偷懒程度: {avg_laziness:.2f}%".ljust(70) + "║")
+        print("\n" + "=" + "="*68 + "=")
+        print(f"= [总结] Epoch {epoch} 总结".ljust(70) + "=")
+        print("=" + "="*68 + "=")
+        print(f"= [损失] 平均损失: {avg_loss:.4f}".ljust(70) + "=")
+        print(f"= [偷懒] 平均偷懒程度: {avg_laziness:.2f}%".ljust(70) + "=")
 
         if topic_stats:
-            print("║ 📚 主题分布:".ljust(70) + "║")
+            print("= [主题] 主题分布:".ljust(70) + "=")
             for topic, count in sorted(topic_stats.items(), key=lambda x: x[1], reverse=True)[:5]:
-                print(f"║    {topic}: {count} 个样本".ljust(70) + "║")
+                print(f"=    {topic}: {count} 个样本".ljust(70) + "=")
 
-        print("╚" + "═"*68 + "╝")
+        print("=" + "="*68 + "=")
 
     def print_final_summary(self):
         """打印最终总结"""
-        print("\n\n" + "╔" + "═"*68 + "╗")
-        print("║ 🎉 知识蒸馏训练完成！".center(70) + "║")
-        print("╠" + "═"*68 + "╣")
+        print("\n\n" + "=" + "="*68 + "=")
+        print("= 【知识蒸馏训练完成】".center(70) + "=")
+        print("=" + "="*68 + "=")
 
         avg_laziness = sum(self.stats['avg_laziness']) / len(self.stats['avg_laziness']) if self.stats['avg_laziness'] else 0
 
-        print(f"║ 📊 总样本数: {self.stats['total_samples']}".ljust(70) + "║")
-        print(f"║ 😴 总体平均偷懒程度: {avg_laziness:.2f}%".ljust(70) + "║")
+        print(f"= [统计] 总样本数: {self.stats['total_samples']}".ljust(70) + "=")
+        print(f"= [偷懒] 总体平均偷懒程度: {avg_laziness:.2f}%".ljust(70) + "=")
 
         # 学习趋势
         if len(self.stats['avg_laziness']) >= 2:
             improvement = self.stats['avg_laziness'][0] - self.stats['avg_laziness'][-1]
             if improvement > 10:
-                trend = "📈 显著进步！"
+                trend = "[++] 显著进步"
             elif improvement > 0:
-                trend = "📊 稳步改善"
+                trend = "[+] 稳步改善"
             else:
-                trend = "📉 需要调整策略"
-            print(f"║ 学习趋势: {trend}".ljust(70) + "║")
+                trend = "[-] 需要调整策略"
+            print(f"= [趋势] 学习趋势: {trend}".ljust(70) + "=")
 
-        print("╠" + "═"*68 + "╣")
-        print("║ 💡 建议:".ljust(70) + "║")
+        print("=" + "="*68 + "=")
+        print("= [建议]".ljust(70) + "=")
 
         if avg_laziness < 30:
-            print("║   ✅ 蒸馏效果优秀，可以考虑减小模型或降低温度".ljust(70) + "║")
+            print("=   [优秀] 蒸馏效果优秀，可以考虑减小模型或降低温度".ljust(70) + "=")
         elif avg_laziness < 60:
-            print("║   📚 蒸馏效果良好，建议继续训练或调整学习率".ljust(70) + "║")
+            print("=   [良好] 蒸馏效果良好，建议继续训练或调整学习率".ljust(70) + "=")
         else:
-            print("║   ⚠️  蒸馏效果不理想，建议增加温度或检查数据质量".ljust(70) + "║")
+            print("=   [警告] 蒸馏效果不理想，建议增加温度或检查数据质量".ljust(70) + "=")
 
-        print("╚" + "═"*68 + "╝\n")
+        print("=" + "="*68 + "=\n")
 
     # ==================== 训练流程 ====================
 
@@ -570,7 +570,7 @@ class VisualDistillationPlugin:
 
                 # 简单进度（非样本batch）
                 if not show_sample and batch_idx % 10 == 0:
-                    print(f"  ⏳ Batch {batch_idx}/{len(train_dataloader)} | Loss: {result['loss']:.4f}", end='\r')
+                    print(f"  [进度] Batch {batch_idx}/{len(train_dataloader)} | Loss: {result['loss']:.4f}", end='\r')
 
             # Epoch总结
             avg_loss = sum(epoch_losses) / len(epoch_losses)
@@ -640,7 +640,7 @@ def quick_visual_distill(
 # ==================== 使用示例 ====================
 
 if __name__ == "__main__":
-    print("🎨 可视化知识蒸馏插件演示\n")
+    print("【可视化知识蒸馏插件演示】\n")
 
     # 配置
     config = {
@@ -697,7 +697,7 @@ if __name__ == "__main__":
 
     plugin.print_final_summary()
 
-    print("\n✅ 演示完成！")
-    print("\n💡 使用方法:")
+    print("\n[完成] 演示完成！")
+    print("\n[提示] 使用方法:")
     print("   from apt_model.plugins.visual_distillation_plugin import quick_visual_distill")
     print("   quick_visual_distill(student_model, teacher_model, dataloader, tokenizer)")
