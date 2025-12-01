@@ -782,6 +782,110 @@ def run_export_ollama_command(args):
     return 0
 
 
+def run_fine_tune_command(args):
+    """
+    执行模型微调命令
+
+    用法:
+        python -m apt_model fine-tune --model-path apt_model --data-path finetune_data.txt
+        python -m apt_model fine-tune --model-path apt_model --data-path train.txt --val-data val.txt --freeze-embeddings
+        python -m apt_model fine-tune --model-path apt_model --data-path train.txt --freeze-encoder-layers 2
+
+    参数:
+        args: 命令行参数
+
+    返回:
+        int: 退出码
+    """
+    logger, lang_manager, device = _initialize_common(args)
+    logger.info("开始微调预训练模型...")
+
+    # 设置资源监控
+    resource_monitor = _setup_resource_monitor(args, logger)
+    _start_monitor(resource_monitor)
+
+    try:
+        from apt_model.training.finetuner import fine_tune_model
+
+        # 检查模型路径
+        if not os.path.exists(args.model_path):
+            logger.error(f"模型路径不存在: {args.model_path}")
+            print(f"错误: 模型路径不存在: {args.model_path}")
+            return 1
+
+        # 检查数据路径
+        if not os.path.exists(args.data_path):
+            logger.error(f"训练数据路径不存在: {args.data_path}")
+            print(f"错误: 训练数据路径不存在: {args.data_path}")
+            return 1
+
+        # 验证数据路径（可选）
+        val_data_path = None
+        if hasattr(args, 'val_data_path') and args.val_data_path:
+            if os.path.exists(args.val_data_path):
+                val_data_path = args.val_data_path
+            else:
+                logger.warning(f"验证数据路径不存在: {args.val_data_path}，将不使用验证集")
+                print(f"警告: 验证数据路径不存在: {args.val_data_path}")
+
+        print("\n" + "="*60)
+        print("🎯 APT模型微调")
+        print("="*60)
+        print(f"\n预训练模型: {args.model_path}")
+        print(f"训练数据: {args.data_path}")
+        if val_data_path:
+            print(f"验证数据: {val_data_path}")
+        print(f"\n配置:")
+        print(f"  Epochs: {args.epochs}")
+        print(f"  Batch Size: {args.batch_size}")
+        print(f"  Learning Rate: {args.learning_rate}")
+
+        # 冻结层设置
+        freeze_embeddings = getattr(args, 'freeze_embeddings', False)
+        freeze_encoder_layers = getattr(args, 'freeze_encoder_layers', None)
+        freeze_decoder_layers = getattr(args, 'freeze_decoder_layers', None)
+
+        if freeze_embeddings or freeze_encoder_layers or freeze_decoder_layers:
+            print(f"\n冻结层设置:")
+            if freeze_embeddings:
+                print(f"  Embeddings: 冻结")
+            if freeze_encoder_layers:
+                print(f"  Encoder前{freeze_encoder_layers}层: 冻结")
+            if freeze_decoder_layers:
+                print(f"  Decoder前{freeze_decoder_layers}层: 冻结")
+
+        print("="*60 + "\n")
+
+        # 执行微调
+        model, tokenizer, config = fine_tune_model(
+            pretrained_model_path=args.model_path,
+            train_data_path=args.data_path,
+            val_data_path=val_data_path,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            freeze_embeddings=freeze_embeddings,
+            freeze_encoder_layers=freeze_encoder_layers,
+            freeze_decoder_layers=freeze_decoder_layers,
+            save_path=args.save_path,
+            early_stopping_patience=getattr(args, 'early_stopping_patience', 3),
+            eval_steps=getattr(args, 'eval_steps', 100),
+            save_steps=getattr(args, 'save_steps', 500),
+            max_samples=getattr(args, 'max_samples', None),
+            logger=logger
+        )
+
+        logger.info(f"微调完成！模型已保存到: {args.save_path}")
+        print(f"\n✅ 微调完成！模型已保存到: {args.save_path}")
+
+        return 0  # 成功
+
+    except Exception as e:
+        return _handle_command_error("微调", e, logger)
+    finally:
+        _stop_monitor(resource_monitor)
+
+
 def run_config_command(args):
     """
     配置管理命令 - 管理全局配置
@@ -1178,6 +1282,8 @@ def register_core_commands():
                     help_text="训练模型")
     register_command("train-custom", run_train_custom_command, category="training",
                     help_text="使用自定义数据训练模型")
+    register_command("fine-tune", run_fine_tune_command, category="training",
+                    help_text="微调预训练模型")
 
     # 交互相关命令
     register_command("chat", run_chat_command, category="interactive",
