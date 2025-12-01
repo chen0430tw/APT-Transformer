@@ -23,7 +23,14 @@
 - Claude-3 (Opus, Sonnet, Haiku)
 - Claude-2
 
-### 3. 自定义API
+### 3. 硅基流动API (SiliconFlow)
+- Qwen2系列 (通义千问)
+- DeepSeek系列
+- GLM-4系列 (智谱)
+- Llama-3系列
+- 其他国产开源模型
+
+### 4. 自定义API
 - 任何符合RESTful规范的API
 - 本地部署的模型服务
 
@@ -83,7 +90,23 @@ teacher_model = create_api_teacher_model(
 # 其余步骤相同
 ```
 
-### 方法3: 使用自定义API
+### 方法3: 使用硅基流动API
+
+```python
+from apt_model.plugins.teacher_api import create_api_teacher_model
+
+teacher_model = create_api_teacher_model(
+    provider='siliconflow',
+    api_key='sk-...',  # 你的硅基流动 API key
+    model_name='Qwen/Qwen2-7B-Instruct',
+    tokenizer=tokenizer,
+    vocab_size=50000
+)
+
+# 其余步骤相同
+```
+
+### 方法4: 使用自定义API
 
 ```python
 teacher_model = create_api_teacher_model(
@@ -143,6 +166,37 @@ api = AnthropicTeacherAPI(config)
 - `claude-3-sonnet-20240229` - 平衡性能
 - `claude-3-haiku-20240307` - 最快速
 - `claude-2.1` - 前代模型
+
+### 硅基流动配置
+
+```python
+from apt_model.plugins.teacher_api import SiliconFlowTeacherAPI
+
+config = {
+    'api_key': 'sk-...',
+    'model_name': 'Qwen/Qwen2-7B-Instruct',
+    'base_url': 'https://api.siliconflow.cn/v1',  # 默认值，可省略
+    'timeout': 30,
+    'max_retries': 3,
+    'retry_delay': 1.0,
+}
+
+api = SiliconFlowTeacherAPI(config)
+```
+
+**可用模型:**
+- `Qwen/Qwen2-7B-Instruct` - 通义千问2代 7B（推荐）
+- `Qwen/Qwen2-72B-Instruct` - 通义千问2代 72B（更强大）
+- `deepseek-ai/DeepSeek-V2.5` - DeepSeek V2.5
+- `THUDM/glm-4-9b-chat` - 智谱 GLM-4 9B
+- `meta-llama/Meta-Llama-3-8B-Instruct` - Llama-3 8B
+- `meta-llama/Meta-Llama-3-70B-Instruct` - Llama-3 70B
+
+**优势:**
+- 国内访问速度快
+- 支持多种国产开源模型
+- 价格相对便宜
+- 兼容OpenAI接口格式
 
 ### 自定义API配置
 
@@ -329,6 +383,38 @@ teacher_model = create_api_teacher_model(
 # 其余流程相同
 ```
 
+### 示例3: 硅基流动Qwen2 → 小模型（中文场景推荐）
+
+```python
+# 使用硅基流动的Qwen2作为教师（适合中文）
+teacher_model = create_api_teacher_model(
+    provider='siliconflow',
+    api_key='sk-...',  # 硅基流动API key
+    model_name='Qwen/Qwen2-7B-Instruct',
+    tokenizer=tokenizer,
+    vocab_size=50000,
+    timeout=30,
+    max_retries=3
+)
+
+# 配置：中文场景优化
+distill_config = {
+    'temperature': 3.0,  # 中文模型可用较低温度
+    'alpha': 0.7,
+    'beta': 0.3,
+    'sample_frequency': 5,  # 硅基流动速度快，可多显示样本
+    'show_samples': True,
+}
+
+# 其余流程相同
+```
+
+**优势:**
+- 成本极低 (~¥0.1/1000样本)
+- 中文理解能力强
+- 国内访问速度快
+- 适合大规模中文数据蒸馏
+
 ---
 
 ## 成本估算
@@ -349,6 +435,19 @@ teacher_model = create_api_teacher_model(
 | Claude-3-Sonnet | $3 | $15 |
 | Claude-3-Haiku | $0.25 | $1.25 |
 
+### 硅基流动定价（2024年）
+
+| 模型 | 价格/1M tokens | 备注 |
+|------|---------------|------|
+| Qwen2-7B-Instruct | ¥1.0 (~$0.14) | 性价比高 |
+| Qwen2-72B-Instruct | ¥5.0 (~$0.70) | 更强大 |
+| DeepSeek-V2.5 | ¥1.0 (~$0.14) | 推理能力强 |
+| GLM-4-9B | ¥1.0 (~$0.14) | 中文优化 |
+| Llama-3-8B | ¥0.6 (~$0.08) | 最便宜 |
+| Llama-3-70B | ¥3.0 (~$0.42) | 性能强 |
+
+**注意:** 硅基流动通常按照总token数计费（输入+输出），价格以人民币计价
+
 ### 成本估算示例
 
 假设训练1000个样本，每个样本平均100 tokens：
@@ -364,6 +463,21 @@ teacher_model = create_api_teacher_model(
 **使用Claude-3-Haiku:**
 - 输入: 100,000 tokens = 0.1M
 - 成本: 0.1M × $0.25 = **$0.025**
+
+**使用硅基流动Qwen2-7B:**
+- 总tokens: 100,000 tokens = 0.1M
+- 成本: 0.1M × ¥1.0 = **¥0.1 (~$0.014)**
+
+**使用硅基流动Llama-3-8B（最便宜）:**
+- 总tokens: 100,000 tokens = 0.1M
+- 成本: 0.1M × ¥0.6 = **¥0.06 (~$0.008)**
+
+**成本对比总结:**
+1. 硅基流动 Llama-3-8B: ~$0.008 ⭐ **最便宜**
+2. 硅基流动 Qwen2-7B: ~$0.014
+3. Claude-3-Haiku: $0.025
+4. GPT-3.5-turbo: $0.05
+5. GPT-4: $3.00
 
 ---
 
@@ -502,7 +616,9 @@ except Exception as e:
 |------|---------|------|
 | 预算充足 | GPT-4 | 最强大 |
 | 平衡性价比 | GPT-3.5-turbo / Claude-3-Sonnet | 性能好且便宜 |
-| 大规模训练 | Claude-3-Haiku | 最便宜 |
+| 大规模训练 | 硅基流动 Llama-3-8B | 最便宜 (~$0.008/1K样本) |
+| 中文场景 | 硅基流动 Qwen2-7B / GLM-4 | 中文优化且便宜 |
+| 国内部署 | 硅基流动 | 访问速度快 |
 | 特定领域 | 自定义API | 专门优化 |
 
 ### 2. 混合策略
@@ -590,6 +706,15 @@ cache_teacher_outputs(train_data, teacher_api, cache_dir)
 # 2. 离线训练（使用缓存）
 train_with_cached_outputs(student_model, cache_dir)
 ```
+
+### Q5: 如何选择API提供商？
+
+**A:** 选择建议：
+- **中文任务**: 硅基流动（Qwen2/GLM-4） - 中文优化，价格低
+- **英文任务**: GPT-3.5-turbo / Claude-3-Haiku - 性能好
+- **最佳质量**: GPT-4 / Claude-3-Opus - 但成本高
+- **最低成本**: 硅基流动 Llama-3-8B - $0.008/1K样本
+- **国内网络**: 硅基流动 - 访问速度快，无需代理
 
 ---
 

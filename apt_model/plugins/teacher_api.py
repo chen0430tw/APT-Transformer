@@ -6,6 +6,7 @@
 支持使用远程API作为教师模型进行知识蒸馏：
 - OpenAI API (GPT-4, GPT-3.5等)
 - Anthropic API (Claude系列)
+- 硅基流动API (Qwen, DeepSeek, GLM等国产模型)
 - 自定义API接口
 - API调用管理和错误处理
 """
@@ -218,6 +219,69 @@ class AnthropicTeacherAPI(TeacherAPIInterface):
             self.stats['total_tokens'] += message.usage.input_tokens + message.usage.output_tokens
 
             return message.content[0].text
+
+        return self.retry_on_failure(_call_api)
+
+    def get_logits(
+        self,
+        input_text: str,
+        vocab_size: int,
+        **kwargs
+    ) -> torch.Tensor:
+        """获取logits（模拟）"""
+        generated_text = self.generate_text(input_text, max_tokens=50, temperature=0.7)
+        seq_len = len(generated_text.split())
+        logits = torch.randn(1, seq_len, vocab_size)
+        return logits
+
+
+class SiliconFlowTeacherAPI(TeacherAPIInterface):
+    """
+    硅基流动API教师模型
+
+    支持: Qwen系列, DeepSeek系列, GLM系列, Llama系列等国产开源模型
+    官网: https://siliconflow.cn
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+
+        # 硅基流动API兼容OpenAI格式
+        self.base_url = self.base_url or "https://api.siliconflow.cn/v1"
+
+        # 导入OpenAI库（硅基流动兼容OpenAI接口）
+        try:
+            import openai
+            self.openai = openai
+            self.openai.api_key = self.api_key
+            self.openai.api_base = self.base_url
+        except ImportError:
+            raise ImportError("需要安装openai库: pip install openai")
+
+    def generate_text(
+        self,
+        input_text: str,
+        max_tokens: int = 100,
+        temperature: float = 1.0,
+        **kwargs
+    ) -> str:
+        """使用硅基流动API生成文本"""
+
+        def _call_api():
+            response = self.openai.ChatCompletion.create(
+                model=self.model_name or "Qwen/Qwen2-7B-Instruct",
+                messages=[
+                    {"role": "user", "content": input_text}
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                **kwargs
+            )
+
+            self.stats['total_calls'] += 1
+            self.stats['total_tokens'] += response['usage']['total_tokens']
+
+            return response['choices'][0]['message']['content']
 
         return self.retry_on_failure(_call_api)
 
@@ -464,7 +528,7 @@ def create_teacher_api(
     创建教师模型API接口
 
     Args:
-        provider: API提供商 ('openai', 'anthropic', 'custom')
+        provider: API提供商 ('openai', 'anthropic', 'siliconflow', 'custom')
         api_key: API密钥
         model_name: 模型名称
         base_url: API基础URL（可选）
@@ -484,6 +548,8 @@ def create_teacher_api(
         return OpenAITeacherAPI(config)
     elif provider.lower() == 'anthropic':
         return AnthropicTeacherAPI(config)
+    elif provider.lower() == 'siliconflow':
+        return SiliconFlowTeacherAPI(config)
     elif provider.lower() == 'custom':
         if not base_url:
             raise ValueError("自定义API需要提供base_url")
@@ -557,9 +623,23 @@ if __name__ == "__main__":
 
     print(f"配置: {anthropic_config}\n")
 
-    # 示例3: 自定义API
+    # 示例3: 硅基流动API
     print("=" * 60)
-    print("[示例3] 使用自定义API作为教师模型")
+    print("[示例3] 使用硅基流动API作为教师模型")
+    print("=" * 60)
+
+    siliconflow_config = {
+        'provider': 'siliconflow',
+        'api_key': 'your-siliconflow-api-key',
+        'model_name': 'Qwen/Qwen2-7B-Instruct',
+    }
+
+    print(f"配置: {siliconflow_config}")
+    print("支持的模型: Qwen2, DeepSeek, GLM-4, Llama-3等\n")
+
+    # 示例4: 自定义API
+    print("=" * 60)
+    print("[示例4] 使用自定义API作为教师模型")
     print("=" * 60)
 
     custom_config = {
@@ -570,9 +650,9 @@ if __name__ == "__main__":
 
     print(f"配置: {custom_config}\n")
 
-    # 示例4: 集成到蒸馏流程
+    # 示例5: 集成到蒸馏流程
     print("=" * 60)
-    print("[示例4] 集成到知识蒸馏流程")
+    print("[示例5] 集成到知识蒸馏流程")
     print("=" * 60)
 
     usage_example = '''
