@@ -130,27 +130,15 @@ def create_training_monitor_tab():
 
         with gr.Row():
             with gr.Column():
-                # Loss curve
-                loss_plot = gr.LinePlot(
-                    x="step",
-                    y="loss",
-                    title="Training Loss",
-                    x_title="Step",
-                    y_title="Loss",
-                    height=300,
-                    width=500
+                # Loss curve - using Plot for Gradio 6.x compatibility
+                loss_plot = gr.Plot(
+                    label="Training Loss"
                 )
 
             with gr.Column():
-                # Learning rate curve
-                lr_plot = gr.LinePlot(
-                    x="step",
-                    y="learning_rate",
-                    title="Learning Rate",
-                    x_title="Step",
-                    y_title="LR",
-                    height=300,
-                    width=500
+                # Learning rate curve - using Plot for Gradio 6.x compatibility
+                lr_plot = gr.Plot(
+                    label="Learning Rate"
                 )
 
         with gr.Row():
@@ -216,17 +204,33 @@ def create_training_monitor_tab():
                 else:
                     steps = list(range(len(train_losses)))
 
-                # Prepare loss plot data
-                loss_data = {
-                    "step": steps,
-                    "loss": train_losses
-                }
+                # Prepare loss plot (Plotly figure for Gradio 6.x)
+                try:
+                    import plotly.graph_objects as go
+                    loss_fig = go.Figure()
+                    loss_fig.add_trace(go.Scatter(x=steps, y=train_losses, mode='lines', name='Loss'))
+                    loss_fig.update_layout(
+                        title="Training Loss",
+                        xaxis_title="Step",
+                        yaxis_title="Loss",
+                        height=300
+                    )
+                except ImportError:
+                    # Fallback if plotly not available
+                    loss_fig = None
 
-                # Prepare LR plot data
-                lr_data = {
-                    "step": steps,
-                    "learning_rate": lr_history
-                }
+                # Prepare LR plot (Plotly figure for Gradio 6.x)
+                try:
+                    lr_fig = go.Figure()
+                    lr_fig.add_trace(go.Scatter(x=steps, y=lr_history, mode='lines', name='LR'))
+                    lr_fig.update_layout(
+                        title="Learning Rate",
+                        xaxis_title="Step",
+                        yaxis_title="Learning Rate",
+                        height=300
+                    )
+                except:
+                    lr_fig = None
 
                 # Model config
                 config = checkpoint.get('config', {})
@@ -246,8 +250,8 @@ def create_training_monitor_tab():
                 }
 
                 return (
-                    loss_data,
-                    lr_data,
+                    loss_fig,
+                    lr_fig,
                     model_config,
                     ckpt_info,
                     f"✅ Loaded data from {latest_ckpt.name}"
