@@ -132,7 +132,26 @@ Examples:
                            help='External training data file path')
     data_group.add_argument('--max-samples', type=int, default=None,
                            help='Maximum number of samples to use from external data (default: all)')
-    
+
+    # ===============================
+    #  Fine-tuning related arguments
+    # ===============================
+    finetune_group = parser.add_argument_group('Fine-tuning Options')
+    finetune_group.add_argument('--val-data-path', type=str, default=None,
+                               help='Validation data file path (for fine-tuning)')
+    finetune_group.add_argument('--freeze-embeddings', action='store_true',
+                               help='Freeze embedding layers during fine-tuning')
+    finetune_group.add_argument('--freeze-encoder-layers', type=int, default=None,
+                               help='Number of encoder layers to freeze (default: None)')
+    finetune_group.add_argument('--freeze-decoder-layers', type=int, default=None,
+                               help='Number of decoder layers to freeze (default: None)')
+    finetune_group.add_argument('--early-stopping-patience', type=int, default=3,
+                               help='Early stopping patience (default: 3)')
+    finetune_group.add_argument('--eval-steps', type=int, default=100,
+                               help='Evaluation interval in steps (default: 100)')
+    finetune_group.add_argument('--save-steps', type=int, default=500,
+                               help='Checkpoint save interval in steps (default: 500)')
+
     # ===============================
     #  Cache related arguments
     # ===============================
