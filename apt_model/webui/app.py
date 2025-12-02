@@ -27,6 +27,69 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 
+# Language translations
+TRANSLATIONS = {
+    'en': {
+        'title': '🚀 APT Model WebUI',
+        'description': 'Web interface for training monitoring, gradient visualization, checkpoint management, and inference testing.',
+        'features': '**Features**',
+        'training_monitor': 'Training monitoring with real-time loss curves',
+        'gradient_monitor': 'Gradient flow monitoring with anomaly detection',
+        'checkpoint_mgmt': 'Checkpoint management (list, load, download)',
+        'inference_test': 'Interactive inference testing',
+        'tab_training': 'Training Monitor',
+        'tab_gradient': 'Gradient Monitor',
+        'tab_checkpoint': 'Checkpoint Manager',
+        'tab_inference': 'Inference Testing',
+        'language': 'Language',
+        'checkpoint_dir': 'Checkpoint Directory',
+        'load_data': 'Load Training Data',
+        'status': 'Status',
+        'no_data': 'No data loaded',
+        'training_loss': 'Training Loss',
+        'learning_rate': 'Learning Rate',
+        'model_config': 'Model Configuration',
+        'checkpoint_info': 'Checkpoint Info',
+        'input_text': 'Input Text',
+        'output_text': 'Generated Text',
+        'generate': 'Generate',
+        'upload_txt': 'Upload TXT File',
+        'export_txt': 'Export to TXT',
+        'max_length': 'Max Length',
+        'temperature': 'Temperature',
+    },
+    'zh': {
+        'title': '🚀 APT模型 WebUI',
+        'description': '用于训练监控、梯度可视化、checkpoint管理和推理测试的Web界面',
+        'features': '**功能特性**',
+        'training_monitor': '📊 训练监控 - 实时loss和学习率曲线',
+        'gradient_monitor': '🔍 梯度监控 - 梯度流和异常检测',
+        'checkpoint_mgmt': '💾 Checkpoint管理 - 列表、加载、下载',
+        'inference_test': '✨ 推理测试 - 交互式文本生成',
+        'tab_training': '训练监控',
+        'tab_gradient': '梯度监控',
+        'tab_checkpoint': 'Checkpoint管理',
+        'tab_inference': '推理测试',
+        'language': '语言',
+        'checkpoint_dir': 'Checkpoint目录',
+        'load_data': '加载训练数据',
+        'status': '状态',
+        'no_data': '未加载数据',
+        'training_loss': '训练Loss',
+        'learning_rate': '学习率',
+        'model_config': '模型配置',
+        'checkpoint_info': 'Checkpoint信息',
+        'input_text': '输入文本',
+        'output_text': '生成文本',
+        'generate': '生成',
+        'upload_txt': '上传TXT文件',
+        'export_txt': '导出为TXT',
+        'max_length': '最大长度',
+        'temperature': '温度参数',
+    }
+}
+
+
 class WebUIState:
     """Shared state for WebUI application"""
 
@@ -37,6 +100,8 @@ class WebUIState:
         self.gradient_monitor = None
         self.checkpoint_dir = None
         self.training_active = False
+        self.language = 'zh'  # Default to Chinese
+        self.last_generated_text = ""  # For txt export
 
     def load_model_from_checkpoint(self, checkpoint_path: Path):
         """Load model and tokenizer from checkpoint"""
@@ -584,6 +649,15 @@ def create_inference_tab():
                     value={}
                 )
 
+                # TXT file support
+                with gr.Row():
+                    upload_txt_btn = gr.UploadButton(
+                        label="📄 Upload TXT File",
+                        file_types=[".txt"],
+                        size="sm"
+                    )
+                    export_txt_btn = gr.Button("💾 Export to TXT", size="sm")
+
         # Example inputs
         with gr.Row():
             gr.Examples(
@@ -684,10 +758,65 @@ def create_inference_tab():
                     {"error": str(e)}
                 )
 
+        def upload_txt_file(file):
+            """Load text from uploaded txt file"""
+            if file is None:
+                return ""
+            try:
+                with open(file.name, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return content
+            except Exception as e:
+                return f"❌ Error reading file: {str(e)}"
+
+        def export_to_txt():
+            """Export generated text to txt file"""
+            if not webui_state.last_generated_text:
+                return None
+
+            try:
+                import tempfile
+                # Create temporary file
+                tmp_file = tempfile.NamedTemporaryFile(
+                    mode='w',
+                    encoding='utf-8',
+                    suffix='.txt',
+                    delete=False
+                )
+                tmp_file.write(webui_state.last_generated_text)
+                tmp_file.close()
+                return tmp_file.name
+            except Exception as e:
+                print(f"Export error: {str(e)}")
+                return None
+
+        def run_inference_and_save(
+            text: str,
+            max_len: int,
+            temp: float,
+            beams: int,
+            sample: bool
+        ):
+            """Run inference and save result for export"""
+            result_text, result_info = run_inference(text, max_len, temp, beams, sample)
+            webui_state.last_generated_text = result_text
+            return result_text, result_info
+
         generate_btn.click(
-            fn=run_inference,
+            fn=run_inference_and_save,
             inputs=[input_text, max_length, temperature, num_beams, do_sample],
             outputs=[output_text, generation_info]
+        )
+
+        upload_txt_btn.upload(
+            fn=upload_txt_file,
+            inputs=[upload_txt_btn],
+            outputs=[input_text]
+        )
+
+        export_txt_btn.click(
+            fn=export_to_txt,
+            outputs=[gr.File(label="Download TXT")]
         )
 
 
@@ -725,18 +854,43 @@ def create_webui():
 
     with gr.Blocks(**blocks_kwargs) as app:
 
+        # Language selector
+        with gr.Row():
+            with gr.Column(scale=4):
+                gr.Markdown(f"# {TRANSLATIONS[webui_state.language]['title']}")
+            with gr.Column(scale=1):
+                language_selector = gr.Radio(
+                    choices=["中文 (zh)", "English (en)"],
+                    value="中文 (zh)" if webui_state.language == 'zh' else "English (en)",
+                    label="🌐 Language / 语言",
+                    container=False
+                )
+
+        lang = webui_state.language
         gr.Markdown(
-            """
-            # 🚀 APT Model WebUI
+            f"""
+            {TRANSLATIONS[lang]['description']}
 
-            Web interface for training monitoring, gradient visualization, checkpoint management, and inference testing.
+            {TRANSLATIONS[lang]['features']}:
+            - {TRANSLATIONS[lang]['training_monitor']}
+            - {TRANSLATIONS[lang]['gradient_monitor']}
+            - {TRANSLATIONS[lang]['checkpoint_mgmt']}
+            - {TRANSLATIONS[lang]['inference_test']}
 
-            **Features**:
-            - 📊 Training monitoring with real-time loss curves
-            - 🔍 Gradient flow monitoring with anomaly detection
-            - 💾 Checkpoint management (list, load, download)
-            - ✨ Interactive inference testing
+            **提示 / Tip**: 切换语言后请刷新页面 / Refresh page after changing language
             """
+        )
+
+        def change_language(lang_choice):
+            """Change interface language"""
+            webui_state.language = 'zh' if lang_choice.startswith('中文') else 'en'
+            return f"✅ 语言已切换为 {lang_choice} / Language changed to {lang_choice}. 请刷新页面生效 / Please refresh the page."
+
+        lang_status = gr.Textbox(label="Status / 状态", value="", visible=False, interactive=False)
+        language_selector.change(
+            fn=change_language,
+            inputs=[language_selector],
+            outputs=[lang_status]
         )
 
         # Create all tabs - wrapped in gr.Tabs() for Gradio 6.x compatibility
