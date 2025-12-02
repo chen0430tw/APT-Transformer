@@ -16,19 +16,18 @@ apt_eqi_manager.py — APT EQI Manager (插件管家 / 元调度器)
 """
 
 # 用法（集成 Trainer）：
-    from apt_model.plugins.apt_eqi_manager import EQIManager, PluginSpec
-
-    eqi = EQIManager(default_time_budget_ms=20)
-    eqi.register(spec, handler=MyPlugin())
-    ...
-    eqi.compile()  # 做静态裁决
-    # 每个阶段：
-    audit = eqi.decide_and_dispatch(event="on_epoch_end",
-                                    step=global_step,
-                                    metrics={"valid": {...}},
-                                    evidence={"Q": {...}, "w": {...}},
-                                    resources={"cpu_budget": 5.0, "io_budget": 1.0})
-"""
+# from apt_model.plugins.apt_eqi_manager import EQIManager, PluginSpec
+#
+# eqi = EQIManager(default_time_budget_ms=20)
+# eqi.register(spec, handler=MyPlugin())
+# ...
+# eqi.compile()  # 做静态裁决
+# # 每个阶段：
+# audit = eqi.decide_and_dispatch(event="on_epoch_end",
+#                                 step=global_step,
+#                                 metrics={"valid": {...}},
+#                                 evidence={"Q": {...}, "w": {...}},
+#                                 resources={"cpu_budget": 5.0, "io_budget": 1.0})
 
 from __future__ import annotations
 from dataclasses import dataclass, field
