@@ -865,8 +865,7 @@ def create_webui():
                 language_selector = gr.Radio(
                     choices=["中文 (zh)", "English (en)"],
                     value="中文 (zh)" if webui_state.language == 'zh' else "English (en)",
-                    label="🌐 Language / 语言",
-                    container=False
+                    label="🌐 Language / 语言"
                 )
 
         lang = webui_state.language
