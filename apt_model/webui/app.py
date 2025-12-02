@@ -302,16 +302,9 @@ def create_gradient_monitor_tab():
         )
 
         with gr.Row():
-            # Gradient timeline plot
-            gradient_timeline = gr.LinePlot(
-                x="step",
-                y="norm",
-                color="layer",
-                title="Gradient Norms Timeline",
-                x_title="Training Step",
-                y_title="Gradient Norm",
-                height=400,
-                width=800
+            # Gradient timeline plot - using Plot for Gradio 6.x compatibility
+            gradient_timeline = gr.Plot(
+                label="Gradient Norms Timeline"
             )
 
         with gr.Row():
@@ -366,8 +359,35 @@ def create_gradient_monitor_tab():
 
                 total_steps = webui_data.get('total_steps', 0)
 
+                # Convert to Plotly figure for Gradio 6.x
+                try:
+                    import plotly.graph_objects as go
+                    import pandas as pd
+
+                    df = pd.DataFrame(plot_data)
+                    gradient_fig = go.Figure()
+
+                    # Add a line for each layer
+                    for layer in df['layer'].unique():
+                        layer_df = df[df['layer'] == layer]
+                        gradient_fig.add_trace(go.Scatter(
+                            x=layer_df['step'],
+                            y=layer_df['norm'],
+                            mode='lines',
+                            name=layer
+                        ))
+
+                    gradient_fig.update_layout(
+                        title="Gradient Norms Timeline",
+                        xaxis_title="Training Step",
+                        yaxis_title="Gradient Norm",
+                        height=400
+                    )
+                except Exception:
+                    gradient_fig = None
+
                 return (
-                    plot_data,
+                    gradient_fig,
                     layer_stats,
                     anomaly_counts,
                     f"✅ Loaded gradient data: {total_steps} steps, {len(layer_stats)} layers"
