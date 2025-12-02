@@ -886,9 +886,23 @@ def create_webui():
         def change_language(lang_choice):
             """Change interface language"""
             webui_state.language = 'zh' if lang_choice.startswith('中文') else 'en'
-            return f"✅ 语言已切换为 {lang_choice} / Language changed to {lang_choice}. 请刷新页面生效 / Please refresh the page."
+            msg = f"⚠️ 语言已设置为 {lang_choice}\n\n" \
+                  f"由于Gradio限制，需要**重启WebUI**才能生效：\n" \
+                  f"1. 按 Ctrl+C 停止服务\n" \
+                  f"2. 重新运行: python -m apt_model.webui.app\n\n" \
+                  f"Language set to {lang_choice}\n" \
+                  f"Due to Gradio limitations, please **restart the WebUI**:\n" \
+                  f"1. Press Ctrl+C to stop\n" \
+                  f"2. Run again: python -m apt_model.webui.app"
+            return msg
 
-        lang_status = gr.Textbox(label="Status / 状态", value="", visible=False, interactive=False)
+        lang_status = gr.Textbox(
+            label="⚙️ 语言切换说明 / Language Switch Info",
+            value="",
+            visible=True,
+            interactive=False,
+            lines=6
+        )
         language_selector.change(
             fn=change_language,
             inputs=[language_selector],
