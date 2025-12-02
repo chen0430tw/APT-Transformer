@@ -17,39 +17,39 @@ class APTConfig:
                  batch_first=True, warmup_steps=1500, weight_decay=0.01284451402180246,
                  attention_dropout=0.19455075657434573, layer_norm_eps=1e-5, gradient_clip=0.9455654465356627):
         """初始化模型配置"""
-            self.vocab_size = vocab_size
-            self.d_model = d_model
-            self.d_ff = d_ff
-            self.num_heads = num_heads
-            self.num_encoder_layers = num_encoder_layers
-            self.num_decoder_layers = num_decoder_layers
-            self.dropout = dropout
-            self.max_seq_len = max_seq_len
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.num_heads = num_heads
+        self.num_encoder_layers = num_encoder_layers
+        self.num_decoder_layers = num_decoder_layers
+        self.dropout = dropout
+        self.max_seq_len = max_seq_len
             
             # 动态Taylor展开系数
-            self.epsilon = epsilon        
-            self.alpha = alpha            
-            self.beta = beta              
-            self.base_lr = base_lr        
+        self.epsilon = epsilon        
+        self.alpha = alpha            
+        self.beta = beta              
+        self.base_lr = base_lr        
             
             # 特殊标记ID
-            self.pad_token_id = pad_token_id
-            self.bos_token_id = bos_token_id
-            self.eos_token_id = eos_token_id
+        self.pad_token_id = pad_token_id
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
             
             # 注意力机制参数
-            self.activation = activation  
-            self.use_autopoietic = use_autopoietic  
-            self.sr_ratio = sr_ratio      
-            self.init_tau = init_tau      
-            self.batch_first = batch_first 
+        self.activation = activation  
+        self.use_autopoietic = use_autopoietic  
+        self.sr_ratio = sr_ratio      
+        self.init_tau = init_tau      
+        self.batch_first = batch_first 
             
             # 训练稳定性参数
-            self.warmup_steps = warmup_steps      
-            self.weight_decay = weight_decay      
-            self.attention_dropout = attention_dropout  
-            self.layer_norm_eps = layer_norm_eps  
-            self.gradient_clip = gradient_clip    
+        self.warmup_steps = warmup_steps      
+        self.weight_decay = weight_decay      
+        self.attention_dropout = attention_dropout  
+        self.layer_norm_eps = layer_norm_eps  
+        self.gradient_clip = gradient_clip    
         
         def to_dict(self):
             """将配置转换为字典"""

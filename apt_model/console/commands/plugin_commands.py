@@ -123,7 +123,8 @@ def register_plugin_commands(console_core):
         print(f"Name:               {manifest.name}")
         print(f"Version:            {manifest.version}")
         print(f"Priority:           {manifest.priority} ({manifest.get_priority_class()})")
-        print(f"Status:             {'✓ ACTIVE' if handle.healthy else f'✗ {handle.disabled_reason or 'DISABLED'}'}")
+        status_msg = '✓ ACTIVE' if handle.healthy else f'✗ {handle.disabled_reason or "DISABLED"}'
+        print(f"Status:             {status_msg}")
         print(f"Blocking:           {'Yes' if manifest.blocking else 'No'}")
         print(f"Sandbox:            {'Yes' if manifest.sandbox else 'No'}")
         print(f"Description:        {manifest.description}")
