@@ -719,11 +719,12 @@ def create_webui():
             """
         )
 
-        # Create all tabs
-        create_training_monitor_tab()
-        create_gradient_monitor_tab()
-        create_checkpoint_manager_tab()
-        create_inference_tab()
+        # Create all tabs - wrapped in gr.Tabs() for Gradio 6.x compatibility
+        with gr.Tabs():
+            create_training_monitor_tab()
+            create_gradient_monitor_tab()
+            create_checkpoint_manager_tab()
+            create_inference_tab()
 
         gr.Markdown(
             """
