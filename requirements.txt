@@ -16,3 +16,4 @@ protobuf>=4.24
 scipy>=1.10
 scikit-learn>=1.4
 tokenizers>=0.19
+gradio>=4.0.0

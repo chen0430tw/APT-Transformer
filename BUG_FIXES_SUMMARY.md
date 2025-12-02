@@ -3,7 +3,7 @@
 **日期**: 2025-12-02
 **分支**: `claude/organize-docs-merge-to-main-01YXBos4zZPKuFYMzxXSMX1g`
 **检查文件数**: 257个Python文件
-**修复Bug数**: 6个关键错误
+**修复Bug数**: 7个关键错误
 
 ---
 
@@ -163,6 +163,58 @@ apx_group.add_argument('--model-version', type=str, default='1.0.0',
 
 ---
 
+### 7. Gradio版本兼容性错误 (app.py)
+
+**文件**: `apt_model/webui/app.py`
+**错误类型**: TypeError - Gradio版本不兼容
+**错误行**: 第679-683行
+
+**问题**:
+```python
+with gr.Blocks(
+    title="APT Model WebUI",
+    theme=gr.themes.Soft(),  # 旧版Gradio不支持theme参数
+    css=".gradio-container {max-width: 1400px !important}"
+) as app:
+```
+
+**错误信息**: `TypeError: BlockContext.__init__() got an unexpected keyword argument 'theme'`
+
+**根本原因**:
+1. `gradio` 未在 `requirements.txt` 中声明
+2. 用户安装了不支持 `theme` 参数的旧版Gradio
+3. `gr.themes` API仅在 Gradio 3.x+ 中可用
+
+**修复**:
+1. 在 `requirements.txt` 中添加 `gradio>=4.0.0`
+2. 修改 `create_webui()` 函数，兼容不同Gradio版本:
+
+```python
+# Handle theme parameter for different Gradio versions
+blocks_kwargs = {
+    "title": "APT Model WebUI",
+    "css": ".gradio-container {max-width: 1400px !important}"
+}
+
+# Add theme only if supported (Gradio >= 3.x)
+try:
+    if hasattr(gr, 'themes'):
+        blocks_kwargs["theme"] = gr.themes.Soft()
+except Exception:
+    pass  # Gracefully skip theme for older Gradio versions
+
+with gr.Blocks(**blocks_kwargs) as app:
+```
+
+**修复内容**:
+- ✅ 添加gradio依赖到requirements.txt
+- ✅ 使用条件检查确保向后兼容
+- ✅ 优雅降级：旧版本跳过theme，新版本使用Soft主题
+
+**提交**: `6d906c5 Fix WebUI Gradio compatibility`
+
+---
+
 ## 验证结果
 
 ### 语法检查
@@ -195,6 +247,8 @@ $ grep -r "<<<<<<< HEAD" --include="*.py" .
 ## 提交历史
 
 ```
+6d906c5 Fix WebUI Gradio compatibility - add gradio dependency and handle theme parameter gracefully
+3652437 Add comprehensive bug fixes summary documentation
 143740d Fix argparse --version conflict - rename APX version to --model-version
 191df68 Fix all Python syntax errors across the codebase
 54ba378 Fix merge conflict in parser.py - resolve APX and Config/Debug arguments
@@ -235,12 +289,15 @@ f111d53 Merge branch 'main' into claude/organize-docs-merge-to-main
 ✓ **所有Python语法错误已修复**
 ✓ **所有修复已提交并推送到远程分支**
 ✓ **代码库通过完整语法验证**
+✓ **WebUI依赖和兼容性已修复**
 ✓ **可以安全合并到main分支**
 
-修复的6个关键Bug涵盖:
+修复的7个关键Bug涵盖:
 - Git合并冲突
 - 缩进错误 (2处)
 - 字符串语法错误 (2处)
 - Argparse参数冲突
+- Gradio版本兼容性 + 缺失依赖
 
 所有257个Python文件现在都可以正常编译，无语法错误。
+WebUI现在支持Gradio 4.0+，并向后兼容旧版本。
