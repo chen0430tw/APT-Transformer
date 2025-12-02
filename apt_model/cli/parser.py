@@ -218,7 +218,6 @@ Examples:
                         help='Pseudo dataset size for training time estimation (default: 1000)')
 
     # ===============================
-<<<<<<< HEAD
     #  APX Model Packaging arguments
     # ===============================
     apx_group = parser.add_argument_group('APX Packaging Options')
@@ -255,7 +254,8 @@ Examples:
                           help='Disable automatic capability detection')
     apx_group.add_argument('--apx', type=str, default=None,
                           help='APX file path for info command')
-=======
+
+    # ===============================
     #  Config command arguments
     # ===============================
     config_group = parser.add_argument_group('Config Command Options')
@@ -279,7 +279,6 @@ Examples:
     debug_group.add_argument('--type', dest='debug_type', type=str,
                             choices=['io', 'model', 'data', 'tokenizer', 'all'],
                             help='Type of debug check to run (default: all)')
->>>>>>> origin/claude/debug-mode-refactor-011CUQ2B9rjmQ1iNFb5jqNNK
 
     return parser.parse_args()
 
