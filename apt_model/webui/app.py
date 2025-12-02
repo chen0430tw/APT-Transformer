@@ -658,6 +658,9 @@ def create_inference_tab():
                     )
                     export_txt_btn = gr.Button("💾 Export to TXT", size="sm")
 
+                # File download component
+                download_file = gr.File(label="Download TXT", visible=False)
+
         # Example inputs
         with gr.Row():
             gr.Examples(
@@ -816,7 +819,7 @@ def create_inference_tab():
 
         export_txt_btn.click(
             fn=export_to_txt,
-            outputs=[gr.File(label="Download TXT")]
+            outputs=[download_file]
         )
 
 
