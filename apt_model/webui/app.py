@@ -676,18 +676,28 @@ def create_webui():
     - test_trainer_complete.py:TestWebUIDataInterface
     - test_trainer_complete.py:TestAPIReadiness (inference interface)
     """
-    # Handle theme parameter for different Gradio versions
-    blocks_kwargs = {
-        "title": "APT Model WebUI",
-        "css": ".gradio-container {max-width: 1400px !important}"
-    }
+    # Handle different Gradio versions compatibility
+    import inspect
 
-    # Add theme only if supported (Gradio >= 3.x)
+    blocks_kwargs = {}
+
+    # Check which parameters gr.Blocks supports
     try:
-        if hasattr(gr, 'themes'):
+        blocks_sig = inspect.signature(gr.Blocks.__init__)
+        supported_params = set(blocks_sig.parameters.keys())
+
+        # Add parameters only if supported
+        if 'title' in supported_params:
+            blocks_kwargs["title"] = "APT Model WebUI"
+
+        if 'css' in supported_params:
+            blocks_kwargs["css"] = ".gradio-container {max-width: 1400px !important}"
+
+        if 'theme' in supported_params and hasattr(gr, 'themes'):
             blocks_kwargs["theme"] = gr.themes.Soft()
     except Exception:
-        pass  # Gracefully skip theme for older Gradio versions
+        # Fallback for very old Gradio versions - no extra parameters
+        pass
 
     with gr.Blocks(**blocks_kwargs) as app:
 
