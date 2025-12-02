@@ -1050,13 +1050,6 @@ def create_training_launcher_tab(webui_state):
             outputs=[log_output]
         )
 
-        # 自动刷新日志
-        log_output.change(
-            fn=update_logs,
-            outputs=[log_output],
-            every=1  # 每秒刷新
-        )
-
 
 
 def create_webui():
