@@ -197,19 +197,32 @@ trainer.train(model, optimizer)
 APT-Transformer/
 ├── apt_model/              # 核心代码包
 │   ├── config/             # 配置文件和设置管理
-│   ├── modeling/           # 模型定义（APT、Multimodal）
+│   ├── modeling/           # 模型定义（APT、Multimodal、KG）
 │   ├── training/           # 训练器、优化器、监控
 │   ├── generation/         # 文本生成和评估
-│   ├── plugins/            # 插件系统（26+插件）
+│   ├── plugins/            # 插件系统（30+插件）
+│   ├── rl/                 # 强化学习（RLHF/DPO/GRPO）
+│   ├── pretraining/        # 自监督预训练（对比学习/MLM）
+│   ├── core/               # 核心模块
+│   │   ├── graph_rag/      # GraphRAG知识图谱
+│   │   ├── training/       # SOSA训练监控
+│   │   └── api_providers.py # 统一API接口
 │   ├── api/                # REST API服务
 │   ├── webui/              # Gradio Web界面
 │   ├── cli/                # 命令行工具
 │   └── utils/              # 工具函数
-├── tests/                  # 单元测试和集成测试
+├── tests/                  # 单元测试和集成测试（20+测试）
 ├── scripts/                # 工具脚本
-├── examples/               # 使用示例
-├── docs/                   # 文档
-└── requirements.txt        # 依赖列表
+│   ├── launchers/          # GUI启动器
+│   └── archived/           # 归档文件
+├── examples/               # 使用示例（7+示例）
+│   ├── rl_examples/        # 强化学习示例
+│   ├── pretraining_examples/ # 预训练示例
+│   ├── graph_rag_examples/ # 知识图谱示例
+│   └── training_monitor_examples/ # 训练监控示例
+├── docs/                   # 完整文档（15+文档）
+├── requirements.txt        # 依赖列表
+└── Makefile               # 构建工具
 ```
 
 ---
