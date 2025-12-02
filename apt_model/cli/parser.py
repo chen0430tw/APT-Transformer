@@ -50,8 +50,12 @@ Examples:
   python -m apt_model chat --temperature 0.9   - Chat with higher temperature
   python -m apt_model train --language en_US   - Use English interface
   python -m apt_model evaluate                 - Evaluate model performance
-"""
+""",
+        add_help=True
     )
+
+    # Add version argument using argparse's built-in support
+    parser.add_argument('--version', action='version', version='APT Model 1.0.0')
 
     # Language related arguments
     parser.add_argument('--language', type=str, default="zh_CN",
@@ -210,8 +214,6 @@ Examples:
                             help='Show detailed log information')
     other_group.add_argument('--seed', type=int, default=42,
                             help='Random seed (default: 42)')
-    other_group.add_argument('--version', action='store_true',
-                            help='Show version information')
 
     # 用于训练时间估算的 dataset-size 参数
     parser.add_argument('--dataset-size', type=int, default=1000,
@@ -227,7 +229,7 @@ Examples:
                           help='Output APX file path')
     apx_group.add_argument('--name', type=str, default=None,
                           help='Model name for APX package')
-    apx_group.add_argument('--version', type=str, default='1.0.0',
+    apx_group.add_argument('--model-version', type=str, default='1.0.0',
                           help='Model version for APX package (default: 1.0.0)')
     apx_group.add_argument('--adapter', type=str, default='hf',
                           choices=['hf', 'stub'],
