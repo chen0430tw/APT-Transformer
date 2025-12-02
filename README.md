@@ -55,13 +55,15 @@ cd APT-Transformer
 # 安装依赖
 pip install -r requirements.txt
 
-# 安装PyTorch（如果未安装）
-pip install torch
+# 安装 apt_model 包（开发模式，重要！）
+pip install -e .
 
 # 验证安装
 python -c "import torch; print(torch.__version__)"
 python -m apt_model --help
 ```
+
+**重要提示：** 如果遇到 `No module named apt_model` 错误，请参考 [INSTALLATION.md](INSTALLATION.md) 获取详细的安装和故障排除指南。
 
 ### 5分钟上手
 

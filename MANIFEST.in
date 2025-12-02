@@ -1,0 +1,23 @@
+include README.md
+include LICENSE
+include requirements.txt
+include MANIFEST.in
+
+# Include all markdown documentation
+recursive-include docs *.md
+recursive-include apt_model *.md
+
+# Include data files
+recursive-include apt_model/data *.txt *.json
+
+# Include configuration files
+recursive-include apt_model *.json *.yaml *.yml
+
+# Exclude test and cache files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude .git*
+global-exclude .pytest_cache
+recursive-exclude tests *
