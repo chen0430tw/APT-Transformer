@@ -216,15 +216,39 @@ APT-Transformer/
 
 ## 文档
 
-### 📖 使用手册
-完整的使用指南，包含所有功能的详细说明：
-- [APT Model 使用手册](APT_MODEL_HANDBOOK.md)
+### 📖 文档中心
+**[完整文档中心](docs/README.md)** - 所有文档的导航和索引
 
-### 📚 专题文档
-- [Debug模式指南](docs/DEBUG_MODE_GUIDE.md)
+### 📚 核心文档
 
-### 🔧 开发文档
-- [插件开发指南](apt_model/plugins/README.md)
+#### 入门必读
+- **[APT Model 使用手册](docs/APT_MODEL_HANDBOOK.md)** - 完整的模型使用手册
+- **[启动器使用指南](docs/LAUNCHER_README.md)** - GUI启动器使用说明
+- **[微调指南](docs/FINE_TUNING_GUIDE.md)** - LoRA和全参数微调
+
+#### 知识蒸馏与迁移学习
+- **[知识蒸馏原理](docs/DISTILLATION_PRINCIPLE.md)** - 理论基础和损失函数设计
+- **[Teacher API指南](docs/TEACHER_API_GUIDE.md)** - 使用大模型API做教师模型
+- **[视觉蒸馏指南](docs/VISUAL_DISTILLATION_GUIDE.md)** - 多模态知识蒸馏
+- **[API Provider统一接口](docs/API_PROVIDERS_GUIDE.md)** - OpenAI/Anthropic/SiliconFlow等
+
+#### 强化学习与预训练
+- **[RL与预训练完整指南](docs/RL_PRETRAINING_GUIDE.md)** - RLHF/DPO/GRPO/对比学习/MLM
+- **[自监督学习能力检查](docs/SELF_SUPERVISED_RL_CHECK_REPORT.md)** - 现有能力分析
+
+#### 知识图谱与RAG
+- **[知识图谱使用指南](docs/KNOWLEDGE_GRAPH_GUIDE.md)** - GraphRAG集成和使用
+- **[GraphRAG模块文档](apt_model/core/graph_rag/)** - Hodge-Laplacian光谱分析、Graph Brain
+
+#### 训练优化
+- **[Optuna超参数优化](docs/OPTUNA_GUIDE.md)** - 自动超参数搜索
+- **[SOSA训练监控](apt_model/core/training/)** - 实时监控和异常检测
+
+#### 架构与集成
+- **[模块集成方案](docs/MODULE_INTEGRATION_PLAN.md)** - 插件架构和零侵入集成
+- **[插件开发指南](apt_model/cli/PLUGIN_GUIDE.md)** - 自定义插件开发
+
+### 🔧 API文档
 - [API文档](http://localhost:8000/docs) （启动API服务后访问）
 
 ---
