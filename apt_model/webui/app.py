@@ -14,6 +14,8 @@ Gradio-based web interface for:
 
 import json
 import time
+import subprocess
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import gradio as gr
@@ -27,6 +29,69 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 
+# Language translations
+TRANSLATIONS = {
+    'en': {
+        'title': '🚀 APT Model WebUI',
+        'description': 'Web interface for training monitoring, gradient visualization, checkpoint management, and inference testing.',
+        'features': '**Features**',
+        'training_monitor': 'Training monitoring with real-time loss curves',
+        'gradient_monitor': 'Gradient flow monitoring with anomaly detection',
+        'checkpoint_mgmt': 'Checkpoint management (list, load, download)',
+        'inference_test': 'Interactive inference testing',
+        'tab_training': 'Training Monitor',
+        'tab_gradient': 'Gradient Monitor',
+        'tab_checkpoint': 'Checkpoint Manager',
+        'tab_inference': 'Inference Testing',
+        'language': 'Language',
+        'checkpoint_dir': 'Checkpoint Directory',
+        'load_data': 'Load Training Data',
+        'status': 'Status',
+        'no_data': 'No data loaded',
+        'training_loss': 'Training Loss',
+        'learning_rate': 'Learning Rate',
+        'model_config': 'Model Configuration',
+        'checkpoint_info': 'Checkpoint Info',
+        'input_text': 'Input Text',
+        'output_text': 'Generated Text',
+        'generate': 'Generate',
+        'upload_txt': 'Upload TXT File',
+        'export_txt': 'Export to TXT',
+        'max_length': 'Max Length',
+        'temperature': 'Temperature',
+    },
+    'zh': {
+        'title': '🚀 APT模型 WebUI',
+        'description': '用于训练监控、梯度可视化、checkpoint管理和推理测试的Web界面',
+        'features': '**功能特性**',
+        'training_monitor': '📊 训练监控 - 实时loss和学习率曲线',
+        'gradient_monitor': '🔍 梯度监控 - 梯度流和异常检测',
+        'checkpoint_mgmt': '💾 Checkpoint管理 - 列表、加载、下载',
+        'inference_test': '✨ 推理测试 - 交互式文本生成',
+        'tab_training': '训练监控',
+        'tab_gradient': '梯度监控',
+        'tab_checkpoint': 'Checkpoint管理',
+        'tab_inference': '推理测试',
+        'language': '语言',
+        'checkpoint_dir': 'Checkpoint目录',
+        'load_data': '加载训练数据',
+        'status': '状态',
+        'no_data': '未加载数据',
+        'training_loss': '训练Loss',
+        'learning_rate': '学习率',
+        'model_config': '模型配置',
+        'checkpoint_info': 'Checkpoint信息',
+        'input_text': '输入文本',
+        'output_text': '生成文本',
+        'generate': '生成',
+        'upload_txt': '上传TXT文件',
+        'export_txt': '导出为TXT',
+        'max_length': '最大长度',
+        'temperature': '温度参数',
+    }
+}
+
+
 class WebUIState:
     """Shared state for WebUI application"""
 
@@ -37,6 +102,10 @@ class WebUIState:
         self.gradient_monitor = None
         self.checkpoint_dir = None
         self.training_active = False
+        self.language = 'zh'  # Default to Chinese
+        self.last_generated_text = ""  # For txt export
+        self.training_process = None  # Training subprocess
+        self.training_logs = []  # Training logs buffer
 
     def load_model_from_checkpoint(self, checkpoint_path: Path):
         """Load model and tokenizer from checkpoint"""
@@ -130,27 +199,15 @@ def create_training_monitor_tab():
 
         with gr.Row():
             with gr.Column():
-                # Loss curve
-                loss_plot = gr.LinePlot(
-                    x="step",
-                    y="loss",
-                    title="Training Loss",
-                    x_title="Step",
-                    y_title="Loss",
-                    height=300,
-                    width=500
+                # Loss curve - using Plot for Gradio 6.x compatibility
+                loss_plot = gr.Plot(
+                    label="Training Loss"
                 )
 
             with gr.Column():
-                # Learning rate curve
-                lr_plot = gr.LinePlot(
-                    x="step",
-                    y="learning_rate",
-                    title="Learning Rate",
-                    x_title="Step",
-                    y_title="LR",
-                    height=300,
-                    width=500
+                # Learning rate curve - using Plot for Gradio 6.x compatibility
+                lr_plot = gr.Plot(
+                    label="Learning Rate"
                 )
 
         with gr.Row():
@@ -216,17 +273,33 @@ def create_training_monitor_tab():
                 else:
                     steps = list(range(len(train_losses)))
 
-                # Prepare loss plot data
-                loss_data = {
-                    "step": steps,
-                    "loss": train_losses
-                }
+                # Prepare loss plot (Plotly figure for Gradio 6.x)
+                try:
+                    import plotly.graph_objects as go
+                    loss_fig = go.Figure()
+                    loss_fig.add_trace(go.Scatter(x=steps, y=train_losses, mode='lines', name='Loss'))
+                    loss_fig.update_layout(
+                        title="Training Loss",
+                        xaxis_title="Step",
+                        yaxis_title="Loss",
+                        height=300
+                    )
+                except ImportError:
+                    # Fallback if plotly not available
+                    loss_fig = None
 
-                # Prepare LR plot data
-                lr_data = {
-                    "step": steps,
-                    "learning_rate": lr_history
-                }
+                # Prepare LR plot (Plotly figure for Gradio 6.x)
+                try:
+                    lr_fig = go.Figure()
+                    lr_fig.add_trace(go.Scatter(x=steps, y=lr_history, mode='lines', name='LR'))
+                    lr_fig.update_layout(
+                        title="Learning Rate",
+                        xaxis_title="Step",
+                        yaxis_title="Learning Rate",
+                        height=300
+                    )
+                except:
+                    lr_fig = None
 
                 # Model config
                 config = checkpoint.get('config', {})
@@ -246,8 +319,8 @@ def create_training_monitor_tab():
                 }
 
                 return (
-                    loss_data,
-                    lr_data,
+                    loss_fig,
+                    lr_fig,
                     model_config,
                     ckpt_info,
                     f"✅ Loaded data from {latest_ckpt.name}"
@@ -298,16 +371,9 @@ def create_gradient_monitor_tab():
         )
 
         with gr.Row():
-            # Gradient timeline plot
-            gradient_timeline = gr.LinePlot(
-                x="step",
-                y="norm",
-                color="layer",
-                title="Gradient Norms Timeline",
-                x_title="Training Step",
-                y_title="Gradient Norm",
-                height=400,
-                width=800
+            # Gradient timeline plot - using Plot for Gradio 6.x compatibility
+            gradient_timeline = gr.Plot(
+                label="Gradient Norms Timeline"
             )
 
         with gr.Row():
@@ -362,8 +428,35 @@ def create_gradient_monitor_tab():
 
                 total_steps = webui_data.get('total_steps', 0)
 
+                # Convert to Plotly figure for Gradio 6.x
+                try:
+                    import plotly.graph_objects as go
+                    import pandas as pd
+
+                    df = pd.DataFrame(plot_data)
+                    gradient_fig = go.Figure()
+
+                    # Add a line for each layer
+                    for layer in df['layer'].unique():
+                        layer_df = df[df['layer'] == layer]
+                        gradient_fig.add_trace(go.Scatter(
+                            x=layer_df['step'],
+                            y=layer_df['norm'],
+                            mode='lines',
+                            name=layer
+                        ))
+
+                    gradient_fig.update_layout(
+                        title="Gradient Norms Timeline",
+                        xaxis_title="Training Step",
+                        yaxis_title="Gradient Norm",
+                        height=400
+                    )
+                except Exception:
+                    gradient_fig = None
+
                 return (
-                    plot_data,
+                    gradient_fig,
                     layer_stats,
                     anomaly_counts,
                     f"✅ Loaded gradient data: {total_steps} steps, {len(layer_stats)} layers"
@@ -560,6 +653,18 @@ def create_inference_tab():
                     value={}
                 )
 
+                # TXT file support
+                with gr.Row():
+                    upload_txt_btn = gr.UploadButton(
+                        label="📄 Upload TXT File",
+                        file_types=[".txt"],
+                        size="sm"
+                    )
+                    export_txt_btn = gr.Button("💾 Export to TXT", size="sm")
+
+                # File download component
+                download_file = gr.File(label="Download TXT", visible=False)
+
         # Example inputs
         with gr.Row():
             gr.Examples(
@@ -660,11 +765,291 @@ def create_inference_tab():
                     {"error": str(e)}
                 )
 
+        def upload_txt_file(file):
+            """Load text from uploaded txt file"""
+            if file is None:
+                return ""
+            try:
+                with open(file.name, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return content
+            except Exception as e:
+                return f"❌ Error reading file: {str(e)}"
+
+        def export_to_txt():
+            """Export generated text to txt file"""
+            if not webui_state.last_generated_text:
+                return None
+
+            try:
+                import tempfile
+                # Create temporary file
+                tmp_file = tempfile.NamedTemporaryFile(
+                    mode='w',
+                    encoding='utf-8',
+                    suffix='.txt',
+                    delete=False
+                )
+                tmp_file.write(webui_state.last_generated_text)
+                tmp_file.close()
+                return tmp_file.name
+            except Exception as e:
+                print(f"Export error: {str(e)}")
+                return None
+
+        def run_inference_and_save(
+            text: str,
+            max_len: int,
+            temp: float,
+            beams: int,
+            sample: bool
+        ):
+            """Run inference and save result for export"""
+            result_text, result_info = run_inference(text, max_len, temp, beams, sample)
+            webui_state.last_generated_text = result_text
+            return result_text, result_info
+
         generate_btn.click(
-            fn=run_inference,
+            fn=run_inference_and_save,
             inputs=[input_text, max_length, temperature, num_beams, do_sample],
             outputs=[output_text, generation_info]
         )
+
+        upload_txt_btn.upload(
+            fn=upload_txt_file,
+            inputs=[upload_txt_btn],
+            outputs=[input_text]
+        )
+
+        export_txt_btn.click(
+            fn=export_to_txt,
+            outputs=[download_file]
+        )
+
+
+def create_training_launcher_tab(webui_state):
+    """
+    创建训练启动标签页
+
+    功能:
+    - 上传训练数据 (txt/json)
+    - 配置训练参数
+    - 启动/停止训练
+    - 实时显示训练日志
+    """
+    with gr.Tab("🚀 训练启动"):
+        gr.Markdown("## 训练配置与启动")
+
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### 📁 训练数据")
+
+                # 数据文件上传
+                train_data_file = gr.File(
+                    label="上传训练数据 (txt/json)",
+                    file_types=[".txt", ".json"],
+                    file_count="single"
+                )
+
+                val_data_file = gr.File(
+                    label="上传验证数据 (可选)",
+                    file_types=[".txt", ".json"],
+                    file_count="single"
+                )
+
+                gr.Markdown("### ⚙️ 训练参数")
+
+                with gr.Row():
+                    epochs = gr.Number(
+                        label="训练轮数 (Epochs)",
+                        value=10,
+                        minimum=1,
+                        maximum=1000
+                    )
+                    batch_size = gr.Number(
+                        label="批次大小 (Batch Size)",
+                        value=32,
+                        minimum=1,
+                        maximum=512
+                    )
+
+                with gr.Row():
+                    learning_rate = gr.Number(
+                        label="学习率 (Learning Rate)",
+                        value=0.001,
+                        minimum=0.00001,
+                        maximum=0.1
+                    )
+                    max_length = gr.Number(
+                        label="最大序列长度",
+                        value=512,
+                        minimum=128,
+                        maximum=2048
+                    )
+
+                save_steps = gr.Number(
+                    label="保存间隔 (每N步保存一次)",
+                    value=1000,
+                    minimum=100,
+                    maximum=10000
+                )
+
+                output_dir = gr.Textbox(
+                    label="输出目录",
+                    value="./output",
+                    placeholder="/path/to/output"
+                )
+
+                gr.Markdown("### 🎯 控制")
+
+                with gr.Row():
+                    start_btn = gr.Button("▶️ 开始训练", variant="primary", size="lg")
+                    stop_btn = gr.Button("⏹️ 停止训练", variant="stop", size="lg")
+
+            with gr.Column():
+                gr.Markdown("### 📊 训练状态")
+
+                training_status = gr.Textbox(
+                    label="当前状态",
+                    value="⭕ 就绪",
+                    interactive=False
+                )
+
+                progress_bar = gr.Textbox(
+                    label="进度",
+                    value="0/0 epochs (0.0%)",
+                    interactive=False
+                )
+
+                gr.Markdown("### 💻 训练日志（实时）")
+
+                log_output = gr.Textbox(
+                    label="终端输出",
+                    lines=20,
+                    interactive=False,
+                    max_lines=1000,
+                    autoscroll=True
+                )
+
+                clear_logs_btn = gr.Button("🗑️ 清空日志", size="sm")
+
+        # ============ 事件处理函数 ============
+
+        def start_training(
+            train_file,
+            val_file,
+            n_epochs,
+            batch_sz,
+            lr,
+            max_len,
+            save_step,
+            out_dir
+        ):
+            """启动训练"""
+            if webui_state.training_active:
+                return "⚠️ 训练已在进行中", "", "训练已在运行中\n"
+
+            if train_file is None:
+                return "❌ 错误：请上传训练数据", "", "错误：未上传训练数据\n"
+
+            try:
+                # 构建训练命令
+                cmd = [
+                    "python", "-m", "apt_model.training.train",
+                    "--train_file", train_file.name,
+                    "--epochs", str(int(n_epochs)),
+                    "--batch_size", str(int(batch_sz)),
+                    "--learning_rate", str(lr),
+                    "--max_length", str(int(max_len)),
+                    "--save_steps", str(int(save_step)),
+                    "--output_dir", out_dir
+                ]
+
+                if val_file is not None:
+                    cmd.extend(["--val_file", val_file.name])
+
+                # 启动训练进程
+                webui_state.training_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+
+                webui_state.training_active = True
+                webui_state.training_logs = []
+
+                # 启动日志读取线程
+                def read_logs():
+                    for line in webui_state.training_process.stdout:
+                        webui_state.training_logs.append(line)
+
+                log_thread = threading.Thread(target=read_logs, daemon=True)
+                log_thread.start()
+
+                return (
+                    "✅ 训练已启动",
+                    f"0/{int(n_epochs)} epochs (0.0%)",
+                    f"训练启动命令: {' '.join(cmd)}\n\n正在初始化...\n"
+                )
+
+            except Exception as e:
+                webui_state.training_active = False
+                return f"❌ 启动失败: {str(e)}", "", f"错误: {str(e)}\n"
+
+        def stop_training():
+            """停止训练"""
+            if not webui_state.training_active:
+                return "⭕ 就绪", "没有正在运行的训练", ""
+
+            try:
+                if webui_state.training_process:
+                    webui_state.training_process.terminate()
+                    webui_state.training_process.wait(timeout=5)
+                    webui_state.training_active = False
+                    return "⏹️ 已停止", "训练已终止", "训练已手动停止\n"
+            except Exception as e:
+                return "⚠️ 停止失败", f"错误: {str(e)}", f"停止失败: {str(e)}\n"
+
+        def update_logs():
+            """更新日志显示"""
+            if webui_state.training_logs:
+                return "\n".join(webui_state.training_logs[-100:])  # 最后100行
+            return ""
+
+        def clear_logs():
+            """清空日志"""
+            webui_state.training_logs = []
+            return ""
+
+        # ============ 事件绑定 ============
+
+        start_btn.click(
+            fn=start_training,
+            inputs=[
+                train_data_file,
+                val_data_file,
+                epochs,
+                batch_size,
+                learning_rate,
+                max_length,
+                save_steps,
+                output_dir
+            ],
+            outputs=[training_status, progress_bar, log_output]
+        )
+
+        stop_btn.click(
+            fn=stop_training,
+            outputs=[training_status, progress_bar, log_output]
+        )
+
+        clear_logs_btn.click(
+            fn=clear_logs,
+            outputs=[log_output]
+        )
+
 
 
 def create_webui():
@@ -676,40 +1061,90 @@ def create_webui():
     - test_trainer_complete.py:TestWebUIDataInterface
     - test_trainer_complete.py:TestAPIReadiness (inference interface)
     """
-    # Handle theme parameter for different Gradio versions
-    blocks_kwargs = {
-        "title": "APT Model WebUI",
-        "css": ".gradio-container {max-width: 1400px !important}"
-    }
+    # Handle different Gradio versions compatibility
+    import inspect
 
-    # Add theme only if supported (Gradio >= 3.x)
+    blocks_kwargs = {}
+
+    # Check which parameters gr.Blocks supports
     try:
-        if hasattr(gr, 'themes'):
+        blocks_sig = inspect.signature(gr.Blocks.__init__)
+        supported_params = set(blocks_sig.parameters.keys())
+
+        # Add parameters only if supported
+        if 'title' in supported_params:
+            blocks_kwargs["title"] = "APT Model WebUI"
+
+        if 'css' in supported_params:
+            blocks_kwargs["css"] = ".gradio-container {max-width: 1400px !important}"
+
+        if 'theme' in supported_params and hasattr(gr, 'themes'):
             blocks_kwargs["theme"] = gr.themes.Soft()
     except Exception:
-        pass  # Gracefully skip theme for older Gradio versions
+        # Fallback for very old Gradio versions - no extra parameters
+        pass
 
     with gr.Blocks(**blocks_kwargs) as app:
 
+        # Language selector
+        with gr.Row():
+            with gr.Column(scale=4):
+                gr.Markdown(f"# {TRANSLATIONS[webui_state.language]['title']}")
+            with gr.Column(scale=1):
+                language_selector = gr.Radio(
+                    choices=["中文 (zh)", "English (en)"],
+                    value="中文 (zh)" if webui_state.language == 'zh' else "English (en)",
+                    label="🌐 Language / 语言"
+                )
+
+        lang = webui_state.language
         gr.Markdown(
-            """
-            # 🚀 APT Model WebUI
+            f"""
+            {TRANSLATIONS[lang]['description']}
 
-            Web interface for training monitoring, gradient visualization, checkpoint management, and inference testing.
+            {TRANSLATIONS[lang]['features']}:
+            - {TRANSLATIONS[lang]['training_monitor']}
+            - {TRANSLATIONS[lang]['gradient_monitor']}
+            - {TRANSLATIONS[lang]['checkpoint_mgmt']}
+            - {TRANSLATIONS[lang]['inference_test']}
 
-            **Features**:
-            - 📊 Training monitoring with real-time loss curves
-            - 🔍 Gradient flow monitoring with anomaly detection
-            - 💾 Checkpoint management (list, load, download)
-            - ✨ Interactive inference testing
+            **提示 / Tip**: 切换语言后请刷新页面 / Refresh page after changing language
             """
         )
 
-        # Create all tabs
-        create_training_monitor_tab()
-        create_gradient_monitor_tab()
-        create_checkpoint_manager_tab()
-        create_inference_tab()
+        def change_language(lang_choice):
+            """Change interface language"""
+            webui_state.language = 'zh' if lang_choice.startswith('中文') else 'en'
+            msg = f"⚠️ 语言已设置为 {lang_choice}\n\n" \
+                  f"由于Gradio限制，需要**重启WebUI**才能生效：\n" \
+                  f"1. 按 Ctrl+C 停止服务\n" \
+                  f"2. 重新运行: python -m apt_model.webui.app\n\n" \
+                  f"Language set to {lang_choice}\n" \
+                  f"Due to Gradio limitations, please **restart the WebUI**:\n" \
+                  f"1. Press Ctrl+C to stop\n" \
+                  f"2. Run again: python -m apt_model.webui.app"
+            return msg
+
+        lang_status = gr.Textbox(
+            label="⚙️ 语言切换说明 / Language Switch Info",
+            value="",
+            visible=True,
+            interactive=False,
+            lines=6
+        )
+        language_selector.change(
+            fn=change_language,
+            inputs=[language_selector],
+            outputs=[lang_status]
+        )
+
+        # Create all tabs - wrapped in gr.Tabs() for Gradio 6.x compatibility
+        with gr.Tabs():
+            create_training_launcher_tab(webui_state)  # 训练启动 - 新增！
+            create_training_monitor_tab()
+            create_gradient_monitor_tab()
+            create_checkpoint_manager_tab()
+            create_inference_tab()
 
         gr.Markdown(
             """
