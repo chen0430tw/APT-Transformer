@@ -242,13 +242,14 @@ def create_small_hlbd_config(vocab_size):
 
 from tqdm import tqdm # 确保文件开头导入了 tqdm
 
-def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False):
-    """训练一个epoch (优化动画显示)"""
+def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4): # <--- 【关键修改 1】接收 accumulation_steps
+    """训练一个epoch (使用梯度累积)"""
     model.train()
     total_loss = 0
     total_steps = 0
-
-    # 【视觉修复】强制使用更快的刷新频率 (mininterval=0.1) 和 ASCII 字符 (ascii=True)
+    
+    ACCUMULATION_STEPS = accumulation_steps # 【关键修正】在函数体内定义 ACCUMULATION_STEPS
+    
     progress_bar = tqdm(
         dataloader, 
         desc="Training", 
@@ -257,11 +258,11 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False):
         ascii=True
     )
 
-    for src_ids, tgt_ids in progress_bar:
+    # 【关键修改 2】使用 enumerate 来获取批次索引 i
+    for i, (src_ids, tgt_ids) in enumerate(progress_bar): 
+        
         src_ids = src_ids.to(device)
         tgt_ids = tgt_ids.to(device)
-
-        optimizer.zero_grad()
 
         # 前向传播
         output = model(src_ids, tgt_ids[:, :-1])
@@ -272,22 +273,37 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False):
             tgt_ids[:, 1:].reshape(-1)
         )
 
-        # 反向传播
+        # 损失归一化 (Loss Scaling)
+        loss = loss / ACCUMULATION_STEPS 
+
+        # 反向传播 (不清除梯度)
         loss.backward()
 
-        # 梯度裁剪
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-        # 优化
-        optimizer.step()
-
-        total_loss += loss.item()
+        # 条件优化和清零 (每 N 步执行一次)
+        if (i + 1) % ACCUMULATION_STEPS == 0:
+            # 权重更新 (即使 DBC 激活，保留裁剪也无害)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad() # 清除累积的梯度
+            
+        total_loss += loss.item() * ACCUMULATION_STEPS # 恢复实际 Loss
         total_steps += 1
         
         # 实时更新进度条上的 Loss
-        progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+        progress_bar.set_postfix({'loss': f'{loss.item() * ACCUMULATION_STEPS:.4f}'})
+        
+    # 【最后一步清理】处理剩余的累积梯度 (i 需要在循环外可用)
+    # Note: 确保 i 在循环外能访问到，尽管这不是标准 Python 做法
+    try:
+        if (i + 1) % ACCUMULATION_STEPS != 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+    except NameError:
+         # 如果 i 没定义 (比如 dataloader 是空的)，则忽略清理
+         pass 
 
-    return total_loss / total_steps if total_steps > 0 else 0
+    return (total_loss / total_steps) if total_steps > 0 else 0
 
 
 def generate_text(model, tokenizer, input_text, device, max_length=50, repetition_penalty=1.5):
@@ -349,6 +365,8 @@ def main():
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
     print(f"PyTorch版本: {torch.__version__}")
 
+    ACCUMULATION_STEPS = 8  # 模拟 4 * 8 = 32 的有效批次大小
+
     # 自动检测：有显卡就用显卡，没有才用 CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"设备: {device}")
@@ -357,7 +375,7 @@ def main():
     current_dir = os.path.dirname(os.path.abspath(__file__)) # 获取当前脚本所在目录 (tests)
     project_root = os.path.dirname(current_dir)              # 获取项目根目录 (APT-Transformer)
     data_path = os.path.join(project_root, 'apt_model', '分层语言启蒙数据集.txt')
-    samples = load_hlbd_samples(data_path, max_samples=20)
+    samples = load_hlbd_samples(data_path, max_samples=None)
 
     # 顺便把下面那个 BERT 的路径也一起修了，不然等会还会报错
     bert_path = os.path.join(project_root, 'bert', 'bert-base-chinese')
@@ -389,6 +407,12 @@ def main():
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
     print(f"   训练批次数: {len(dataloader)}")
 
+    # 【新增验证代码：检查实际样本数】
+    actual_pairs = len(dataset)
+    print(f"--- 长度验证 ---")
+    print(f"模型实际看到的训练对数量: {actual_pairs} (应为 80 或更多)")
+    print(f"----------------")
+
     # 5. 创建模型
     print(f"\n🏗️ 创建APT模型...")
     config = create_small_hlbd_config(tokenizer.vocab_size)
@@ -399,7 +423,7 @@ def main():
     print(f"   配置: d_model={config.d_model}, layers={config.num_encoder_layers}")
 
     # 6. 创建优化器
-    optimizer = optim.Adam(model.parameters(), lr=5e-4)
+    optimizer = optim.Adam(model.parameters(), lr=5e-5)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
     # 7. 注册DBC hooks
@@ -416,7 +440,7 @@ def main():
     num_epochs = 500  # 只训练10个epoch
 
     for epoch in range(num_epochs):
-        loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True)
+        loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
         print(f"Epoch {epoch+1}/{num_epochs} - Loss: {loss:.4f}")
 
         # 每3个epoch测试一次
