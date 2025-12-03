@@ -955,7 +955,7 @@ def create_training_launcher_tab(webui_state):
             try:
                 # 构建训练命令
                 cmd = [
-                    "python", "-m", "apt_model.training.train",
+                    "python", "-u", "-m", "apt_model.training.train",
                     "--train_file", train_file.name,
                     "--epochs", str(int(n_epochs)),
                     "--batch_size", str(int(batch_sz)),
@@ -1238,7 +1238,6 @@ def launch_webui(
         show_error=True,
         auth=auth,
         quiet=False,
-        show_api=False
     )
 
 
