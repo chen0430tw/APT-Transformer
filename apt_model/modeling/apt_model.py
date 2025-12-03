@@ -121,8 +121,9 @@ class DBCDAC_Optimizer:
         
         # 维度平衡处理
         D_vec = self.compute_balance_vector(W)
-        D_inv = torch.diag(1.0 / D_vec)
-        W_norm = D_inv @ W
+        # D_inv = torch.diag(1.0 / D_vec)
+        # W_norm = D_inv @ W  <-- 原始代码 (OOM 凶手)
+        W_norm = (1.0 / D_vec).unsqueeze(1) * W
         
         # 低秩近似
         W_proj, _ = self.low_rank_approx(W_norm, self.rank_ratio_proj)
@@ -145,7 +146,7 @@ class DBCDAC_Optimizer:
             W_norm_stabilized = W_proj
         
         # 应用维度平衡恢复
-        W_stabilized = torch.diag(D_vec) @ W_norm_stabilized
+        W_stabilized = D_vec.unsqueeze(1) * W_norm_stabilized
         
         # 恢复原始数据类型
         W_stabilized = W_stabilized.to(original_dtype)
@@ -1356,7 +1357,7 @@ class APTModel(nn.Module):
                     temperature = max(float(temperature), 1e-5)
                     logits = logits / temperature
 
-                    banned_ids = [pad_token_id, eos_token_id, unk_token_id]
+                    banned_ids = [pad_token_id, unk_token_id]
                     vocab_size = logits.size(-1)
                     for banned_id in banned_ids:
                         if banned_id is None:
