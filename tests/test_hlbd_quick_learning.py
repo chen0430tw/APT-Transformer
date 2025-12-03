@@ -8,11 +8,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 import json
 from transformers import BertTokenizer
 
 # 添加路径
-sys.path.insert(0, '/home/user/APT-Transformer')
+sys.path.insert(0, 'APT-Transformer')
 
 from apt_model.modeling.apt_model import (
     APTModel,
@@ -239,13 +240,24 @@ def create_small_hlbd_config(vocab_size):
     return config
 
 
+from tqdm import tqdm # 确保文件开头导入了 tqdm
+
 def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False):
-    """训练一个epoch"""
+    """训练一个epoch (优化动画显示)"""
     model.train()
     total_loss = 0
     total_steps = 0
 
-    for src_ids, tgt_ids in dataloader:
+    # 【视觉修复】强制使用更快的刷新频率 (mininterval=0.1) 和 ASCII 字符 (ascii=True)
+    progress_bar = tqdm(
+        dataloader, 
+        desc="Training", 
+        leave=False, 
+        mininterval=0.1, 
+        ascii=True
+    )
+
+    for src_ids, tgt_ids in progress_bar:
         src_ids = src_ids.to(device)
         tgt_ids = tgt_ids.to(device)
 
@@ -271,6 +283,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False):
 
         total_loss += loss.item()
         total_steps += 1
+        
+        # 实时更新进度条上的 Loss
+        progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
 
     return total_loss / total_steps if total_steps > 0 else 0
 
@@ -282,8 +297,18 @@ def generate_text(model, tokenizer, input_text, device, max_length=50):
     # 编码输入
     input_ids = tokenizer.encode(input_text, return_tensors='pt').to(device)
 
+    # 【关键修复】获取正确的开始(BOS)和结束(EOS)标记
+    # BERT 分词器 bos_token_id 默认为 None，需要回退到 cls_token_id
+    bos_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else tokenizer.cls_token_id
+    # BERT 分词器 eos_token_id 默认为 None，需要回退到 sep_token_id
+    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else tokenizer.sep_token_id
+
+    # 再次检查，防止 bos_id 依然是 None (极少数情况)
+    if bos_id is None: bos_id = 101  # BERT 默认 CLS ID
+    if eos_id is None: eos_id = 102  # BERT 默认 SEP ID
+
     # 从BOS token开始
-    generated = torch.tensor([[tokenizer.bos_token_id]], device=device)
+    generated = torch.tensor([[bos_id]], device=device)
 
     with torch.no_grad():
         for _ in range(max_length):
@@ -298,8 +323,9 @@ def generate_text(model, tokenizer, input_text, device, max_length=50):
             generated = torch.cat([generated, next_token], dim=1)
 
             # 如果生成了EOS，停止
-            if next_token.item() == tokenizer.eos_token_id:
-                break
+            if next_token.item() == eos_id:
+                # break
+                pass
 
     # 解码
     generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
@@ -324,12 +350,18 @@ def main():
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
     print(f"PyTorch版本: {torch.__version__}")
 
-    device = torch.device('cpu')  # 使用CPU
+    # 自动检测：有显卡就用显卡，没有才用 CPU
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"设备: {device}")
 
     # 1. 加载HLBD数据
-    data_path = '/home/user/APT-Transformer/apt_model/分层语言启蒙数据集.txt'
+    current_dir = os.path.dirname(os.path.abspath(__file__)) # 获取当前脚本所在目录 (tests)
+    project_root = os.path.dirname(current_dir)              # 获取项目根目录 (APT-Transformer)
+    data_path = os.path.join(project_root, 'apt_model', '分层语言启蒙数据集.txt')
     samples = load_hlbd_samples(data_path, max_samples=20)
+
+    # 顺便把下面那个 BERT 的路径也一起修了，不然等会还会报错
+    bert_path = os.path.join(project_root, 'bert', 'bert-base-chinese')
 
     # 显示几个样本
     print(f"\n📝 样本示例:")
@@ -344,7 +376,12 @@ def main():
     # 3. 准备分词器
     print(f"\n🔧 准备分词器...")
     # 使用本地的bert-base-chinese tokenizer
-    tokenizer = BertTokenizer.from_pretrained('/home/user/APT-Transformer/bert/bert-base-chinese')
+    tokenizer = BertTokenizer.from_pretrained(
+        bert_path,
+        local_files_only=True,  # <-- 强制使用本地文件，禁止联网
+        vocab_file=os.path.join(bert_path, 'vocab.txt') # <-- 显式指定词表位置
+    ) # 使用上面计算好的路径
+    print(f"   使用的分词器: {type(tokenizer).__name__}")
     print(f"   词汇表大小: {tokenizer.vocab_size}")
 
     # 4. 创建数据集
@@ -368,8 +405,9 @@ def main():
 
     # 7. 注册DBC hooks
     print(f"\n⚡ 注册DBC-DAC加速...")
-    hooks = register_dbc_hooks(model)
-    print(f"   注册了 {len(hooks)} 个梯度稳定钩子")
+    #hooks = register_dbc_hooks(model)
+    hooks = [] # 保持 hooks 变量存在，防止后面报错
+    #print(f"   注册了 {len(hooks)} 个梯度稳定钩子")
 
     # 8. 训练模型
     print(f"\n" + "="*60)
