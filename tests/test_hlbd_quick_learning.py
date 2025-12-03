@@ -290,45 +290,41 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False):
     return total_loss / total_steps if total_steps > 0 else 0
 
 
-def generate_text(model, tokenizer, input_text, device, max_length=50):
-    """生成文本"""
+def generate_text(model, tokenizer, input_text, device, max_length=50, repetition_penalty=1.5):
+    """
+    生成文本 (已修复为调用模型内置的 generate 方法，激活所有高级参数)
+    """
     model.eval()
 
-    # 编码输入
-    input_ids = tokenizer.encode(input_text, return_tensors='pt').to(device)
-
-    # 【关键修复】获取正确的开始(BOS)和结束(EOS)标记
-    # BERT 分词器 bos_token_id 默认为 None，需要回退到 cls_token_id
+    # 1. 获取 BOS/PAD ID
     bos_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else tokenizer.cls_token_id
-    # BERT 分词器 eos_token_id 默认为 None，需要回退到 sep_token_id
-    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else tokenizer.sep_token_id
-
-    # 再次检查，防止 bos_id 依然是 None (极少数情况)
-    if bos_id is None: bos_id = 101  # BERT 默认 CLS ID
-    if eos_id is None: eos_id = 102  # BERT 默认 SEP ID
-
-    # 从BOS token开始
-    generated = torch.tensor([[bos_id]], device=device)
-
-    with torch.no_grad():
-        for _ in range(max_length):
-            # 前向传播
-            output = model(input_ids, generated)
-
-            # 获取下一个token
-            next_token_logits = output[:, -1, :]
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-
-            # 添加到生成序列
-            generated = torch.cat([generated, next_token], dim=1)
-
-            # 如果生成了EOS，停止
-            if next_token.item() == eos_id:
-                # break
-                pass
-
-    # 解码
-    generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
+    pad_id = tokenizer.pad_token_id
+    
+    # 2. 编码输入文本 (作为 Prompt)
+    # 编码时，不加特殊 tokens，只编码原始文本
+    input_encoding = tokenizer.encode(input_text, return_tensors='pt', add_special_tokens=False).to(device)
+    
+    # 3. 准备模型输入 input_ids = [BOS] + Prompt Tokens
+    bos_tensor = torch.tensor([[bos_id]], device=device)
+    # 将 BOS 标记和 Prompt 拼接成完整的输入序列
+    initial_ids = torch.cat([bos_tensor, input_encoding], dim=1)
+    
+    # 4. 调用 APTModel 自身的 generate 方法 (核心替换)
+    generated_ids = model.generate(
+        input_ids=initial_ids,
+        # max_length 必须加上初始 sequence 的长度
+        max_length=max_length + initial_ids.size(1), 
+        repetition_penalty=repetition_penalty,
+        do_sample=True, # 启用采样 (Top-K/Top-P)
+        num_beams=1, # 保持 beam search 数量 (注意，模型内部会忽略 num_beams > 1)
+        pad_token_id=pad_id 
+        # 完整的 Top-K/Top-P/Temperature 参数应该在 model.generate 内部配置
+    )
+    
+    # 5. 解码
+    # generated_ids[0] 是第一个 batch 的输出序列
+    generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+    
     return generated_text
 
 
@@ -338,8 +334,11 @@ def test_generation(model, tokenizer, test_cases, device):
     print("🗣️ 测试对话生成能力")
     print("="*60)
 
+    # 设定强力重复惩罚因子
+    REPETITION_FACTOR = 1.5
+
     for input_text, expected_concept in test_cases:
-        generated = generate_text(model, tokenizer, input_text, device)
+        generated = generate_text(model, tokenizer, input_text, device, repetition_penalty=REPETITION_FACTOR)
         print(f"\n输入: {input_text}")
         print(f"期望概念: {expected_concept}")
         print(f"生成: {generated}")
@@ -414,7 +413,7 @@ def main():
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 10  # 只训练10个epoch
+    num_epochs = 500  # 只训练10个epoch
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True)
