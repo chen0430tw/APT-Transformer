@@ -492,6 +492,8 @@ processed_data = plugin.process_pipeline(
 stats = plugin.get_statistics()
 ```
 
+> **注意**: 关于图脑RAG系统的知识图谱处理,请参考 [图脑训练指南](GRAPH_BRAIN_TRAINING_GUIDE.md)
+
 ---
 
 ## ✅ 文件加载与批处理
