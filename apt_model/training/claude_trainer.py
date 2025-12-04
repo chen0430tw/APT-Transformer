@@ -14,7 +14,7 @@ from tqdm import tqdm
 import os
 from datetime import datetime
 
-from apt_model.modeling.claude_unified_model import ClaudeUnifiedModel, create_claude_unified
+from apt_model.modeling.claude4_model import ClaudeUnifiedModel, create_claude_unified
 from apt_model.utils import get_device
 from apt_model.modeling.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,

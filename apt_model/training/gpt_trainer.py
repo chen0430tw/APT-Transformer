@@ -437,14 +437,24 @@ class GPT5Trainer(BaseGPTTrainer):
     def __init__(
         self,
         model,
-        optimizer,
+        tokenizer,
         device: str = 'cuda',
+        learning_rate: float = 3e-4,
+        weight_decay: float = 0.01,
+        warmup_steps: int = 100,
         max_grad_norm: float = 1.0,
         enable_streaming_retrieval: bool = False,
-        memory_bucket_size: int = 512,
-        **kwargs
+        memory_bucket_size: int = 512
     ):
-        super().__init__(model, optimizer, device, max_grad_norm, **kwargs)
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            warmup_steps=warmup_steps,
+            max_grad_norm=max_grad_norm
+        )
         self.enable_streaming_retrieval = enable_streaming_retrieval
         self.memory_bucket_size = memory_bucket_size
 
@@ -567,30 +577,51 @@ class GPT5Trainer(BaseGPTTrainer):
 
 
 def train_gpt5(
-    model,
-    train_dataloader,
-    val_dataloader=None,
-    num_epochs: int = 3,
-    learning_rate: float = 5e-5,
-    device: str = 'cuda',
-    save_path: str = './checkpoints/gpt5',
-    **kwargs
-) -> Dict[str, float]:
-    """Convenience function to train GPT-5 model"""
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    train_texts: List[str],
+    vocab_size: int = 32000,
+    d_model: int = 512,
+    n_heads: int = 8,
+    d_ff: int = 2048,
+    num_layers: int = 6,
+    epochs: int = 10,
+    batch_size: int = 8,
+    learning_rate: float = 3e-4,
+    save_path: str = "./gpt5_model",
+    device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
+    enable_streaming_retrieval: bool = False,
+    memory_bucket_size: int = 512
+):
+    """便捷函数：训练GPT-5模型"""
+    from apt_model.modeling.gpt5_model import GPT5Model
+    from transformers import GPT2Tokenizer
 
-    trainer = GPT5Trainer(
-        model=model,
-        optimizer=optimizer,
-        device=device,
-        **kwargs
+    # 初始化模型和tokenizer
+    model = GPT5Model(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        n_heads=n_heads,
+        d_ff=d_ff,
+        num_layers=num_layers
     )
 
-    final_metrics = trainer.train(
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
-        num_epochs=num_epochs,
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+
+    # 创建训练器
+    trainer = GPT5Trainer(
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        learning_rate=learning_rate,
+        enable_streaming_retrieval=enable_streaming_retrieval,
+        memory_bucket_size=memory_bucket_size
+    )
+
+    # 训练
+    history = trainer.train(
+        train_texts=train_texts,
+        epochs=epochs,
+        batch_size=batch_size,
         save_path=save_path
     )
 
-    return final_metrics
+    return model, tokenizer, history
