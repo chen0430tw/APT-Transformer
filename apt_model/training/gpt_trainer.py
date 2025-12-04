@@ -269,18 +269,32 @@ class BaseGPTTrainer:
 
 
 class GPT4oTrainer(BaseGPTTrainer):
-    """GPT-4o专用训练器"""
+    """GPT-4o专用训练器（支持多模态）"""
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
-        """GPT-4o训练步骤（支持多模态）"""
+        """GPT-4o训练步骤（支持文本+图像+音频多模态）"""
         self.model.train()
 
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
 
-        # GPT-4o支持多模态，但这里只用文本
+        # 多模态输入（可选）
+        image_feat = batch.get('image_feat')
+        audio_feat = batch.get('audio_feat')
+
+        if image_feat is not None:
+            image_feat = image_feat.to(self.device)
+        if audio_feat is not None:
+            audio_feat = audio_feat.to(self.device)
+
+        # GPT-4o 多模态前向传播
         self.optimizer.zero_grad()
-        logits = self.model(text_ids=input_ids, load_factor=1.0)
+        logits = self.model(
+            text_ids=input_ids,
+            image_feat=image_feat,
+            audio_feat=audio_feat,
+            load_factor=1.0
+        )
 
         loss = self.compute_loss(logits, labels)
         loss.backward()
@@ -298,19 +312,33 @@ class GPT4oTrainer(BaseGPTTrainer):
 
 
 class GPTo3Trainer(BaseGPTTrainer):
-    """GPTo3专用训练器（结构化推理）"""
+    """GPTo3专用训练器（结构化推理 + 多模态）"""
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
-        """GPTo3训练步骤（启用梯度计算）"""
+        """GPTo3训练步骤（启用梯度计算 + 多模态支持）"""
         self.model.train()
 
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
 
+        # 多模态输入（可选）
+        image_feat = batch.get('image_feat')
+        audio_feat = batch.get('audio_feat')
+
+        if image_feat is not None:
+            image_feat = image_feat.to(self.device)
+        if audio_feat is not None:
+            audio_feat = audio_feat.to(self.device)
+
         self.optimizer.zero_grad()
 
-        # GPTo3的forward现在支持梯度计算
-        logits = self.model(text_ids=input_ids, load_factor=1.0)
+        # GPTo3 多模态前向传播
+        logits = self.model(
+            text_ids=input_ids,
+            image_feat=image_feat,
+            audio_feat=audio_feat,
+            load_factor=1.0
+        )
 
         loss = self.compute_loss(logits, labels)
         loss.backward()
@@ -479,17 +507,28 @@ class GPT5Trainer(BaseGPTTrainer):
         return loss
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
-        """Training step for GPT-5"""
+        """Training step for GPT-5 (supports multimodal)"""
         self.model.train()
 
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
 
+        # Multimodal inputs (optional)
+        image_feat = batch.get('image_feat')
+        audio_feat = batch.get('audio_feat')
+
+        if image_feat is not None:
+            image_feat = image_feat.to(self.device)
+        if audio_feat is not None:
+            audio_feat = audio_feat.to(self.device)
+
         self.optimizer.zero_grad()
 
-        # GPT-5 forward pass with step_idx for streaming retrieval
+        # GPT-5 multimodal forward pass with step_idx for streaming retrieval
         logits, info = self.model.forward_step(
-            input_ids,
+            input_ids=input_ids,
+            image_feat=image_feat,
+            audio_feat=audio_feat,
             step_idx=self.step_count,
             schema_required=False
         )

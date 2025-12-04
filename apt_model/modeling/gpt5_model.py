@@ -193,6 +193,60 @@ class ToyEmbed(nn.Module):
         return self.tok(x_ids) + self.pos(pos)
 
 
+class MultimodalEmbed(nn.Module):
+    """Multimodal embedding layer for GPT-5 (text + image + audio)"""
+    def __init__(self, vocab_size: int, d_model: int, max_len: int = 4096,
+                 image_dim: int = 1024, audio_dim: int = 512):
+        super().__init__()
+        self.tok = nn.Embedding(vocab_size, d_model)
+        self.pos = nn.Embedding(max_len, d_model)
+        self.image_proj = nn.Linear(image_dim, d_model)
+        self.audio_proj = nn.Linear(audio_dim, d_model)
+        nn.init.normal_(self.tok.weight, std=0.02)
+        nn.init.normal_(self.pos.weight, std=0.02)
+        nn.init.normal_(self.image_proj.weight, std=0.02)
+        nn.init.normal_(self.audio_proj.weight, std=0.02)
+
+    def forward(self, x_ids: Optional[torch.Tensor] = None,
+                image_feat: Optional[torch.Tensor] = None,
+                audio_feat: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Args:
+            x_ids: [B, T] text token ids
+            image_feat: [B, D_img] image features
+            audio_feat: [B, D_aud] audio features
+        Returns:
+            embeddings: [B, T, D]
+        """
+        parts = []
+
+        if x_ids is not None:
+            B, T = x_ids.shape
+            pos = torch.arange(T, device=x_ids.device).unsqueeze(0).expand(B, T)
+            parts.append(self.tok(x_ids) + self.pos(pos))
+
+        if image_feat is not None:
+            img_emb = self.image_proj(image_feat)  # [B, D]
+            if img_emb.dim() == 2:
+                img_emb = img_emb.unsqueeze(1)  # [B, 1, D]
+            parts.append(img_emb)
+
+        if audio_feat is not None:
+            aud_emb = self.audio_proj(audio_feat)  # [B, D]
+            if aud_emb.dim() == 2:
+                aud_emb = aud_emb.unsqueeze(1)  # [B, 1, D]
+            parts.append(aud_emb)
+
+        if not parts:
+            raise ValueError("At least one modality (text/image/audio) must be provided")
+
+        if len(parts) == 1:
+            return parts[0]
+
+        # Concatenate along sequence dimension
+        return torch.cat(parts, dim=1)  # [B, T_total, D]
+
+
 # ======================= GPT-5 block ======================
 class GPT5Block(nn.Module):
     def __init__(self, d_model: int, num_skills: int = 64, d_route: int = 64,
@@ -225,9 +279,17 @@ class GPT5Block(nn.Module):
 class GPT5Model(nn.Module):
     def __init__(self, vocab_size: int = 32000, d_model: int = 512,
                  n_layers: int = 4, num_skills: int = 64,
-                 d_route: int = 64, top_k: int = 2, rank: int = 32):
+                 d_route: int = 64, top_k: int = 2, rank: int = 32,
+                 enable_multimodal: bool = False,
+                 image_dim: int = 1024, audio_dim: int = 512):
         super().__init__()
-        self.emb = ToyEmbed(vocab_size, d_model)
+        # Use multimodal embedding if enabled
+        if enable_multimodal:
+            self.emb = MultimodalEmbed(vocab_size, d_model, image_dim=image_dim, audio_dim=audio_dim)
+        else:
+            self.emb = ToyEmbed(vocab_size, d_model)
+        self.enable_multimodal = enable_multimodal
+
         self.blocks = nn.ModuleList([
             GPT5Block(d_model, num_skills, d_route, top_k, rank) for _ in range(n_layers)
         ])
@@ -245,10 +307,26 @@ class GPT5Model(nn.Module):
         self.memory = MemoryBucket(max_short=8)
 
     @torch.no_grad()
-    def forward_step(self, input_ids: torch.Tensor, step_idx: int = 0,
+    def forward_step(self, input_ids: Optional[torch.Tensor] = None,
+                     image_feat: Optional[torch.Tensor] = None,
+                     audio_feat: Optional[torch.Tensor] = None,
+                     step_idx: int = 0,
                      schema_required: bool = False) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """One incremental step; returns logits [B,T,V] and diagnostic info."""
-        h = self.emb(input_ids)
+        """One incremental step; returns logits [B,T,V] and diagnostic info.
+
+        Args:
+            input_ids: [B, T] text token ids (optional if image/audio provided)
+            image_feat: [B, D_img] image features (optional)
+            audio_feat: [B, D_aud] audio features (optional)
+            step_idx: current step index
+            schema_required: whether schema is required
+        """
+        if self.enable_multimodal:
+            h = self.emb(x_ids=input_ids, image_feat=image_feat, audio_feat=audio_feat)
+        else:
+            if input_ids is None:
+                raise ValueError("input_ids must be provided when multimodal is disabled")
+            h = self.emb(input_ids)
         for blk in self.blocks:
             h, _ = blk(h)
         h = self.norm(h)

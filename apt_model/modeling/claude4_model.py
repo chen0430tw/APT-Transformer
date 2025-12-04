@@ -297,7 +297,10 @@ class ClaudeUnifiedModel(nn.Module):
         dropout: float = 0.1,
         use_hhh_reflection: bool = True,
         use_graph_reflection: bool = False,
-        reflection_at_layers: Optional[List[int]] = None
+        reflection_at_layers: Optional[List[int]] = None,
+        enable_multimodal: bool = False,
+        image_dim: int = 1024,
+        audio_dim: int = 512
     ):
         super().__init__()
 
@@ -305,6 +308,7 @@ class ClaudeUnifiedModel(nn.Module):
         self.num_layers = num_layers
         self.use_hhh_reflection = use_hhh_reflection
         self.use_graph_reflection = use_graph_reflection
+        self.enable_multimodal = enable_multimodal
 
         # 默认在后半段层使用反思
         if reflection_at_layers is None:
@@ -314,6 +318,17 @@ class ClaudeUnifiedModel(nn.Module):
         # Embeddings
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_len, d_model))
+
+        # Multimodal projections (optional)
+        if enable_multimodal:
+            self.image_proj = nn.Linear(image_dim, d_model)
+            self.audio_proj = nn.Linear(audio_dim, d_model)
+            nn.init.normal_(self.image_proj.weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.audio_proj.weight, mean=0.0, std=0.02)
+            if self.image_proj.bias is not None:
+                nn.init.zeros_(self.image_proj.bias)
+            if self.audio_proj.bias is not None:
+                nn.init.zeros_(self.audio_proj.bias)
         self.dropout = nn.Dropout(dropout)
 
         # Transformer blocks
@@ -353,29 +368,62 @@ class ClaudeUnifiedModel(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,
+        input_ids: Optional[torch.Tensor] = None,
+        image_feat: Optional[torch.Tensor] = None,
+        audio_feat: Optional[torch.Tensor] = None,
         return_reflection: bool = False
     ) -> torch.Tensor | Tuple[torch.Tensor, Dict]:
         """
-        前向传播
+        前向传播（支持多模态）
 
         Args:
-            input_ids: [batch, seq_len]
+            input_ids: [batch, seq_len] 文本token IDs (可选)
+            image_feat: [batch, D_img] 图像特征 (可选)
+            audio_feat: [batch, D_aud] 音频特征 (可选)
             return_reflection: 是否返回反思信息
 
         Returns:
             logits 或 (logits, reflection_info)
         """
-        batch_size, seq_len = input_ids.shape
+        # 构建多模态嵌入
+        embeddings_list = []
 
-        # Embeddings
-        token_emb = self.token_embedding(input_ids)
-        pos_emb = self.pos_embedding[:, :seq_len, :]
-        x = self.dropout(token_emb + pos_emb)
+        if input_ids is not None:
+            batch_size, seq_len = input_ids.shape
+            # Text embeddings
+            text_emb = self.token_embedding(input_ids)
+            text_emb = text_emb + self.pos_embedding[:, :seq_len, :]
+            embeddings_list.append(text_emb)
+
+        if self.enable_multimodal and image_feat is not None:
+            # Image embeddings
+            img_emb = self.image_proj(image_feat)  # [B, D]
+            if img_emb.dim() == 2:
+                img_emb = img_emb.unsqueeze(1)  # [B, 1, D]
+            embeddings_list.append(img_emb)
+
+        if self.enable_multimodal and audio_feat is not None:
+            # Audio embeddings
+            aud_emb = self.audio_proj(audio_feat)  # [B, D]
+            if aud_emb.dim() == 2:
+                aud_emb = aud_emb.unsqueeze(1)  # [B, 1, D]
+            embeddings_list.append(aud_emb)
+
+        if not embeddings_list:
+            raise ValueError("At least one modality (text/image/audio) must be provided")
+
+        # Concatenate all modalities
+        if len(embeddings_list) == 1:
+            x = embeddings_list[0]
+        else:
+            x = torch.cat(embeddings_list, dim=1)  # [B, T_total, D]
+
+        batch_size, seq_len = x.size(0), x.size(1)
+        x = self.dropout(x)
 
         # 因果mask
         mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        mask = mask.to(input_ids.device)
+        mask = mask.to(x.device)
         mask = mask.masked_fill(mask == True, float('-inf'))
 
         # Transformer blocks with reflection

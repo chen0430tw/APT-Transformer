@@ -259,16 +259,30 @@ class ClaudeTrainer:
         return sum(losses) / len(losses)
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
-        """单步训练"""
+        """单步训练（支持多模态）"""
         input_ids = batch['input_ids'].to(self.device)
         batch_size, seq_len = input_ids.shape
+
+        # 多模态输入（可选）
+        image_feat = batch.get('image_feat')
+        audio_feat = batch.get('audio_feat')
+
+        if image_feat is not None:
+            image_feat = image_feat.to(self.device)
+        if audio_feat is not None:
+            audio_feat = audio_feat.to(self.device)
 
         # 准备输入和目标
         inputs = input_ids[:, :-1]
         targets = input_ids[:, 1:]
 
-        # 前向传播（带反思信息）
-        logits, reflection_info = self.model(inputs, return_reflection=True)
+        # 前向传播（带反思信息 + 多模态）
+        logits, reflection_info = self.model(
+            input_ids=inputs,
+            image_feat=image_feat,
+            audio_feat=audio_feat,
+            return_reflection=True
+        )
         vocab_size = logits.size(-1)
 
         # 1. 语言模型损失
