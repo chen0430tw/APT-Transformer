@@ -40,6 +40,15 @@
 - 🆓 免费层可用
 - 📚 [API 文档](https://brave.com/search/api/)
 
+### 6. **火山引擎 Volcengine** (DeepSeek 合作平台) 🇨🇳
+- 🔥 字节跳动旗下云服务平台
+- 🤝 DeepSeek 官方合作伙伴
+- 🌏 支持中文搜索优化
+- 💰 火山方舟平台提供 50 万免费 tokens
+- ⚡ 与 DeepSeek 模型深度集成
+- 🔍 支持 Web Search / News / Academic 多种搜索模式
+- 📚 [官方文档](https://www.volcengine.com/docs/82379/1756990) | [云搜索服务](https://www.volcengine.com/docs/6465/1175547)
+
 ---
 
 ## 🚀 快速开始
@@ -107,7 +116,48 @@ for result in response.results:
     print(f"相关性: {result.score:.3f}")
 ```
 
-### 3. 快速搜索函数
+### 3. 使用火山引擎 (DeepSeek 合作平台) 🇨🇳
+
+```python
+from apt_model.plugins.web_search_plugin import WebSearchPlugin
+
+# 需要火山引擎 API key
+# 获取方式: https://console.volcengine.com/ark (火山方舟平台)
+plugin = WebSearchPlugin(
+    provider='volcengine',
+    api_key='YOUR_VOLCENGINE_API_KEY',
+    endpoint_id='YOUR_ENDPOINT_ID'  # 可选，如果有推理接入点
+)
+
+# 搜索（火山引擎支持多种模式）
+response = plugin.search(
+    query="深度学习最新进展",  # 支持中文查询
+    max_results=5,
+    search_mode='web',        # 'web', 'news', 'academic'
+    region='cn',              # 'cn', 'global'
+    language='zh-CN',         # 'zh-CN', 'en-US'
+    safe_search='moderate'    # 'off', 'moderate', 'strict'
+)
+
+print(f"搜索: {response.query}")
+print(f"提供商: {response.provider} (火山引擎)")
+print(f"耗时: {response.search_time:.2f}s\n")
+
+for i, result in enumerate(response.results, 1):
+    print(f"{i}. {result.title}")
+    print(f"   {result.url}")
+    print(f"   {result.snippet[:80]}...")
+    if result.metadata.get('published_time'):
+        print(f"   发布时间: {result.metadata['published_time']}")
+```
+
+**获取火山引擎 API Key**:
+1. 访问 [火山方舟控制台](https://console.volcengine.com/ark)
+2. 注册并完成实名认证
+3. 在 API Key 管理页面创建新密钥
+4. 获得 50 万免费 tokens 额度
+
+### 4. 快速搜索函数
 
 ```python
 from apt_model.plugins.web_search_plugin import quick_search
@@ -117,6 +167,14 @@ results = quick_search("GPT models", provider='duckduckgo', max_results=3)
 
 for r in results:
     print(f"{r['title']} - {r['url']}")
+
+# 使用火山引擎
+results_cn = quick_search(
+    "人工智能",
+    provider='volcengine',
+    api_key='your_volcengine_key',
+    max_results=5
+)
 ```
 
 ---
@@ -364,6 +422,124 @@ for i, r in enumerate(results[:5], 1):
     print(f"   {r['url']}\n")
 ```
 
+### 示例 4: 火山引擎 + DeepSeek 联网搜索 🇨🇳
+
+```python
+from apt_model.plugins.web_search_plugin import WebSearchPlugin
+import requests
+
+class DeepSeekWithWebSearch:
+    """
+    DeepSeek + 火山引擎联网搜索集成
+
+    结合火山方舟平台的 DeepSeek 模型和 Web Search API
+    """
+
+    def __init__(self, api_key: str, model_endpoint: str = 'deepseek-v3'):
+        self.api_key = api_key
+        self.model_endpoint = model_endpoint
+
+        # 初始化火山引擎搜索
+        self.search = WebSearchPlugin(
+            provider='volcengine',
+            api_key=api_key
+        )
+
+        # 火山方舟 API 端点
+        self.ark_api = "https://ark.cn-beijing.volces.com/api/v3"
+
+    def search_and_answer(self, question: str, use_chinese: bool = True):
+        """使用联网搜索增强的 DeepSeek 回答问题"""
+
+        # 1. 使用火山引擎搜索相关信息
+        print(f"🔍 搜索: {question}")
+        search_response = self.search.search(
+            query=question,
+            max_results=5,
+            search_mode='web',
+            region='cn' if use_chinese else 'global',
+            language='zh-CN' if use_chinese else 'en-US'
+        )
+
+        # 2. 构建增强上下文
+        context = f"根据以下搜索结果回答问题：{question}\n\n搜索结果：\n"
+        for i, result in enumerate(search_response.results, 1):
+            context += f"{i}. {result.title}\n{result.snippet}\n来源: {result.url}\n\n"
+
+        # 3. 调用 DeepSeek 生成回答
+        print(f"🧠 使用 DeepSeek 分析...")
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model_endpoint,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你是一个专业的AI助手。基于提供的搜索结果，给出准确、全面的回答。请引用具体的来源。"
+                },
+                {
+                    "role": "user",
+                    "content": context
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1000
+        }
+
+        response = requests.post(
+            f"{self.ark_api}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            answer = response.json()['choices'][0]['message']['content']
+
+            return {
+                'question': question,
+                'answer': answer,
+                'sources': [
+                    {
+                        'title': r.title,
+                        'url': r.url,
+                        'snippet': r.snippet
+                    }
+                    for r in search_response.results
+                ],
+                'search_time': search_response.search_time
+            }
+        else:
+            raise Exception(f"DeepSeek API 错误: {response.status_code}")
+
+
+# 使用示例
+assistant = DeepSeekWithWebSearch(
+    api_key='YOUR_VOLCENGINE_API_KEY',
+    model_endpoint='deepseek-v3'
+)
+
+# 提问
+result = assistant.search_and_answer("2025年人工智能最新突破有哪些？")
+
+print(f"\n问题: {result['question']}")
+print(f"\n回答:\n{result['answer']}")
+print(f"\n参考来源 (搜索耗时 {result['search_time']:.2f}s):")
+for i, src in enumerate(result['sources'], 1):
+    print(f"{i}. {src['title']}")
+    print(f"   {src['url']}")
+    print(f"   {src['snippet'][:100]}...\n")
+```
+
+**优势**:
+- ✅ **中文优化**: 火山引擎对中文搜索有更好的支持
+- ✅ **深度集成**: DeepSeek 模型和搜索 API 在同一平台，延迟更低
+- ✅ **成本优惠**: 火山方舟提供 50 万免费 tokens
+- ✅ **区域优势**: 服务器在国内，访问速度更快
+
 ---
 
 ## 📊 性能对比 (2025)
@@ -375,6 +551,7 @@ for i, r in enumerate(results[:5], 1):
 | **DuckDuckGo** | ~2s | ⭐⭐⭐ | 免费 | 高 | 开发测试、隐私优先 |
 | **Serper** | ~2s | ⭐⭐⭐⭐⭐ | 按量计费 | 中 | Google 搜索结果 |
 | **Brave** | ~1.8s | ⭐⭐⭐⭐ | 免费层 | 高 | 独立索引、隐私优先 |
+| **Volcengine** 🇨🇳 | ~1.5s | ⭐⭐⭐⭐⭐ | 50万免费 | 中 | 中文搜索、DeepSeek集成 |
 
 ---
 

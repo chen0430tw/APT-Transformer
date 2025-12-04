@@ -9,6 +9,7 @@ AI Web Search Plugin
 - DuckDuckGo (免费, 隐私友好)
 - Serper.dev (Google SERP API)
 - Brave Search (隐私优先)
+- Volcengine (火山引擎, 字节跳动, DeepSeek 合作平台)
 
 基于 2025 年最新搜索技术栈。
 """
@@ -44,6 +45,7 @@ class SearchProvider(Enum):
     DUCKDUCKGO = "duckduckgo"
     SERPER = "serper"
     BRAVE = "brave"
+    VOLCENGINE = "volcengine"  # 火山引擎 (ByteDance)
 
 
 @dataclass
@@ -464,6 +466,106 @@ class BraveBackend(BaseSearchBackend):
             raise
 
 
+class VolcengineBackend(BaseSearchBackend):
+    """
+    火山引擎 Web Search API (Volcengine/ByteDance)
+
+    火山方舟平台的联网搜索服务，DeepSeek 合作平台。
+    - 字节跳动旗下云服务
+    - 支持中文搜索优化
+    - 与 DeepSeek 模型深度集成
+    - 提供云搜索和 Web Search API
+
+    文档: https://www.volcengine.com/docs/82379/1756990
+    """
+
+    def __init__(self, api_key: str, endpoint_id: Optional[str] = None, **kwargs):
+        super().__init__(api_key, **kwargs)
+        # 火山引擎 API 基础 URL
+        self.base_url = kwargs.get('base_url', 'https://ark.cn-beijing.volces.com')
+        self.api_version = kwargs.get('api_version', 'v3')
+        self.endpoint_id = endpoint_id or kwargs.get('endpoint_id')
+
+        # Web Search API endpoint
+        self.search_endpoint = f"{self.base_url}/api/{self.api_version}/web-search"
+
+    def search(self, query: str, max_results: int = 10, **kwargs) -> SearchResponse:
+        if not HAS_REQUESTS:
+            raise RuntimeError("requests library not installed")
+
+        start_time = time.time()
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            # 火山引擎搜索参数
+            payload = {
+                "query": query,
+                "max_results": max_results,
+                "search_mode": kwargs.get('search_mode', 'web'),  # 'web', 'news', 'academic'
+                "region": kwargs.get('region', 'cn'),  # 'cn', 'global'
+                "language": kwargs.get('language', 'zh-CN'),  # 'zh-CN', 'en-US'
+                "safe_search": kwargs.get('safe_search', 'moderate'),  # 'off', 'moderate', 'strict'
+            }
+
+            # 如果提供了 endpoint_id，添加到请求中
+            if self.endpoint_id:
+                payload['endpoint_id'] = self.endpoint_id
+
+            response = requests.post(
+                self.search_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=15
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            duration = time.time() - start_time
+
+            # 解析火山引擎返回的搜索结果
+            results = []
+
+            # 火山引擎可能返回不同格式，这里提供通用解析
+            search_results = data.get('data', {}).get('results', [])
+            if not search_results:
+                # 尝试备用格式
+                search_results = data.get('results', [])
+
+            for item in search_results[:max_results]:
+                results.append(SearchResult(
+                    title=item.get('title', ''),
+                    url=item.get('url', item.get('link', '')),
+                    snippet=item.get('snippet', item.get('content', item.get('abstract', ''))),
+                    score=float(item.get('relevance_score', item.get('score', 0.0))),
+                    metadata={
+                        'source': item.get('source', ''),
+                        'published_time': item.get('published_time', ''),
+                        'author': item.get('author', '')
+                    }
+                ))
+
+            self._update_stats(True, duration)
+
+            return SearchResponse(
+                query=query,
+                results=results,
+                total_results=data.get('total', len(results)),
+                search_time=duration,
+                provider='volcengine',
+                raw_response=data
+            )
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self._update_stats(False, duration)
+            logger.error(f"Volcengine search error: {e}")
+            raise
+
+
 class WebSearchPlugin:
     """
     统一的 Web 搜索插件接口
@@ -512,6 +614,7 @@ class WebSearchPlugin:
             SearchProvider.DUCKDUCKGO: DuckDuckGoBackend,
             SearchProvider.SERPER: SerperBackend,
             SearchProvider.BRAVE: BraveBackend,
+            SearchProvider.VOLCENGINE: VolcengineBackend,
         }
 
         backend_class = backend_map.get(provider)
