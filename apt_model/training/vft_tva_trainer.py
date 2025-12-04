@@ -14,6 +14,7 @@ from tqdm import tqdm
 import os
 
 from apt_model.modeling.vft_tva_model import VFTTVAModel, create_vft_tva_model
+from apt_model.training.training_guard import TrainingGuard, EarlyStopping
 
 
 class VFTTVADataset(Dataset):
@@ -79,12 +80,13 @@ def collate_fn(batch):
 
 class VFTTVATrainer:
     """
-    Trainer for VFT-TVA model (supports multimodal)
+    Trainer for VFT-TVA model (supports multimodal + training guard)
 
     Features:
     - Standard language modeling training
     - Tracks vein subspace statistics (eps, rank usage)
     - Supports multimodal inputs (image_feat, audio_feat)
+    - Training protection mechanisms
     """
 
     def __init__(
@@ -95,7 +97,13 @@ class VFTTVATrainer:
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
         warmup_steps: int = 100,
-        max_grad_norm: float = 1.0
+        max_grad_norm: float = 1.0,
+        # Training guard parameters
+        enable_guard: bool = True,
+        max_steps: Optional[int] = None,
+        max_time_hours: Optional[float] = None,
+        early_stopping_patience: Optional[int] = None,
+        guard_verbose: bool = True
     ):
         self.model = model.to(device)
         self.tokenizer = tokenizer
@@ -120,6 +128,26 @@ class VFTTVATrainer:
             'eps_frac': [],
             'rank_usage': []
         }
+
+        # Training guard
+        self.enable_guard = enable_guard
+        if enable_guard:
+            early_stopping = None
+            if early_stopping_patience is not None:
+                early_stopping = EarlyStopping(
+                    patience=early_stopping_patience,
+                    mode='min',
+                    verbose=guard_verbose
+                )
+
+            self.guard = TrainingGuard(
+                max_steps=max_steps,
+                max_time_hours=max_time_hours,
+                early_stopping=early_stopping,
+                verbose=guard_verbose
+            )
+        else:
+            self.guard = None
 
     def get_lr(self):
         """Learning rate warmup"""
@@ -209,7 +237,7 @@ class VFTTVATrainer:
         eval_interval: int = 1000
     ) -> Dict[str, List[float]]:
         """
-        Complete training loop
+        Complete training loop (with training guard)
 
         Args:
             train_texts: Training texts
@@ -246,6 +274,11 @@ class VFTTVATrainer:
         print(f"Vein Rank: {self.model.blocks[0].proj.rank}")
         print("=" * 80)
 
+        # Start training guard
+        if self.guard:
+            self.guard.start()
+
+        should_stop = False
         global_step = 0
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -262,11 +295,26 @@ class VFTTVATrainer:
                     'eps_frac': f"{metrics['eps_frac']:.2%}"
                 })
 
+                # Training guard check
+                if self.guard:
+                    if not self.guard.step(loss=metrics['loss'], model=self.model):
+                        should_stop = True
+                        break
+
                 # Periodic evaluation
                 if eval_texts and global_step % eval_interval == 0:
                     eval_loss = self.evaluate(eval_texts, batch_size, max_length)
                     history['eval_loss'].append(eval_loss)
                     print(f"\n[Step {global_step}] Eval Loss: {eval_loss:.4f}")
+
+                    # Early stopping check
+                    if self.guard:
+                        if not self.guard.validate(eval_loss):
+                            should_stop = True
+                            break
+
+            if should_stop:
+                break
 
             avg_loss = epoch_loss / len(train_loader)
             avg_eps = sum(self.stats['eps_mean'][-len(train_loader):]) / len(train_loader)
@@ -285,10 +333,21 @@ class VFTTVATrainer:
             if save_path and (epoch + 1) % 5 == 0:
                 self.save_checkpoint(save_path, epoch)
 
+        # Print training guard statistics
+        if self.guard:
+            stats = self.guard.get_stats()
+            print(f"\n{'='*80}")
+            print("训练保护统计:")
+            print(f"  总步数: {stats['total_steps']}")
+            print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
+            if stats['stopped']:
+                print(f"  停止原因: {stats['stop_reason']}")
+            print(f"{'='*80}\n")
+
         # Save final model
         if save_path:
             self.save_model(save_path)
-            print(f"\n✅ 模型已保存到: {save_path}")
+            print(f"✅ 模型已保存到: {save_path}")
 
         return history
 

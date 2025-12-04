@@ -12,6 +12,8 @@ from typing import Optional, Dict, Any, List
 from tqdm import tqdm
 import os
 
+from apt_model.training.training_guard import TrainingGuard, EarlyStopping
+
 
 class GPTDataset(Dataset):
     """GPT训练数据集"""
@@ -69,7 +71,7 @@ def collate_fn(batch):
 
 
 class BaseGPTTrainer:
-    """GPT模型基础训练器"""
+    """GPT模型基础训练器（支持训练保护）"""
 
     def __init__(
         self,
@@ -79,7 +81,13 @@ class BaseGPTTrainer:
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
         warmup_steps: int = 100,
-        max_grad_norm: float = 1.0
+        max_grad_norm: float = 1.0,
+        # Training guard parameters
+        enable_guard: bool = True,
+        max_steps: Optional[int] = None,
+        max_time_hours: Optional[float] = None,
+        early_stopping_patience: Optional[int] = None,
+        guard_verbose: bool = True
     ):
         self.model = model.to(device)
         self.tokenizer = tokenizer
@@ -97,6 +105,26 @@ class BaseGPTTrainer:
         # 学习率调度器
         self.warmup_steps = warmup_steps
         self.step_count = 0
+
+        # 训练保护
+        self.enable_guard = enable_guard
+        if enable_guard:
+            early_stopping = None
+            if early_stopping_patience is not None:
+                early_stopping = EarlyStopping(
+                    patience=early_stopping_patience,
+                    mode='min',
+                    verbose=guard_verbose
+                )
+
+            self.guard = TrainingGuard(
+                max_steps=max_steps,
+                max_time_hours=max_time_hours,
+                early_stopping=early_stopping,
+                verbose=guard_verbose
+            )
+        else:
+            self.guard = None
 
     def get_lr(self):
         """学习率预热"""
@@ -157,7 +185,7 @@ class BaseGPTTrainer:
         eval_texts: Optional[List[str]] = None,
         eval_interval: int = 1000
     ) -> Dict[str, List[float]]:
-        """完整训练流程"""
+        """完整训练流程（带训练保护）"""
 
         # 创建数据集
         train_dataset = GPTDataset(train_texts, self.tokenizer, max_length)
@@ -178,6 +206,11 @@ class BaseGPTTrainer:
         print(f"训练样本数: {len(train_texts)} | 词汇表大小: {getattr(self.tokenizer, 'vocab_size', 'Unknown')}")
         print("=" * 80)
 
+        # 启动训练保护
+        if self.guard:
+            self.guard.start()
+
+        should_stop = False
         global_step = 0
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -190,11 +223,26 @@ class BaseGPTTrainer:
 
                 progress_bar.set_postfix({'loss': f'{loss:.4f}'})
 
+                # 训练保护检查
+                if self.guard:
+                    if not self.guard.step(loss=loss, model=self.model):
+                        should_stop = True
+                        break
+
                 # 定期评估
                 if eval_texts and global_step % eval_interval == 0:
                     eval_loss = self.evaluate(eval_texts, batch_size, max_length)
                     history['eval_loss'].append(eval_loss)
                     print(f"\n[Step {global_step}] Eval Loss: {eval_loss:.4f}")
+
+                    # Early stopping 检查
+                    if self.guard:
+                        if not self.guard.validate(eval_loss):
+                            should_stop = True
+                            break
+
+            if should_stop:
+                break
 
             avg_loss = epoch_loss / len(train_loader)
             history['train_loss'].append(avg_loss)
@@ -204,10 +252,21 @@ class BaseGPTTrainer:
             if save_path and (epoch + 1) % 5 == 0:
                 self.save_checkpoint(save_path, epoch)
 
+        # 打印训练保护统计
+        if self.guard:
+            stats = self.guard.get_stats()
+            print(f"\n{'='*80}")
+            print("训练保护统计:")
+            print(f"  总步数: {stats['total_steps']}")
+            print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
+            if stats['stopped']:
+                print(f"  停止原因: {stats['stop_reason']}")
+            print(f"{'='*80}\n")
+
         # 保存最终模型
         if save_path:
             self.save_model(save_path)
-            print(f"\n✅ 模型已保存到: {save_path}")
+            print(f"✅ 模型已保存到: {save_path}")
 
         return history
 

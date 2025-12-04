@@ -20,6 +20,7 @@ from apt_model.modeling.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,
 )
+from apt_model.training.training_guard import TrainingGuard, EarlyStopping
 
 
 class ClaudeDataset(Dataset):
@@ -180,12 +181,13 @@ def get_claude_training_data() -> List[str]:
 
 class ClaudeTrainer:
     """
-    Claude统一模型训练器
+    Claude统一模型训练器（支持训练保护）
 
     支持：
     - HHH反思损失
     - 图论反思统计
     - 灵活的反思模式配置
+    - 训练保护机制
     """
 
     def __init__(
@@ -196,7 +198,13 @@ class ClaudeTrainer:
         learning_rate: float = 3e-4,
         lm_weight: float = 1.0,
         reflection_weight: float = 0.1,
-        hhh_target: float = 0.8
+        hhh_target: float = 0.8,
+        # Training guard parameters
+        enable_guard: bool = True,
+        max_steps: Optional[int] = None,
+        max_time_hours: Optional[float] = None,
+        early_stopping_patience: Optional[int] = None,
+        guard_verbose: bool = True
     ):
         self.model = model.to(device)
         self.tokenizer = tokenizer
@@ -214,6 +222,26 @@ class ClaudeTrainer:
         )
 
         self.step_count = 0
+
+        # 训练保护
+        self.enable_guard = enable_guard
+        if enable_guard:
+            early_stopping = None
+            if early_stopping_patience is not None:
+                early_stopping = EarlyStopping(
+                    patience=early_stopping_patience,
+                    mode='min',
+                    verbose=guard_verbose
+                )
+
+            self.guard = TrainingGuard(
+                max_steps=max_steps,
+                max_time_hours=max_time_hours,
+                early_stopping=early_stopping,
+                verbose=guard_verbose
+            )
+        else:
+            self.guard = None
 
     def compute_lm_loss(
         self,
@@ -329,10 +357,20 @@ class ClaudeTrainer:
         self,
         dataloader: DataLoader,
         epoch: int,
-        total_epochs: int
-    ) -> Dict[str, float]:
-        """训练一个epoch"""
+        total_epochs: int,
+        start_guard: bool = False
+    ) -> tuple[Dict[str, float], bool]:
+        """
+        训练一个epoch（带训练保护）
+
+        Returns:
+            (avg_losses, should_stop)
+        """
         self.model.train()
+
+        # 启动训练保护（如果是第一个epoch）
+        if start_guard and self.guard:
+            self.guard.start()
 
         total_losses = {
             'total': 0.0,
@@ -341,9 +379,16 @@ class ClaudeTrainer:
         }
 
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{total_epochs}")
+        should_stop = False
 
         for batch_idx, batch in enumerate(progress_bar):
             losses = self.train_step(batch)
+
+            # 训练保护检查
+            if self.guard:
+                if not self.guard.step(loss=losses['total'], model=self.model):
+                    should_stop = True
+                    break
 
             # 累积损失
             for key, value in losses.items():
@@ -365,10 +410,10 @@ class ClaudeTrainer:
             progress_bar.set_postfix(postfix)
 
         # 计算平均损失
-        num_batches = len(dataloader)
-        avg_losses = {k: v / num_batches for k, v in total_losses.items()}
+        num_batches = len(dataloader) if not should_stop else (batch_idx + 1)
+        avg_losses = {k: v / max(1, num_batches) for k, v in total_losses.items()}
 
-        return avg_losses
+        return avg_losses, should_stop
 
 
 def train_claude_unified(
@@ -380,10 +425,15 @@ def train_claude_unified(
     reflection_weight: float = 0.1,
     save_path: str = None,
     texts: Optional[List[str]] = None,
-    device: str = None
+    device: str = None,
+    # Training guard parameters
+    enable_guard: bool = True,
+    max_steps: Optional[int] = None,
+    max_time_hours: Optional[float] = None,
+    early_stopping_patience: Optional[int] = None
 ) -> Tuple[ClaudeUnifiedModel, any]:
     """
-    训练Claude统一模型
+    训练Claude统一模型（带训练保护）
 
     Args:
         model_size: 'small', 'base', 'large'
@@ -395,6 +445,10 @@ def train_claude_unified(
         save_path: 保存路径
         texts: 训练文本
         device: 设备
+        enable_guard: 启用训练保护
+        max_steps: 最大训练步数
+        max_time_hours: 最大训练时间（小时）
+        early_stopping_patience: Early stopping patience
 
     Returns:
         (model, tokenizer)
@@ -447,7 +501,11 @@ def train_claude_unified(
         tokenizer=tokenizer,
         device=device,
         learning_rate=learning_rate,
-        reflection_weight=reflection_weight
+        reflection_weight=reflection_weight,
+        enable_guard=enable_guard,
+        max_steps=max_steps,
+        max_time_hours=max_time_hours,
+        early_stopping_patience=early_stopping_patience
     )
 
     # 训练循环
@@ -456,7 +514,10 @@ def train_claude_unified(
     best_loss = float('inf')
 
     for epoch in range(epochs):
-        losses = trainer.train_epoch(dataloader, epoch, epochs)
+        # 第一个epoch启动guard
+        losses, should_stop = trainer.train_epoch(
+            dataloader, epoch, epochs, start_guard=(epoch == 0)
+        )
 
         # 打印epoch总结
         print(f"\nEpoch {epoch+1}/{epochs} 总结:")
@@ -478,8 +539,28 @@ def train_claude_unified(
             best_loss = losses['total']
             print(f"  ✓ 新的最佳模型（损失: {best_loss:.4f}）")
 
+        # Early stopping 检查
+        if trainer.guard and trainer.guard.early_stopping:
+            if not trainer.guard.validate(losses['total']):
+                should_stop = True
+
+        # 如果需要停止，退出训练循环
+        if should_stop:
+            break
+
+    # 打印训练保护统计
+    if trainer.guard:
+        stats = trainer.guard.get_stats()
+        print(f"\n{'='*80}")
+        print("训练保护统计:")
+        print(f"  总步数: {stats['total_steps']}")
+        print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
+        if stats['stopped']:
+            print(f"  停止原因: {stats['stop_reason']}")
+        print(f"{'='*80}\n")
+
     # 保存模型
-    print(f"\n[6/6] 保存模型...")
+    print(f"[6/6] 保存模型...")
     if save_path is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         save_path = f"./claude_{reflection_mode}_{model_size}_{timestamp}"
