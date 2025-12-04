@@ -261,7 +261,7 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
     """
     # 获取兔子图片路径
     script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    mascot_path = os.path.join(script_dir, "兔兔伯爵.png")
+    mascot_path = os.path.join(script_dir, "docs", "assets", "兔兔伯爵.png")
 
     if not os.path.exists(mascot_path):
         # 如果找不到图片，显示简单的文字横幅
