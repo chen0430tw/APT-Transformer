@@ -266,18 +266,19 @@ class StructuredReasoner(nn.Module):
         z = self.vein.project(h)                  # [B,T,r]
 
         topv, topi, full = self.router(z)         # [B,T,K], [B,T,K], [B,T,E]
-        # Aggregate experts
+        # Aggregate experts - Fixed logic
         z_new = torch.zeros_like(z)
         for k in range(topi.size(-1)):
             idx = topi[..., k]                    # [B,T]
             w = topv[..., k:k+1]                  # [B,T,1]
-            # scatter by expert id
+            # Process each expert for tokens that selected it
             for e_id, expert in enumerate(self.experts):
                 mask = (idx == e_id)              # [B,T]
                 if mask.any():
-                    z_sel = z[mask].view(-1, z.size(-1))
+                    z_sel = z[mask]
                     z_upd = expert(z_sel)
-                    z_new[mask] = z_upd
+                    # Accumulate weighted expert outputs
+                    z_new[mask] = z_new[mask] + w[mask] * z_upd
         # residual blend (keep some of original z)
         blend = topv.sum(dim=-1, keepdim=True).clamp(max=0.9)
         z_final = z_new * blend + z * (1.0 - blend)
@@ -399,8 +400,8 @@ class GPTo3Model(nn.Module):
         self.entropy_trig = float(entropy_trig)
         self.global_budget = float(global_budget)
 
-    @torch.no_grad()
     def _token_entropy(self, logits: torch.Tensor) -> torch.Tensor:
+        """Calculate token entropy (gradient-enabled for training)."""
         p = logits.softmax(-1).clamp_min(1e-8)
         return -(p * p.log()).sum(-1)  # [B,T]
 
