@@ -480,7 +480,7 @@ model = create_kg_rag_model(
 - ✅ 三元组数: < 1,000,000
 - ✅ 内存占用: ~100MB-1GB
 
-**大规模图谱建议使用专业图数据库（Neo4j, ArangoDB等）**
+**大规模图谱建议使用专业图数据库**（Neo4j, ArangoDB等）
 
 ### 2. 性能优化
 
