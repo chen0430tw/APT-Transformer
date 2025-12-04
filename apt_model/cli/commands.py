@@ -177,6 +177,7 @@ def run_train_custom_command(args):
         int: 退出码
     """
     logger, lang_manager, device = _initialize_common(args)
+
     logger.info("开始使用自定义数据训练模型...")
 
     # 设置资源监控

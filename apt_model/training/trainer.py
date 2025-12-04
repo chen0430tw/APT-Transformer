@@ -203,11 +203,27 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     """训练模型的主函数（带训练保护）"""
     # 设置随机种子
     set_seed(42)
-    
+
+    # 显示 APT 兔子吉祥物（彩色 ANSI 艺术，结合安柏形象增强用户粘性）
+    try:
+        from apt_model.utils.mascot_render import print_apt_mascot
+        print_apt_mascot(cols=50, show_banner=True)  # 默认彩色模式
+    except Exception:
+        # 如果渲染失败，至少显示文字横幅
+        info_print("\n" + "="*70)
+        info_print("  APT - Autopoietic Transformer | 自生成变换器")
+        info_print("="*70 + "\n")
+
+    # 显示安柏的欢迎消息
+    if language == "zh" or (language is None and any(ord(c) > 127 for text in (texts or get_training_texts())[:3] for c in text[:20])):
+        info_print("安柏：一起来训练吧！\n")
+    else:
+        info_print("Amber: Let's train together!\n")
+
     if logger:
         logger.info("开始训练模型...")
     else:
-        info_print("\n开始训练模型...\n")
+        info_print("开始训练模型...\n")
 
     # 获取训练数据
     if texts is None:
