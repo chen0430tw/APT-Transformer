@@ -204,10 +204,10 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     # 设置随机种子
     set_seed(42)
 
-    # 显示 APT 兔子吉祥物（类似 Linux Tux，纯 ASCII 跨平台稳定）
+    # 显示 APT 兔子吉祥物（彩色 ANSI 艺术，结合安柏形象增强用户粘性）
     try:
         from apt_model.utils.mascot_render import print_apt_mascot
-        print_apt_mascot(cols=50, show_banner=True, color_mode=False)
+        print_apt_mascot(cols=50, show_banner=True)  # 默认彩色模式
     except Exception:
         # 如果渲染失败，至少显示文字横幅
         info_print("\n" + "="*70)

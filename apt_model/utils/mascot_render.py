@@ -245,14 +245,19 @@ def render_mascot_ansi(
         return f"[错误] 渲染失败: {e}"
 
 
-def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool = False):
+def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool = True):
     """
-    打印 APT 兔子吉祥物（类似 Linux Tux）
+    打印 APT 兔子吉祥物（类似 Linux Tux + 彩色）
 
     参数:
         cols: 显示宽度（字符数）
         show_banner: 是否显示横幅文字
-        color_mode: 是否使用彩色模式（默认 False，使用纯 ASCII）
+        color_mode: 是否使用彩色模式（默认 True，显示彩色兔子）
+
+    设计理念:
+        - 结合 Amber（安柏）吉祥物增强用户粘性
+        - 原神粉丝群体广，"训练"词汇的巧妙关联
+        - 使用 PTPF 算法实现图像到终端的彩色渲染
     """
     # 获取兔子图片路径
     script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -267,7 +272,7 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
             print("="*70 + "\n")
         return
 
-    # 渲染兔子（默认使用纯 ASCII，更稳定）
+    # 渲染兔子（默认使用彩色 ANSI，更生动）
     if color_mode:
         # 彩色 ANSI 模式（需要终端支持）
         mascot_art = render_mascot_ansi(
@@ -309,5 +314,5 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
 
 
 if __name__ == "__main__":
-    # 测试渲染
-    print_apt_mascot(cols=60, show_banner=True)
+    # 测试渲染（彩色模式，50 字符宽）
+    print_apt_mascot(cols=50, show_banner=True)
