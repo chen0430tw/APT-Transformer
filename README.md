@@ -84,7 +84,8 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 # CUDA 11.8版本（兼容性好）
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# CUDA 12.1版本（推荐）
+# CUDA 12.1版本（推荐，兼容CUDA 12.2和12.3）
+# 注意：PyTorch跳过了cu122和cu123，使用cu121即可
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # CUDA 12.4版本
@@ -95,10 +96,6 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 # CUDA 13.0版本（最新）
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
-
-# CUDA 12.2-12.3版本
-# 注意：PyTorch官方跳过了cu122和cu123版本，cu121版本可以在CUDA 12.2-12.3环境下正常工作
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
 **如何查看CUDA版本：**
