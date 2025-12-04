@@ -87,8 +87,12 @@ class HybridFFN(nn.Module):
 
     def forward(self, x):
         gate_logits = self.gate(x)
-        gate_weights = F.softmax(gate_logits, dim=-1)
-        outputs = sum(w.unsqueeze(-1) * expert(x) for w, expert in zip(gate_weights.T, self.experts))
+        gate_weights = F.softmax(gate_logits, dim=-1)  # [B,T,num_experts]
+        # Properly aggregate expert outputs
+        outputs = torch.zeros_like(x)
+        for i, expert in enumerate(self.experts):
+            w = gate_weights[..., i:i+1]  # [B,T,1]
+            outputs = outputs + w * expert(x)
         return self.dropout(outputs)
 
 # ----------------------------------------------------------
@@ -203,13 +207,28 @@ class GPT4oModel(nn.Module):
         logits = self.output_head(x)
         return logits
 
-    def generate(self, input_ids, max_new_tokens=32, temperature=1.0):
+    def generate(self, input_ids, max_new_tokens=32, temperature=1.0, top_p=0.9):
+        """Generate text with proper temperature sampling."""
         self.eval()
         generated = input_ids
-        for _ in range(max_new_tokens):
-            logits = self.forward(text_ids=generated)
-            next_token = torch.argmax(logits[:, -1, :] / temperature, dim=-1, keepdim=True)
-            generated = torch.cat([generated, next_token], dim=1)
+        with torch.no_grad():
+            for _ in range(max_new_tokens):
+                logits = self.forward(text_ids=generated)
+                next_logits = logits[:, -1, :] / temperature
+
+                # Apply top-p (nucleus) sampling
+                if top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(next_logits, descending=True, dim=-1)
+                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0
+                    indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                    next_logits[indices_to_remove] = float('-inf')
+
+                probs = F.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                generated = torch.cat([generated, next_token], dim=1)
         return generated
 
 # ----------------------------------------------------------
