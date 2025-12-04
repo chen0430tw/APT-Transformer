@@ -47,23 +47,98 @@ APT Model 是一个生产就绪的Transformer训练平台，提供完整的训�
 
 ### 安装
 
+#### 1. 克隆仓库
 ```bash
-# 克隆仓库
 git clone https://github.com/chen0430tw/APT-Transformer.git
 cd APT-Transformer
+```
 
-# 安装依赖
+#### 2. 安装 PyTorch
+
+**重要：** 根据您的硬件选择正确的PyTorch版本：
+
+<details>
+<summary><b>🖥️ CPU版本（无NVIDIA显卡）</b></summary>
+
+适用于没有NVIDIA显卡或仅用于推理的环境：
+
+```bash
+# CPU版本 - 体积较小，无需CUDA
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+**特点：**
+- ✅ 体积小（约100MB）
+- ✅ 无需CUDA环境
+- ✅ 适合CPU推理和小规模训练
+- ⚠️ 训练速度较慢（约为GPU的1/10-1/50）
+
+</details>
+
+<details>
+<summary><b>⚡ CUDA版本（有NVIDIA显卡）- 推荐</b></summary>
+
+适用于拥有NVIDIA显卡的环境，提供显著加速：
+
+```bash
+# CUDA 11.8版本（推荐，兼容性好）
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# CUDA 12.1版本（最新显卡推荐）
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+**如何查看CUDA版本：**
+```bash
+nvidia-smi  # 查看"CUDA Version"
+```
+
+**特点：**
+- ✅ 训练速度快10-50倍
+- ✅ 支持大batch size
+- ✅ 支持混合精度训练（FP16）
+- ⚠️ 体积较大（约2GB）
+- ⚠️ 需要NVIDIA显卡和对应的CUDA驱动
+
+**显卡要求：**
+- 最低：GTX 1060 (6GB VRAM)
+- 推荐：RTX 3060+ (12GB+ VRAM)
+- 最佳：RTX 4090 / A100 (24GB+ VRAM)
+
+</details>
+
+#### 3. 安装项目依赖
+
+```bash
+# 安装其他依赖
 pip install -r requirements.txt
 
 # 安装 apt_model 包（开发模式，重要！）
 pip install -e .
+```
 
-# 验证安装
-python -c "import torch; print(torch.__version__)"
+#### 4. 验证安装
+
+```bash
+# 检查PyTorch版本和CUDA可用性
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# 验证apt_model安装
 python -m apt_model --help
 ```
 
-**重要提示：** 如果遇到 `No module named apt_model` 错误，请参考 [INSTALLATION.md](INSTALLATION.md) 获取详细的安装和故障排除指南。
+**期望输出：**
+- CPU版本：`CUDA available: False`
+- GPU版本：`CUDA available: True`
+
+---
+
+**📌 安装故障排除**
+
+如果遇到问题，请参考：
+- **模块导入错误**：[INSTALLATION.md](INSTALLATION.md)
+- **CUDA问题**：确认显卡驱动已正确安装
+- **依赖冲突**：建议使用虚拟环境（`python -m venv venv`）
 
 ### 5分钟上手
 
