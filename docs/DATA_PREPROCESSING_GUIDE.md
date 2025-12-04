@@ -21,10 +21,10 @@
 - [数据集类 (Dataset Classes)](#数据集类-dataset-classes)
 - [数据处理插件 (DataProcessorsPlugin)](#数据处理插件-dataprocessorsplugin)
 - [文件加载与批处理](#文件加载与批处理)
+- [公开数据集使用 (HuggingFace Integration)](#公开数据集使用-huggingface-integration)
 
 ### 📝 扩展功能部分
 - [流式加载训练数据](#流式加载训练数据)
-- [公开数据集使用](#公开数据集使用)
 - [图像训练数据集](#图像训练数据集)
 - [高级数据增强](#高级数据增强)
 
@@ -1398,11 +1398,61 @@ loader = DataLoader(dataset, batch_size=16)
 
 ---
 
-## 📝 公开数据集使用
+## ✅ 公开数据集使用 (HuggingFace Integration)
 
-### 扩展功能 (需要安装 HuggingFace datasets 库)
+### 实际实现
 
-需要安装: `pip install datasets`
+**文件位置**: `legacy_plugins/batch1/huggingface_integration_plugin.py`
+
+APT项目已经实现了完整的HuggingFace集成插件，提供：
+- 加载HuggingFace数据集
+- 导入/导出模型到HuggingFace Hub
+- 使用HF Trainer训练模型
+- 数据格式转换
+
+#### 使用HuggingFace Integration Plugin
+
+```python
+from legacy_plugins.batch1.huggingface_integration_plugin import HuggingFaceIntegrationPlugin
+
+# 初始化插件
+config = {
+    'auto_upload': False,
+    'repo_name': 'username/my-model',
+    'private': False
+}
+
+plugin = HuggingFaceIntegrationPlugin(config)
+
+# 加载HuggingFace数据集
+dataset = plugin.load_hf_dataset(
+    dataset_name="wikitext",
+    split="train"
+)
+
+# 转换为APT格式
+apt_data = plugin.convert_to_apt_format(dataset)
+
+# 使用HF Trainer训练
+plugin.train_with_hf_trainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    output_dir="./output"
+)
+
+# 导出到HuggingFace Hub
+plugin.login_to_hub("your_token")
+plugin.export_to_huggingface(
+    model=model,
+    tokenizer=tokenizer,
+    repo_name="username/my-apt-model",
+    private=False
+)
+```
+
+### 📝 扩展示例 - 更多数据集用法
 
 ### 常用文本数据集
 
@@ -2161,15 +2211,21 @@ python data_cleaning.py
 - ✅ 数据质量检查
 - ✅ 完整处理管道
 
+**HuggingFace集成** (`legacy_plugins/batch1/huggingface_integration_plugin.py`):
+- ✅ 加载HuggingFace数据集
+- ✅ 导入/导出模型到HuggingFace Hub
+- ✅ HF Trainer集成
+- ✅ 数据格式转换
+
 ### 📝 需要扩展的功能
 
 **流式数据加载**:
 - 📝 StreamingTextDataset - 需要自行实现
 - 📝 分块加载 - 需要自行实现
 
-**公共数据集集成**:
-- 📝 HuggingFace Datasets - 需要安装 `datasets` 库
+**高级数据集功能**:
 - 📝 数据集混合策略 - 需要额外实现
+- 📝 自定义数据集预处理流水线 - 需要额外实现
 
 **图像数据集**:
 - 📝 ImageTextDataset - 需要 torchvision 和 PIL
