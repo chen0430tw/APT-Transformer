@@ -1,0 +1,1882 @@
+# APT 插件使用指南
+
+<div align="center">
+
+**完整的 APT 插件系统使用教程**
+
+从安装到高级应用 | 26+ 生产级插件 | 实战代码示例
+
+</div>
+
+---
+
+## 📋 目录
+
+- [插件系统概览](#插件系统概览)
+- [核心插件](#核心插件)
+  - [GRPO Plugin](#1-grpo-plugin-强化学习训练)
+  - [Route Optimizer](#2-route-optimizer-moe负载均衡)
+  - [EQI Reporter](#3-eqi-reporter-指标上报)
+- [推理插件](#推理插件)
+  - [Beam Search](#1-beam-search-多路径搜索)
+  - [Self-Consistency](#2-self-consistency-自洽推理)
+  - [Program-Aided](#3-program-aided-程序辅助推理)
+- [插件开发](#插件开发)
+- [高级应用](#高级应用)
+- [故障排查](#故障排查)
+
+---
+
+## 🎯 插件系统概览
+
+### 什么是插件系统？
+
+APT 插件系统是一个**事件驱动、优先级管理、资源可控**的统一插件架构，支持：
+
+| 特性 | 说明 | 优势 |
+|------|------|------|
+| **事件驱动** | 15+ 生命周期事件（训练/推理/解码） | 灵活介入模型流程 |
+| **优先级管理** | 10 级优先级（0-999） | 精确控制执行顺序 |
+| **资源控制** | CPU/GPU/IO 预算管理 | 防止资源过载 |
+| **冲突检测** | 5 层冲突防护机制 | 避免插件冲突 |
+| **故障隔离** | 沙箱执行 + 降级策略 | 保证系统稳定性 |
+
+### 插件分类
+
+```
+APT 插件生态系统
+├── Critical (0-49) - Kill-switch、权限校验
+├── CoreRuntime (50-149) - 推理控制、解码策略
+├── Performance (150-249) - 路由优化、梯度裁剪
+├── Reasoning (250-349) - Beam Search、自洽推理、程序辅助
+├── Training (350-449) - GRPO、RLHF、DPO
+├── Decision (450-549) - EQI 决策、资源优化
+├── Admin (550-649) - 审计、日志、合规
+├── Experimental (650-799) - 研究功能
+└── Telemetry (800-899) - 指标上报、监控
+```
+
+### 快速开始
+
+```python
+from apt_model.console.plugin_bus import PluginBus
+from apt_model.console.plugins.grpo_plugin import GRPOPlugin
+
+# 1. 创建插件总线
+bus = PluginBus()
+
+# 2. 注册插件
+grpo = GRPOPlugin()
+bus.register(grpo)
+
+# 3. 初始化插件
+grpo.initialize({
+    'group_size': 4,
+    'learning_rate': 1e-5,
+    'policy_model': policy_model,
+    'reward_model': reward_model
+})
+
+# 4. 触发事件
+bus.dispatch_event('on_batch_end', context={
+    'step': 100,
+    'data': {'rewards': [0.8, 0.9, 0.7, 0.85]}
+})
+```
+
+---
+
+## 🔧 核心插件
+
+### 1. GRPO Plugin（强化学习训练）
+
+#### 功能概述
+
+**GRPO（Group Relative Policy Optimization）** 是一种组相对策略优化算法，通过**组内比较**来训练策略模型。
+
+**核心思想**：
+```
+传统 RLHF:
+每个响应独立计算奖励 → 训练策略模型
+
+GRPO:
+组内响应相互比较 → 计算相对优势 → 训练策略模型
+```
+
+**优势**：
+- ✅ 更稳定的训练（组内归一化）
+- ✅ 减少奖励模型偏差
+- ✅ 更好的泛化能力
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.console.plugins.grpo_plugin import GRPOPlugin
+from apt_model.rl.grpo_trainer import GRPOTrainer, GRPOConfig
+
+# 创建 GRPO 插件
+grpo_plugin = GRPOPlugin()
+
+# 配置
+config = {
+    'group_size': 4,  # 每组 4 个响应
+    'learning_rate': 1e-5,
+    'advantage_type': 'relative',  # 相对优势
+    'policy_model': policy_model,
+    'reward_model': reward_model,
+    'device': 'cuda'
+}
+
+# 初始化
+grpo_plugin.initialize(config)
+
+# 注册到插件总线
+bus.register(grpo_plugin)
+```
+
+**2. 训练循环集成**
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# 加载模型
+policy_model = AutoModelForCausalLM.from_pretrained('gpt2-medium')
+reward_model = AutoModelForCausalLM.from_pretrained('gpt2-reward')
+tokenizer = AutoTokenizer.from_pretrained('gpt2-medium')
+
+# 创建 GRPO 训练器
+from apt_model.rl.grpo_trainer import GRPOTrainer, GRPOConfig
+
+grpo_config = GRPOConfig(
+    group_size=4,
+    learning_rate=1e-5,
+    advantage_type='relative',
+    beta=0.01,  # KL 散度系数
+    clip_range=0.2  # PPO 裁剪范围
+)
+
+trainer = GRPOTrainer(
+    policy_model=policy_model,
+    reward_model=reward_model,
+    config=grpo_config,
+    device='cuda'
+)
+
+# 训练循环
+for batch in dataloader:
+    # 1. 生成响应（每个 prompt 生成 4 个响应）
+    responses = []
+    for i in range(grpo_config.group_size):
+        output = policy_model.generate(
+            batch['input_ids'],
+            max_length=512,
+            do_sample=True,
+            temperature=0.7 + i * 0.1  # 不同温度生成多样响应
+        )
+        responses.append(output)
+
+    responses = torch.stack(responses, dim=1)  # [batch, group_size, seq_len]
+    response_masks = (responses != tokenizer.pad_token_id).long()
+
+    # 2. 计算奖励（可选）
+    with torch.no_grad():
+        rewards = reward_model(responses).logits[:, :, -1].mean(dim=-1)
+
+    # 3. GRPO 训练步骤
+    stats = trainer.train_step(
+        responses=responses,
+        response_masks=response_masks,
+        rewards=rewards
+    )
+
+    print(f"Step {trainer.step}: "
+          f"policy_loss={stats['policy_loss']:.4f}, "
+          f"group_variance={stats['group_variance']:.4f}, "
+          f"kl={stats['kl_divergence']:.4f}")
+```
+
+**3. 使用插件总线集成**
+
+```python
+# 创建插件总线
+bus = PluginBus()
+
+# 注册 GRPO 插件
+grpo_plugin = GRPOPlugin()
+grpo_plugin.initialize({
+    'group_size': 4,
+    'policy_model': policy_model,
+    'reward_model': reward_model,
+    'learning_rate': 1e-5
+})
+bus.register(grpo_plugin)
+
+# 训练循环
+for step, batch in enumerate(dataloader):
+    # 生成响应
+    responses = generate_group_responses(batch, group_size=4)
+    response_masks = (responses != tokenizer.pad_token_id).long()
+
+    # 分发事件 - 自动触发 GRPO 训练
+    bus.dispatch_event('on_step_end', context={
+        'step': step,
+        'data': {
+            'responses': responses,
+            'response_masks': response_masks
+        }
+    })
+
+    # 读取指标
+    if step % 100 == 0:
+        metrics = bus.get_plugin_metrics('grpo')
+        print(f"Step {step}: GRPO metrics: {metrics}")
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `group_size` | int | 4 | 每组响应数量 |
+| `learning_rate` | float | 1e-5 | 策略模型学习率 |
+| `advantage_type` | str | 'relative' | 优势类型（relative/normalized/rank） |
+| `beta` | float | 0.01 | KL 散度系数 |
+| `clip_range` | float | 0.2 | PPO 裁剪范围 |
+| `policy_model` | nn.Module | - | 策略模型 |
+| `reward_model` | nn.Module | - | 奖励模型 |
+
+#### 输出指标
+
+```python
+# 插件输出的指标
+metrics = {
+    'grpo_variance': 0.042,        # 组内方差
+    'grpo_updates': 1500,          # 策略更新次数
+    'grpo_policy_loss': 0.312,     # 策略损失
+    'grpo_kl': 0.008,              # KL 散度
+}
+```
+
+---
+
+### 2. Route Optimizer（MoE负载均衡）
+
+#### 功能概述
+
+**Route Optimizer** 用于优化 Mixture-of-Experts (MoE) 模型的**专家负载均衡**。
+
+**核心问题**：
+```
+MoE 模型问题:
+某些专家过载 → 其他专家闲置 → 计算效率低下
+
+Route Optimizer 解决方案:
+实时监控负载 → 检测过载 → 提供路由建议 → 动态调整
+```
+
+**优势**：
+- ✅ 提升 MoE 模型效率
+- ✅ 防止专家崩溃
+- ✅ 负载可视化
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.console.plugins.route_optimizer_plugin import RouteOptimizerPlugin
+
+# 创建插件
+route_opt = RouteOptimizerPlugin()
+
+# 配置
+route_opt.initialize({
+    'num_experts': 8,           # 专家数量
+    'load_threshold': 1.5,      # 过载阈值（平均值的 1.5 倍）
+})
+
+# 注册到插件总线
+bus.register(route_opt)
+```
+
+**2. 与 MoE 模型集成**
+
+```python
+import torch
+import torch.nn as nn
+from apt_model.modeling.moe import MoELayer
+
+class MoEModel(nn.Module):
+    def __init__(self, d_model=512, num_experts=8):
+        super().__init__()
+        self.moe_layer = MoELayer(d_model, num_experts)
+
+    def forward(self, x, routing_suggestions=None):
+        # 使用路由建议（如果有）
+        if routing_suggestions:
+            expert_weights = self._adjust_routing(
+                self.moe_layer.gate(x),
+                routing_suggestions
+            )
+        else:
+            expert_weights = self.moe_layer.gate(x)
+
+        # MoE 前向传播
+        output = self.moe_layer(x, expert_weights)
+        return output, expert_weights
+
+    def _adjust_routing(self, gate_logits, suggestions):
+        """根据建议调整路由"""
+        weights = torch.softmax(gate_logits, dim=-1)
+
+        # 增强欠载专家的权重
+        underloaded = suggestions['underloaded_expert']
+        overloaded = suggestions['overloaded_expert']
+
+        weights[:, underloaded] *= 1.2
+        weights[:, overloaded] *= 0.8
+
+        # 重新归一化
+        weights = weights / weights.sum(dim=-1, keepdim=True)
+        return weights
+
+# 创建模型
+model = MoEModel(d_model=512, num_experts=8)
+
+# 创建插件总线并注册 Route Optimizer
+bus = PluginBus()
+route_opt = RouteOptimizerPlugin()
+route_opt.initialize({'num_experts': 8})
+bus.register(route_opt)
+
+# 训练循环
+for step, batch in enumerate(dataloader):
+    # Batch 开始事件
+    bus.dispatch_event('on_batch_start', context={
+        'step': step,
+        'data': {}
+    })
+
+    # 获取路由建议
+    suggestions = bus.get_context('route_optimizer', 'routing_suggestions')
+
+    # 前向传播
+    output, expert_weights = model(batch['input'], suggestions)
+
+    # 记录路由信息
+    expert_ids = expert_weights.argmax(dim=-1).cpu().numpy()
+
+    # Step 结束事件
+    bus.dispatch_event('on_step_end', context={
+        'step': step,
+        'data': {
+            'routing': {
+                'expert_ids': expert_ids.tolist()
+            }
+        }
+    })
+
+    # 读取指标
+    if step % 100 == 0:
+        metrics = bus.get_plugin_metrics('route_optimizer')
+        print(f"Step {step}: Load variance={metrics['route_variance']:.4f}, "
+              f"Efficiency={metrics['route_efficiency']:.4f}")
+```
+
+**3. 实时监控**
+
+```python
+import matplotlib.pyplot as plt
+
+# 监控插件（每 10 步）
+load_history = []
+
+for step in range(1000):
+    # ... 训练代码 ...
+
+    if step % 10 == 0:
+        # 获取负载历史
+        history = route_opt.routing_history[-10:]
+        if history:
+            avg_loads = [sum(r['loads']) / len(r['loads']) for r in history]
+            load_history.extend(avg_loads)
+
+# 绘制负载曲线
+plt.figure(figsize=(10, 5))
+plt.plot(load_history)
+plt.title('Expert Load Distribution Over Time')
+plt.xlabel('Step (x10)')
+plt.ylabel('Average Load')
+plt.savefig('expert_load.png')
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `num_experts` | int | 8 | MoE 专家数量 |
+| `load_threshold` | float | 1.5 | 过载阈值（相对平均值） |
+
+#### 输出指标
+
+```python
+metrics = {
+    'route_variance': 0.123,       # 负载方差
+    'route_efficiency': 0.89,      # 路由效率（0-1）
+    'overload_events': 12,         # 过载事件次数
+    'adjustments_made': 8          # 路由调整次数
+}
+
+# 路由建议格式
+suggestions = {
+    'underloaded_expert': 2,       # 欠载专家 ID
+    'overloaded_expert': 5,        # 过载专家 ID
+    'avg_loads': [1.2, 0.8, ...],  # 平均负载
+    'recommendation': 'redirect'    # 建议（redirect/balanced）
+}
+```
+
+---
+
+### 3. EQI Reporter（指标上报）
+
+#### 功能概述
+
+**EQI Reporter** 用于收集和上报 **Evidence Qualitative Inference (EQI)** 指标。
+
+**EQI 是什么？**
+```
+EQI = Evidence-based Qualitative Inference
+证据驱动的定性推理决策系统
+
+核心公式:
+φ(s, E, κ) = sigmoid(κ(s + η·evidence(E)))
+
+其中:
+- s: 净效用 (net utility) = Latency - λ·Importance
+- E: 证据（历史性能数据）
+- η: 证据调制参数
+- κ: 门控陡峭度
+```
+
+**用途**：
+- ✅ 追踪插件激活证据
+- ✅ 监控净效用趋势
+- ✅ 可视化软门控激活
+- ✅ 辅助插件调优
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.console.plugins.eqi_reporter_plugin import EQIReporterPlugin
+
+# 创建插件
+eqi_reporter = EQIReporterPlugin()
+
+# 配置
+eqi_reporter.initialize({
+    'report_interval': 100  # 每 100 步上报一次
+})
+
+# 注册到插件总线
+bus.register(eqi_reporter)
+```
+
+**2. 与监控系统集成**
+
+```python
+import requests
+import json
+
+class EQIReporterWithAPI(EQIReporterPlugin):
+    """扩展版 EQI Reporter：上报到监控 API"""
+
+    def __init__(self, api_endpoint: str):
+        super().__init__()
+        self.api_endpoint = api_endpoint
+
+    def _send_report(self, step: int, epoch: int = None):
+        """重写上报方法：发送到 API"""
+        report = {
+            'step': step,
+            'epoch': epoch,
+            'timestamp': time.time(),
+            'evidence_mean': self.metrics['evidence_mean'],
+            'utility_mean': self.metrics['utility_mean'],
+            'activations': self.metrics['activations'],
+            'log_size': len(self.evidence_log)
+        }
+
+        try:
+            # 发送到监控 API
+            response = requests.post(
+                f"{self.api_endpoint}/eqi-metrics",
+                json=report,
+                timeout=5
+            )
+
+            if response.status_code == 200:
+                logger.info(f"[EQI Reporter] Sent report to API: {report}")
+                self.metrics['reports_sent'] += 1
+            else:
+                logger.warning(f"[EQI Reporter] API returned {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"[EQI Reporter] Failed to send report: {e}")
+
+        # 存储到上下文
+        self.set_context('last_report', report)
+
+# 使用
+eqi_reporter = EQIReporterWithAPI(api_endpoint="http://localhost:8080")
+eqi_reporter.initialize({'report_interval': 50})
+bus.register(eqi_reporter)
+```
+
+**3. 可视化 EQI 指标**
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+# 收集数据
+steps = []
+evidence_means = []
+utility_means = []
+
+for step in range(1000):
+    # ... 训练代码 ...
+
+    # 触发评估事件
+    bus.dispatch_event('on_step_eval', context={
+        'step': step,
+        'data': {
+            'metrics': {'loss': 0.5},
+            'evidence': 0.8 + np.random.randn() * 0.1,
+            'utility': 0.6 + np.random.randn() * 0.05
+        }
+    })
+
+    if step % 10 == 0:
+        report = eqi_reporter.get_context('last_report')
+        if report:
+            steps.append(step)
+            evidence_means.append(report['evidence_mean'])
+            utility_means.append(report['utility_mean'])
+
+# 绘制双轴图
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+ax1.set_xlabel('Training Step')
+ax1.set_ylabel('Evidence Mean', color='tab:blue')
+ax1.plot(steps, evidence_means, color='tab:blue', label='Evidence')
+ax1.tick_params(axis='y', labelcolor='tab:blue')
+
+ax2 = ax1.twinx()
+ax2.set_ylabel('Utility Mean', color='tab:orange')
+ax2.plot(steps, utility_means, color='tab:orange', label='Utility')
+ax2.tick_params(axis='y', labelcolor='tab:orange')
+
+plt.title('EQI Metrics Over Training')
+plt.savefig('eqi_metrics.png')
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `report_interval` | int | 100 | 上报间隔（步数） |
+
+#### 输出指标
+
+```python
+metrics = {
+    'evidence_mean': 0.82,         # 证据均值
+    'utility_mean': 0.65,          # 净效用均值
+    'activations': 1523,           # 激活次数
+    'reports_sent': 15             # 上报次数
+}
+
+# 报告格式
+report = {
+    'step': 1000,
+    'epoch': 5,
+    'timestamp': 1701234567.89,
+    'evidence_mean': 0.82,
+    'utility_mean': 0.65,
+    'activations': 1523,
+    'log_size': 1000
+}
+```
+
+---
+
+## 🧠 推理插件
+
+### 1. Beam Search（多路径搜索）
+
+#### 功能概述
+
+**Beam Search** 是一种**多路径搜索算法**，维护 k 个候选推理路径，选择得分最高的路径作为最终答案。
+
+**核心思想**：
+```
+贪婪搜索:
+每步选择概率最高的 token → 可能陷入局部最优
+
+Beam Search:
+每步维护 k 个候选路径 → 综合考虑全局得分 → 选择最优路径
+```
+
+**适用场景**：
+- ✅ 数学推理（需要精确步骤）
+- ✅ 代码生成（需要正确语法）
+- ✅ 逻辑推理（需要完整推理链）
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.console.plugins.reasoning.beam_search_plugin import BeamSearchReasoningPlugin
+
+# 创建插件
+beam_search = BeamSearchReasoningPlugin(config={
+    'beam_width': 4,           # Beam 宽度（候选数量）
+    'length_penalty': 0.6,     # 长度惩罚参数
+    'max_steps': 50,           # 最大推理步数
+    'diversity_penalty': 0.5,  # 多样性惩罚
+    'early_stopping': True     # 早停
+})
+
+# 注册到插件总线
+bus.register(beam_search)
+```
+
+**2. 推理示例**
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# 加载模型
+model = AutoModelForCausalLM.from_pretrained('gpt2-medium')
+tokenizer = AutoTokenizer.from_pretrained('gpt2-medium')
+
+# 创建插件总线
+bus = PluginBus()
+beam_search = BeamSearchReasoningPlugin(config={'beam_width': 5})
+bus.register(beam_search)
+
+# 推理
+question = "What is 15% of 80?"
+input_ids = tokenizer.encode(question, return_tensors='pt')
+
+# 触发推理事件
+bus.dispatch_event('on_inference_start', context={
+    'data': {
+        'use_beam_search': True,
+        'model': model,
+        'tokenizer': tokenizer,
+        'input_ids': input_ids
+    }
+})
+
+# 触发解码事件
+bus.dispatch_event('on_decode', context={
+    'step': 0,
+    'data': {
+        'model': model,
+        'tokenizer': tokenizer,
+        'input_ids': input_ids
+    }
+})
+
+# 获取结果
+result = bus.get_data('beam_search_result')
+print(f"Best path: {result['path']}")
+print(f"Score: {result['score']:.4f}")
+print(f"Steps: {result['num_steps']}")
+```
+
+**3. 自定义评分函数**
+
+```python
+class CustomBeamSearch(BeamSearchReasoningPlugin):
+    """自定义 Beam Search：添加推理正确性评分"""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.correctness_weight = 0.3  # 正确性权重
+
+    def _score_beam(self, beam, model, tokenizer):
+        """自定义评分：语言模型得分 + 正确性得分"""
+        # 原始得分（语言模型概率）
+        lm_score = beam.normalized_score(self.length_penalty)
+
+        # 正确性得分（检查推理链是否合理）
+        correctness_score = self._check_reasoning(beam.tokens, tokenizer)
+
+        # 综合得分
+        final_score = (1 - self.correctness_weight) * lm_score + \
+                      self.correctness_weight * correctness_score
+
+        return final_score
+
+    def _check_reasoning(self, tokens, tokenizer):
+        """检查推理链正确性"""
+        text = tokenizer.decode(tokens)
+
+        # 简单启发式：检查是否包含推理关键词
+        reasoning_keywords = ['because', 'therefore', 'so', '因此', '所以']
+        score = sum(1 for kw in reasoning_keywords if kw in text.lower())
+
+        return min(score / len(reasoning_keywords), 1.0)
+
+# 使用
+custom_beam = CustomBeamSearch(config={'beam_width': 4})
+bus.register(custom_beam)
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `beam_width` | int | 4 | Beam 宽度（候选路径数） |
+| `length_penalty` | float | 0.6 | 长度惩罚（0=无惩罚，1=全惩罚） |
+| `max_steps` | int | 50 | 最大推理步数 |
+| `diversity_penalty` | float | 0.0 | 多样性惩罚（鼓励不同路径） |
+| `early_stopping` | bool | True | 早停（所有路径完成时停止） |
+
+#### 输出结果
+
+```python
+result = {
+    'path': [101, 2054, 2003, ...],  # Token IDs
+    'score': -4.23,                  # 归一化得分
+    'num_steps': 12,                 # 实际步数
+    'beam_width': 4                  # Beam 宽度
+}
+```
+
+---
+
+### 2. Self-Consistency（自洽推理）
+
+#### 功能概述
+
+**Self-Consistency** 通过生成**多条独立推理路径**，然后**投票选择最一致**的答案来提升推理可靠性。
+
+**核心思想**：
+```
+单次生成:
+prompt → 模型生成 → 答案（可能错误）
+
+Self-Consistency:
+prompt → 生成 N 条路径 → 提取答案 → 投票 → 最一致答案（更可靠）
+```
+
+**优势**：
+- ✅ 提升推理准确性（尤其数学题）
+- ✅ 提供置信度评分
+- ✅ 捕获多样推理方式
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.console.plugins.reasoning.self_consistency_plugin import SelfConsistencyPlugin
+
+# 创建插件
+sc_plugin = SelfConsistencyPlugin(config={
+    'num_paths': 5,            # 生成 5 条推理路径
+    'temperature': 0.7,        # 采样温度（多样性）
+    'answer_patterns': [       # 答案提取模式
+        r'[Aa]nswer:\s*(.+)',
+        r'答案[:：]\s*(.+)',
+        r'因此[:：]\s*(.+)',
+    ]
+})
+
+# 注册到插件总线
+bus.register(sc_plugin)
+```
+
+**2. 完整推理示例**
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# 加载模型
+model = AutoModelForCausalLM.from_pretrained('gpt2-medium')
+tokenizer = AutoTokenizer.from_pretrained('gpt2-medium')
+
+# 创建插件总线
+bus = PluginBus()
+sc_plugin = SelfConsistencyPlugin(config={'num_paths': 10, 'temperature': 0.8})
+bus.register(sc_plugin)
+
+# 推理
+question = "If a train travels at 60 mph for 2.5 hours, how far does it travel?"
+
+# 触发推理事件
+bus.dispatch_event('on_inference_start', context={
+    'data': {
+        'use_self_consistency': True
+    }
+})
+
+# 触发解码事件
+bus.dispatch_event('on_decode', context={
+    'step': 0,
+    'data': {
+        'model': model,
+        'tokenizer': tokenizer,
+        'input_text': question
+    }
+})
+
+# 获取结果
+result = bus.get_data('self_consistency_result')
+
+print(f"Selected Answer: {result['answer']}")
+print(f"Confidence: {result['confidence']:.2%}")
+print(f"Paths Generated: {result['paths_count']}")
+print(f"Vote Distribution: {result['vote_distribution']}")
+
+# 示例输出:
+# Selected Answer: 150 miles
+# Confidence: 80.00%
+# Paths Generated: 10
+# Vote Distribution: {'150 miles': 8, '15 miles': 1, '160 miles': 1}
+```
+
+**3. 自定义答案提取**
+
+```python
+class MathSelfConsistency(SelfConsistencyPlugin):
+    """数学题专用 Self-Consistency：提取数值答案"""
+
+    def _extract_answer(self, reasoning_path: str) -> str:
+        """重写答案提取：专门提取数值"""
+        import re
+
+        # 优先匹配明确的答案标记
+        for pattern in self.answer_patterns:
+            match = re.search(pattern, reasoning_path, re.MULTILINE)
+            if match:
+                answer_text = match.group(1).strip()
+                # 提取数值
+                numbers = re.findall(r'[-+]?\d*\.?\d+', answer_text)
+                if numbers:
+                    return numbers[0]  # 返回第一个数值
+
+        # 回退：提取路径中最后出现的数值
+        numbers = re.findall(r'[-+]?\d*\.?\d+', reasoning_path)
+        if numbers:
+            return numbers[-1]
+
+        return ""
+
+    def _normalize_answer(self, answer: str) -> str:
+        """归一化数值答案"""
+        try:
+            # 转换为浮点数再转回字符串（统一格式）
+            num = float(answer)
+            # 如果是整数，去掉小数点
+            if num == int(num):
+                return str(int(num))
+            return f"{num:.2f}"  # 保留 2 位小数
+        except:
+            return answer.lower().strip()
+
+# 使用
+math_sc = MathSelfConsistency(config={'num_paths': 5})
+bus.register(math_sc)
+```
+
+**4. 与 Chain-of-Thought 结合**
+
+```python
+def self_consistency_with_cot(model, tokenizer, question, num_paths=5):
+    """Self-Consistency + Chain-of-Thought"""
+
+    # CoT Prompt
+    cot_prompt = f"""Let's solve this step by step:
+
+Question: {question}
+
+Step-by-step solution:"""
+
+    paths = []
+    answers = []
+
+    for i in range(num_paths):
+        # 生成推理路径（不同温度）
+        input_ids = tokenizer.encode(cot_prompt, return_tensors='pt')
+        output = model.generate(
+            input_ids,
+            max_length=200,
+            do_sample=True,
+            temperature=0.7 + i * 0.05,  # 递增温度
+            top_p=0.95
+        )
+
+        path = tokenizer.decode(output[0], skip_special_tokens=True)
+        paths.append(path)
+
+        # 提取答案
+        answer = extract_final_answer(path)
+        answers.append(answer)
+
+    # 投票
+    from collections import Counter
+    vote_counts = Counter(answers)
+    best_answer = vote_counts.most_common(1)[0]
+
+    return {
+        'answer': best_answer[0],
+        'confidence': best_answer[1] / num_paths,
+        'paths': paths,
+        'all_answers': answers
+    }
+
+# 使用
+result = self_consistency_with_cot(
+    model, tokenizer,
+    question="What is 15% of 80?",
+    num_paths=10
+)
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `num_paths` | int | 5 | 生成路径数量 |
+| `temperature` | float | 0.7 | 采样温度（多样性） |
+| `answer_patterns` | list | [...] | 答案提取正则模式 |
+
+#### 输出结果
+
+```python
+result = {
+    'answer': '12',                          # 选择的答案
+    'confidence': 0.80,                      # 置信度（80%）
+    'paths_count': 5,                        # 生成路径数
+    'vote_distribution': {                   # 投票分布
+        '12': 4,
+        '11.5': 1
+    }
+}
+```
+
+---
+
+### 3. Program-Aided（程序辅助推理）
+
+#### 功能概述
+
+**Program-Aided Reasoning (PAL)** 将自然语言问题转换为**可执行 Python 代码**，通过符号计算获得精确答案。
+
+**核心思想**：
+```
+传统 LLM 推理:
+"15% of 80 is..." → 模型猜测 → 可能出错
+
+Program-Aided:
+"15% of 80" → 生成代码 "0.15 * 80" → 执行 → 12.0（精确）
+```
+
+**优势**：
+- ✅ 数学计算 100% 准确
+- ✅ 支持复杂逻辑推理
+- ✅ 可审计（代码可读）
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.console.plugins.reasoning.program_aided_plugin import ProgramAidedReasoningPlugin
+
+# 创建插件
+pal_plugin = ProgramAidedReasoningPlugin(config={
+    'timeout': 5.0,              # 代码执行超时（秒）
+    'max_code_length': 1000,     # 最大代码长度
+    'allowed_modules': [         # 允许的模块
+        'math', 'statistics', 'datetime'
+    ],
+    'forbidden_keywords': [      # 禁止的关键词
+        'import os', 'eval', 'exec', 'open('
+    ]
+})
+
+# 注册到插件总线
+bus.register(pal_plugin)
+```
+
+**2. 完整推理示例**
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# 加载代码生成模型（如 CodeGen）
+model = AutoModelForCausalLM.from_pretrained('Salesforce/codegen-350M-mono')
+tokenizer = AutoTokenizer.from_pretrained('Salesforce/codegen-350M-mono')
+
+# 创建插件总线
+bus = PluginBus()
+pal_plugin = ProgramAidedReasoningPlugin(config={'timeout': 10.0})
+bus.register(pal_plugin)
+
+# 推理
+question = "A store has 120 apples. They sell 35% of them in the morning and 20% in the afternoon. How many apples are left?"
+
+# 触发推理事件
+bus.dispatch_event('on_inference_start', context={
+    'data': {
+        'use_program_aided': True
+    }
+})
+
+# 触发解码事件
+bus.dispatch_event('on_decode', context={
+    'step': 0,
+    'data': {
+        'model': model,
+        'tokenizer': tokenizer,
+        'question': question
+    }
+})
+
+# 获取结果
+result = bus.get_data('program_aided_result')
+
+if result['success']:
+    print(f"Generated Code:\n{result['code']}")
+    print(f"Execution Result: {result['result']}")
+else:
+    print(f"Error: {result['error']}")
+
+# 示例输出:
+# Generated Code:
+# # Calculate remaining apples
+# total_apples = 120
+# morning_sold = total_apples * 0.35
+# afternoon_sold = total_apples * 0.20
+# remaining = total_apples - morning_sold - afternoon_sold
+# print(remaining)
+#
+# Execution Result: 54.0
+```
+
+**3. 自定义代码生成提示**
+
+```python
+class MathPAL(ProgramAidedReasoningPlugin):
+    """数学题专用 PAL：优化代码生成提示"""
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        # 自定义代码生成提示模板
+        self.code_prompt_template = """# Solve this math problem using Python:
+# Question: {question}
+#
+# Write clean, executable Python code to solve it.
+# Use comments to explain your logic.
+# Print the final answer.
+
+import math
+
+"""
+
+    def _generate_code(self, model, tokenizer, question: str) -> str:
+        """生成 Python 代码"""
+        # 创建提示
+        prompt = self.code_prompt_template.format(question=question)
+
+        # 生成代码
+        input_ids = tokenizer.encode(prompt, return_tensors='pt')
+        output = model.generate(
+            input_ids,
+            max_length=len(input_ids[0]) + 200,
+            temperature=0.2,  # 低温度（更确定）
+            top_p=0.95,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+        generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
+
+        # 提取代码部分（去掉提示）
+        code = generated_text[len(prompt):].strip()
+
+        # 后处理：确保有 print 语句
+        if 'print(' not in code:
+            # 自动添加 print（假设最后一个变量是答案）
+            lines = code.split('\n')
+            if lines and '=' in lines[-1]:
+                var_name = lines[-1].split('=')[0].strip()
+                code += f"\nprint({var_name})"
+
+        return code
+
+# 使用
+math_pal = MathPAL(config={'timeout': 10.0})
+bus.register(math_pal)
+```
+
+**4. 安全执行沙箱**
+
+```python
+import ast
+import sys
+from io import StringIO
+
+def safe_execute_code(code: str, timeout: float = 5.0) -> tuple:
+    """
+    安全执行 Python 代码
+
+    Returns:
+        (output, error)
+    """
+    # 1. 静态分析
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return None, f"Syntax error: {e}"
+
+    # 2. 检查危险操作
+    dangerous_nodes = []
+    for node in ast.walk(tree):
+        # 检查 import 语句
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names if isinstance(node, ast.Import) else [node]:
+                module = alias.name if isinstance(alias, ast.alias) else node.module
+                if module not in ['math', 'statistics', 'datetime']:
+                    dangerous_nodes.append(f"Forbidden import: {module}")
+
+        # 检查函数调用
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if node.func.id in ['eval', 'exec', 'compile', '__import__']:
+                    dangerous_nodes.append(f"Forbidden function: {node.func.id}")
+
+    if dangerous_nodes:
+        return None, "; ".join(dangerous_nodes)
+
+    # 3. 执行代码（有限环境）
+    stdout_capture = StringIO()
+    safe_globals = {
+        '__builtins__': {
+            'print': print,
+            'range': range,
+            'len': len,
+            'sum': sum,
+            'max': max,
+            'min': min,
+            'abs': abs,
+            'round': round,
+        },
+        'math': __import__('math'),
+    }
+
+    try:
+        with redirect_stdout(stdout_capture):
+            exec(code, safe_globals)
+
+        output = stdout_capture.getvalue().strip()
+        return output, None
+
+    except Exception as e:
+        return None, f"{type(e).__name__}: {str(e)}"
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `timeout` | float | 5.0 | 代码执行超时（秒） |
+| `max_code_length` | int | 1000 | 最大代码长度 |
+| `allowed_modules` | list | [...] | 允许导入的模块 |
+| `forbidden_keywords` | list | [...] | 禁止的关键词 |
+
+#### 输出结果
+
+```python
+# 成功执行
+result = {
+    'success': True,
+    'result': '54.0',            # 执行输出
+    'code': '# Generated code...'  # 生成的代码
+}
+
+# 执行失败
+result = {
+    'success': False,
+    'error': 'Validation failed: Forbidden keyword found: import os',
+    'code': '# Generated code...'
+}
+```
+
+---
+
+## 🛠️ 插件开发
+
+### 创建自定义插件
+
+**1. 插件模板**
+
+```python
+from apt_model.console.plugin_standards import (
+    PluginBase,
+    PluginManifest,
+    PluginPriority,
+    PluginEvent,
+    PluginCapability
+)
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class MyCustomPlugin(PluginBase):
+    """
+    自定义插件示例
+
+    功能描述：[你的插件功能]
+    """
+
+    def __init__(self):
+        """初始化插件"""
+        super().__init__()
+        self.config = {}
+        self.metrics = {
+            'counter': 0,
+            'avg_value': 0.0,
+        }
+
+    def get_manifest(self) -> PluginManifest:
+        """
+        获取插件清单
+
+        Returns:
+            插件清单
+        """
+        return PluginManifest(
+            name="my_custom_plugin",
+            version="1.0.0",
+            description="My custom plugin for doing X",
+            author="Your Name",
+
+            # 优先级（根据插件类型选择）
+            priority=PluginPriority.EXPERIMENTAL,  # 650-799
+
+            # 是否阻塞主线程
+            blocking=False,
+
+            # 监听的事件
+            events=[
+                PluginEvent.ON_BATCH_START,
+                PluginEvent.ON_STEP_END,
+            ],
+
+            # 依赖项
+            requires=[
+                "core:trainer",
+            ],
+
+            # 冲突项
+            conflicts=[],
+
+            # 能力
+            capabilities=[
+                PluginCapability.READ_METRICS,
+                PluginCapability.WRITE_METRICS,
+            ],
+
+            # 资源预算
+            resources={
+                "cpu_ms": 10.0,
+                "gpu_ms": 5.0,
+                "io_mb": 0.5
+            },
+
+            # 速率限制
+            rate_limit={
+                "steps": 10  # 每 10 步最多执行一次
+            },
+
+            # 沙箱模式
+            sandbox=True,
+
+            # 失败容忍度
+            fail_limit=5,
+
+            # EQI 参数
+            s_default=0.5,  # 默认净效用
+            eta=1.0         # 证据调制参数
+        )
+
+    def initialize(self, config: dict = None):
+        """
+        初始化插件
+
+        Args:
+            config: 配置字典
+        """
+        if config:
+            self.config = config
+            logger.info(f"[MyCustomPlugin] Initialized with config: {config}")
+
+    def on_batch_start(self, context: dict):
+        """
+        Batch 开始事件处理器
+
+        Args:
+            context: 事件上下文
+        """
+        step = context.get('step', 0)
+        data = context.get('data', {})
+
+        # 你的逻辑
+        self.metrics['counter'] += 1
+
+        logger.debug(f"[MyCustomPlugin] on_batch_start at step {step}")
+
+    def on_step_end(self, context: dict):
+        """
+        Step 结束事件处理器
+
+        Args:
+            context: 事件上下文
+        """
+        step = context.get('step', 0)
+        data = context.get('data', {})
+
+        # 读取指标
+        metrics = data.get('metrics', {})
+
+        # 你的逻辑
+        value = metrics.get('loss', 0.0)
+        self.metrics['avg_value'] = (
+            (self.metrics['avg_value'] * (self.metrics['counter'] - 1) + value)
+            / self.metrics['counter']
+        )
+
+        # 写入指标
+        if 'metrics' not in data:
+            data['metrics'] = {}
+        data['metrics']['my_custom_metric'] = self.metrics['avg_value']
+
+        logger.debug(f"[MyCustomPlugin] on_step_end at step {step}")
+
+    def cleanup(self):
+        """清理资源"""
+        logger.info(f"[MyCustomPlugin] Cleanup: {self.metrics}")
+```
+
+**2. 注册和使用**
+
+```python
+# 创建插件
+my_plugin = MyCustomPlugin()
+
+# 初始化
+my_plugin.initialize({
+    'param1': 'value1',
+    'param2': 42
+})
+
+# 注册到插件总线
+bus = PluginBus()
+bus.register(my_plugin)
+
+# 训练循环
+for step, batch in enumerate(dataloader):
+    # Batch 开始
+    bus.dispatch_event('on_batch_start', context={
+        'step': step,
+        'data': {}
+    })
+
+    # ... 训练代码 ...
+    loss = train_step(batch)
+
+    # Step 结束
+    bus.dispatch_event('on_step_end', context={
+        'step': step,
+        'data': {
+            'metrics': {'loss': loss}
+        }
+    })
+```
+
+### 插件开发最佳实践
+
+**1. 选择合适的优先级**
+
+```python
+# 根据插件功能选择优先级
+if plugin_type == 'kill_switch':
+    priority = PluginPriority.KILLSWITCH  # 0-49
+elif plugin_type == 'inference':
+    priority = PluginPriority.INFERENCE_CTRL  # 50-149
+elif plugin_type == 'optimization':
+    priority = PluginPriority.THROUGHPUT  # 150-249
+elif plugin_type == 'reasoning':
+    priority = PluginPriority.BEAM_SEARCH  # 250-349
+elif plugin_type == 'training':
+    priority = PluginPriority.GRPO  # 350-449
+```
+
+**2. 异常处理**
+
+```python
+def on_step_end(self, context: dict):
+    """Step 结束事件处理器（带异常处理）"""
+    try:
+        step = context.get('step', 0)
+        data = context.get('data', {})
+
+        # 你的逻辑
+        result = self.process(data)
+
+        # 写入结果
+        data['my_result'] = result
+
+    except Exception as e:
+        logger.error(f"[MyPlugin] Error in on_step_end: {e}")
+        # 记录失败（会触发 fail_limit 检查）
+        self.record_failure()
+```
+
+**3. 资源管理**
+
+```python
+class ResourceAwarePlugin(PluginBase):
+    """资源感知插件"""
+
+    def __init__(self):
+        super().__init__()
+        self.gpu_available = torch.cuda.is_available()
+        self.cache = {}
+
+    def get_manifest(self) -> PluginManifest:
+        # 根据可用资源调整预算
+        gpu_ms = 50.0 if self.gpu_available else 0.0
+        cpu_ms = 20.0 if not self.gpu_available else 5.0
+
+        return PluginManifest(
+            # ...
+            resources={
+                "cpu_ms": cpu_ms,
+                "gpu_ms": gpu_ms,
+                "io_mb": 2.0
+            }
+        )
+
+    def cleanup(self):
+        """清理资源"""
+        # 清空缓存
+        self.cache.clear()
+
+        # 释放 GPU 内存
+        if self.gpu_available:
+            torch.cuda.empty_cache()
+
+        logger.info("[ResourceAwarePlugin] Resources cleaned up")
+```
+
+---
+
+## 🚀 高级应用
+
+### 1. 多插件组合
+
+```python
+# 组合多个推理插件
+bus = PluginBus()
+
+# 1. Beam Search（探索多条路径）
+beam_search = BeamSearchReasoningPlugin(config={
+    'beam_width': 5,
+    'max_steps': 30
+})
+bus.register(beam_search)
+
+# 2. Self-Consistency（投票机制）
+sc_plugin = SelfConsistencyPlugin(config={
+    'num_paths': 10,
+    'temperature': 0.8
+})
+# 注意：与 Beam Search 冲突，二选一
+# bus.register(sc_plugin)
+
+# 3. Program-Aided（精确计算）
+pal_plugin = ProgramAidedReasoningPlugin(config={
+    'timeout': 10.0
+})
+bus.register(pal_plugin)
+
+# 4. EQI Reporter（监控）
+eqi_reporter = EQIReporterPlugin()
+eqi_reporter.initialize({'report_interval': 50})
+bus.register(eqi_reporter)
+
+# 推理：先尝试 PAL，失败则用 Beam Search
+question = "Complex math problem..."
+
+# 尝试 PAL
+bus.dispatch_event('on_inference_start', context={
+    'data': {'use_program_aided': True}
+})
+bus.dispatch_event('on_decode', context={
+    'step': 0,
+    'data': {'model': model, 'tokenizer': tokenizer, 'question': question}
+})
+
+pal_result = bus.get_data('program_aided_result')
+
+if not pal_result or not pal_result.get('success'):
+    # PAL 失败，使用 Beam Search
+    logger.info("PAL failed, falling back to Beam Search")
+
+    bus.dispatch_event('on_inference_start', context={
+        'data': {'use_beam_search': True}
+    })
+    bus.dispatch_event('on_decode', context={
+        'step': 0,
+        'data': {'model': model, 'tokenizer': tokenizer, 'input_ids': input_ids}
+    })
+
+    beam_result = bus.get_data('beam_search_result')
+    answer = tokenizer.decode(beam_result['path'])
+else:
+    answer = pal_result['result']
+
+print(f"Final answer: {answer}")
+```
+
+### 2. 动态插件加载
+
+```python
+import importlib
+
+class PluginLoader:
+    """动态插件加载器"""
+
+    def __init__(self, plugin_dir: str = "plugins"):
+        self.plugin_dir = plugin_dir
+        self.loaded_plugins = {}
+
+    def load_plugin(self, plugin_name: str):
+        """动态加载插件"""
+        try:
+            # 导入插件模块
+            module_path = f"{self.plugin_dir}.{plugin_name}"
+            module = importlib.import_module(module_path)
+
+            # 查找插件类（约定：类名 = 插件名 + Plugin）
+            plugin_class_name = ''.join(word.capitalize() for word in plugin_name.split('_')) + 'Plugin'
+            plugin_class = getattr(module, plugin_class_name)
+
+            # 实例化插件
+            plugin = plugin_class()
+
+            self.loaded_plugins[plugin_name] = plugin
+            logger.info(f"Loaded plugin: {plugin_name}")
+
+            return plugin
+
+        except Exception as e:
+            logger.error(f"Failed to load plugin {plugin_name}: {e}")
+            return None
+
+    def load_all_plugins(self, bus: PluginBus):
+        """加载所有插件"""
+        import os
+        import glob
+
+        # 查找所有插件文件
+        plugin_files = glob.glob(os.path.join(self.plugin_dir, "*_plugin.py"))
+
+        for plugin_file in plugin_files:
+            plugin_name = os.path.basename(plugin_file)[:-3]  # 去掉 .py
+            plugin = self.load_plugin(plugin_name)
+
+            if plugin:
+                bus.register(plugin)
+
+# 使用
+loader = PluginLoader(plugin_dir="apt_model/console/plugins")
+loader.load_all_plugins(bus)
+```
+
+### 3. 插件配置文件
+
+```yaml
+# plugins_config.yaml
+plugins:
+  - name: grpo
+    enabled: true
+    config:
+      group_size: 4
+      learning_rate: 0.00001
+      advantage_type: relative
+
+  - name: route_optimizer
+    enabled: true
+    config:
+      num_experts: 8
+      load_threshold: 1.5
+
+  - name: beam_search
+    enabled: false  # 禁用
+    config:
+      beam_width: 5
+      length_penalty: 0.6
+
+  - name: self_consistency
+    enabled: true
+    config:
+      num_paths: 10
+      temperature: 0.8
+```
+
+```python
+import yaml
+
+def load_plugins_from_config(config_file: str, bus: PluginBus):
+    """从配置文件加载插件"""
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+
+    plugin_registry = {
+        'grpo': GRPOPlugin,
+        'route_optimizer': RouteOptimizerPlugin,
+        'beam_search': BeamSearchReasoningPlugin,
+        'self_consistency': SelfConsistencyPlugin,
+        'program_aided': ProgramAidedReasoningPlugin,
+        'eqi_reporter': EQIReporterPlugin,
+    }
+
+    for plugin_spec in config['plugins']:
+        if not plugin_spec.get('enabled', True):
+            continue
+
+        name = plugin_spec['name']
+        plugin_class = plugin_registry.get(name)
+
+        if not plugin_class:
+            logger.warning(f"Unknown plugin: {name}")
+            continue
+
+        # 创建插件
+        plugin = plugin_class()
+
+        # 初始化（如果有配置）
+        if 'config' in plugin_spec:
+            plugin.initialize(plugin_spec['config'])
+
+        # 注册
+        bus.register(plugin)
+        logger.info(f"Registered plugin from config: {name}")
+
+# 使用
+load_plugins_from_config('plugins_config.yaml', bus)
+```
+
+---
+
+## 🐛 故障排查
+
+### 常见问题
+
+**1. 插件冲突**
+
+```
+错误: ConflictError: Plugin 'self_consistency' conflicts with 'beam_search'
+```
+
+**解决方案**：
+```python
+# 不要同时注册冲突插件
+bus.register(beam_search)
+# bus.register(sc_plugin)  # ❌ 会冲突
+
+# 或者根据场景选择
+if task_type == 'math':
+    bus.register(pal_plugin)  # 数学题用 PAL
+elif task_type == 'reasoning':
+    bus.register(beam_search)  # 推理题用 Beam Search
+```
+
+**2. 资源超限**
+
+```
+错误: ResourceExceededError: CPU budget exceeded (500ms > 450ms)
+```
+
+**解决方案**：
+```python
+# 方法1: 调整插件配置（减少计算量）
+grpo_plugin.initialize({
+    'group_size': 2  # 减少到 2（默认 4）
+})
+
+# 方法2: 增加速率限制
+manifest = grpo_plugin.get_manifest()
+manifest.rate_limit['steps'] = 5  # 每 5 步执行一次（默认 1）
+
+# 方法3: 使用异步模式
+manifest.blocking = False  # 改为非阻塞
+```
+
+**3. 插件失败**
+
+```
+错误: Plugin 'my_plugin' reached fail_limit (5 failures)
+```
+
+**解决方案**：
+```python
+# 检查插件日志
+logger.info(f"Plugin failures: {my_plugin.get_context('failures')}")
+
+# 增加失败容忍度
+manifest = my_plugin.get_manifest()
+manifest.fail_limit = 10  # 增加到 10（默认 5）
+
+# 添加异常处理
+def on_step_end(self, context: dict):
+    try:
+        # 你的逻辑
+        pass
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        # 降级处理
+        self.use_fallback_logic()
+```
+
+### 调试技巧
+
+**1. 启用详细日志**
+
+```python
+import logging
+
+# 设置日志级别
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# 插件日志
+logger = logging.getLogger('apt_model.console.plugins')
+logger.setLevel(logging.DEBUG)
+```
+
+**2. 插件性能分析**
+
+```python
+import time
+
+class ProfilingPlugin(PluginBase):
+    """性能分析插件"""
+
+    def __init__(self):
+        super().__init__()
+        self.timings = []
+
+    def on_step_end(self, context: dict):
+        start_time = time.perf_counter()
+
+        # 你的逻辑
+        self.process(context)
+
+        elapsed = time.perf_counter() - start_time
+        self.timings.append(elapsed)
+
+        if len(self.timings) % 100 == 0:
+            avg_time = sum(self.timings) / len(self.timings)
+            logger.info(f"[Profiling] Average time: {avg_time*1000:.2f}ms")
+```
+
+**3. 插件状态检查**
+
+```python
+# 获取所有已注册插件
+registered_plugins = bus.list_plugins()
+print(f"Registered plugins: {registered_plugins}")
+
+# 获取插件状态
+for plugin_name in registered_plugins:
+    manifest = bus.get_plugin_manifest(plugin_name)
+    print(f"\n{plugin_name}:")
+    print(f"  Priority: {manifest.priority}")
+    print(f"  Events: {manifest.events}")
+    print(f"  Resources: {manifest.resources}")
+    print(f"  Conflicts: {manifest.conflicts}")
+```
+
+---
+
+## 📚 参考资源
+
+### 学术论文
+
+- [PAL: Program-aided Language Models](https://arxiv.org/abs/2211.10435) - Gao et al., 2022
+- [Self-Consistency Improves Chain of Thought](https://arxiv.org/abs/2203.11171) - Wang et al., 2022
+- [Beam Search Strategies for Neural Machine Translation](https://arxiv.org/abs/1702.01806) - Freitag & Al-Onaizan, 2017
+- [Group Relative Policy Optimization](https://arxiv.org/abs/2402.03300) - GRPO 论文
+
+### APT 相关文档
+
+- [插件系统架构](PLUGIN_SYSTEM.md) - 插件系统设计文档
+- [DeepSeek 训练指南](DEEPSEEK_TRAINING_GUIDE.md) - MoE 训练教程
+- [图脑训练教程](GRAPH_BRAIN_TRAINING_GUIDE.md) - 图推理架构
+- [数据预处理指南](DATA_PREPROCESSING_GUIDE.md) - 数据清洗流程
+
+### 代码示例
+
+```bash
+# 插件示例代码
+apt_model/console/plugins/
+├── grpo_plugin.py              # GRPO 训练插件
+├── route_optimizer_plugin.py   # 路由优化插件
+├── eqi_reporter_plugin.py      # EQI 上报插件
+└── reasoning/
+    ├── beam_search_plugin.py        # Beam Search
+    ├── self_consistency_plugin.py   # Self-Consistency
+    └── program_aided_plugin.py      # Program-Aided
+```
+
+---
+
+## 📝 更新日志
+
+- **v1.0.0** (2025-12) - 初始版本
+  - ✅ 核心插件文档（GRPO、Route Optimizer、EQI Reporter）
+  - ✅ 推理插件文档（Beam Search、Self-Consistency、PAL）
+  - ✅ 插件开发指南
+  - ✅ 完整代码示例
+  - ✅ 故障排查指南
+
+---
+
+<div align="center">
+
+**让插件系统为你的 AI 模型赋能！ 🚀**
+
+26+ 生产级插件，开箱即用，灵活可扩展
+
+如有问题，请提交 [Issue](https://github.com/chen0430tw/APT-Transformer/issues)
+
+</div>
