@@ -81,15 +81,21 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 适用于拥有NVIDIA显卡的环境，提供显著加速：
 
 ```bash
-# CUDA 11.8版本（推荐，兼容性好）
+# CUDA 11.8版本（兼容性好）
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# CUDA 12.1版本（较新显卡）
+# CUDA 12.1版本（推荐，兼容CUDA 12.2和12.3）
+# 注意：PyTorch跳过了cu122和cu123，使用cu121即可
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# CUDA 12.2及以上版本（最新显卡）
-# 注意：PyTorch官方目前最高支持到cu121，但cu121版本可以在CUDA 12.2+环境下正常工作
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# CUDA 12.4版本
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# CUDA 12.6版本
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# CUDA 13.0版本（最新）
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
 
 **如何查看CUDA版本：**
