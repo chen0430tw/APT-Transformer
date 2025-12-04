@@ -1,0 +1,19 @@
+# APT-Transformer 最小依赖配置
+# 仅包含核心功能所需的最小依赖集
+
+# Core ML/DL框架（最小配置）
+torch>=2.2
+transformers>=4.45
+numpy>=1.24
+
+# 基础工具
+tqdm>=4.65  # 进度条
+
+# 分词器（中文支持）
+jieba>=0.42
+
+# 配置文件支持
+pyyaml>=6.0
+
+# 基础日志和序列化
+safetensors>=0.4

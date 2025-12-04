@@ -45,7 +45,24 @@ APT Model 是一个生产就绪的Transformer训练平台，提供完整的训�
 
 ## 快速开始
 
-### 安装
+### ⚡ 超快速上手（30秒）
+
+```bash
+# 1. 安装（二选一）
+pip install -r requirements.txt          # 完整安装
+pip install -r requirements-minimal.txt  # 最小安装
+
+# 2. 训练一个模型
+python -m apt_model train --data data.txt --epochs 10
+
+# 3. 文本生成
+python -m apt_model chat
+```
+
+<details>
+<summary><b>📋 查看完整安装步骤</b></summary>
+
+### 完整安装指南
 
 #### 1. 克隆仓库
 ```bash
@@ -149,6 +166,8 @@ python -m apt_model --help
 - **模块导入错误**：[INSTALLATION.md](INSTALLATION.md)
 - **CUDA问题**：确认显卡驱动已正确安装
 - **依赖冲突**：建议使用虚拟环境（`python -m venv venv`）
+
+</details>
 
 ### 5分钟上手
 

@@ -1,0 +1,44 @@
+# APT-Transformer 开发依赖配置
+# 包含测试、文档生成、代码质量检查等开发工具
+
+# 首先安装主要依赖
+-r requirements.txt
+
+# 测试框架
+pytest>=8.0              # 单元测试框架
+pytest-cov>=4.1          # 测试覆盖率
+pytest-xdist>=3.5        # 并行测试
+pytest-timeout>=2.2      # 测试超时控制
+pytest-mock>=3.12        # Mock 工具
+
+# 代码质量检查
+black>=24.0              # 代码格式化
+flake8>=7.0              # 代码风格检查
+mypy>=1.8                # 类型检查
+isort>=5.13              # import 排序
+pylint>=3.0              # 代码质量分析
+
+# 文档生成
+sphinx>=7.2              # 文档生成
+sphinx-rtd-theme>=2.0    # ReadTheDocs 主题
+sphinx-autodoc-typehints>=1.25  # 自动类型提示文档
+myst-parser>=2.0         # Markdown 支持
+
+# 性能分析
+line-profiler>=4.1       # 逐行性能分析
+memory-profiler>=0.61    # 内存分析
+py-spy>=0.3              # 采样分析器
+
+# 开发工具
+ipython>=8.20            # 交互式 Python
+jupyter>=1.0             # Jupyter Notebook
+ipdb>=0.13               # 调试器
+pre-commit>=3.6          # Git hooks
+
+# 依赖管理
+pip-tools>=7.3           # 依赖锁定
+pipdeptree>=2.13         # 依赖树查看
+
+# 其他工具
+watchdog>=4.0            # 文件监控（自动重载）
+python-dotenv>=1.0       # .env 文件支持
