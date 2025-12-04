@@ -48,6 +48,10 @@ APT Model 是一个生产就绪的Transformer训练平台，提供完整的训�
 ### ⚡ 超快速上手（30秒）
 
 ```bash
+# 0. 克隆仓库
+git clone https://github.com/chen0430tw/APT-Transformer.git
+cd APT-Transformer
+
 # 1. 安装（二选一）
 pip install -r requirements.txt          # 完整安装
 pip install -r requirements-minimal.txt  # 最小安装
