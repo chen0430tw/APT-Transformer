@@ -421,3 +421,176 @@ def train_gpto3(
     )
 
     return model, tokenizer, history
+
+
+class GPT5Trainer(BaseGPTTrainer):
+    """
+    Trainer for GPT-5 model with Codebook MoE, streaming retrieval, and bi-state alignment.
+
+    GPT-5 特性:
+    - Codebook MoE with top-k routing
+    - Streaming retrieval with memory buckets
+    - Bi-state precision alignment
+    - Leaf-Vote generation (K=2)
+    """
+
+    def __init__(
+        self,
+        model,
+        optimizer,
+        device: str = 'cuda',
+        max_grad_norm: float = 1.0,
+        enable_streaming_retrieval: bool = False,
+        memory_bucket_size: int = 512,
+        **kwargs
+    ):
+        super().__init__(model, optimizer, device, max_grad_norm, **kwargs)
+        self.enable_streaming_retrieval = enable_streaming_retrieval
+        self.memory_bucket_size = memory_bucket_size
+
+        # Retrieval statistics
+        self.retrieval_stats = {
+            'total_retrievals': 0,
+            'successful_retrievals': 0,
+            'avg_confidence': 0.0
+        }
+
+    def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Compute loss for GPT-5"""
+        shift_logits = logits[:, :-1, :].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+
+        loss = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+            ignore_index=-100
+        )
+
+        return loss
+
+    def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
+        """Training step for GPT-5"""
+        self.model.train()
+
+        input_ids = batch['input_ids'].to(self.device)
+        labels = batch['labels'].to(self.device)
+
+        self.optimizer.zero_grad()
+
+        # GPT-5 forward pass with step_idx for streaming retrieval
+        logits, info = self.model.forward_step(
+            input_ids,
+            step_idx=self.step_count,
+            schema_required=False
+        )
+
+        loss = self.compute_loss(logits, labels)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        self.optimizer.step()
+
+        self.step_count += 1
+
+        # Track retrieval statistics
+        if 'align' in info and info['align']:
+            self.retrieval_stats['total_retrievals'] += 1
+            if 'confidence' in info['align']:
+                conf = info['align']['confidence']
+                self.retrieval_stats['successful_retrievals'] += 1
+                n = self.retrieval_stats['successful_retrievals']
+                old_avg = self.retrieval_stats['avg_confidence']
+                self.retrieval_stats['avg_confidence'] = old_avg + (conf - old_avg) / n
+
+        return loss.item()
+
+    def evaluate(self, dataloader) -> Dict[str, float]:
+        """Evaluate GPT-5 model"""
+        self.model.eval()
+
+        total_loss = 0.0
+        total_steps = 0
+
+        with torch.no_grad():
+            for batch in dataloader:
+                input_ids = batch['input_ids'].to(self.device)
+                labels = batch['labels'].to(self.device)
+
+                logits, info = self.model.forward_step(
+                    input_ids,
+                    step_idx=0,
+                    schema_required=False
+                )
+
+                loss = self.compute_loss(logits, labels)
+                total_loss += loss.item()
+                total_steps += 1
+
+        avg_loss = total_loss / max(1, total_steps)
+        perplexity = torch.exp(torch.tensor(avg_loss)).item()
+
+        return {
+            'eval_loss': avg_loss,
+            'perplexity': perplexity,
+            'retrieval_rate': self.retrieval_stats['total_retrievals'] / max(1, self.step_count),
+            'avg_confidence': self.retrieval_stats['avg_confidence']
+        }
+
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int = 50,
+        temperature: float = 1.0
+    ) -> torch.Tensor:
+        """Generate text using GPT-5"""
+        self.model.eval()
+        generated = input_ids.clone()
+
+        with torch.no_grad():
+            for step in range(max_new_tokens):
+                logits, info = self.model.forward_step(
+                    generated,
+                    step_idx=step,
+                    schema_required=False
+                )
+
+                next_logits = logits[:, -1, :] / temperature
+                probs = F.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+                generated = torch.cat([generated, next_token], dim=1)
+
+                if (next_token == 2).all():
+                    break
+
+        return generated
+
+
+def train_gpt5(
+    model,
+    train_dataloader,
+    val_dataloader=None,
+    num_epochs: int = 3,
+    learning_rate: float = 5e-5,
+    device: str = 'cuda',
+    save_path: str = './checkpoints/gpt5',
+    **kwargs
+) -> Dict[str, float]:
+    """Convenience function to train GPT-5 model"""
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+    trainer = GPT5Trainer(
+        model=model,
+        optimizer=optimizer,
+        device=device,
+        **kwargs
+    )
+
+    final_metrics = trainer.train(
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        num_epochs=num_epochs,
+        save_path=save_path
+    )
+
+    return final_metrics
