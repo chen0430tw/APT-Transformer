@@ -17,6 +17,8 @@
   - [GRPO Plugin](#1-grpo-plugin-强化学习训练)
   - [Route Optimizer](#2-route-optimizer-moe负载均衡)
   - [EQI Reporter](#3-eqi-reporter-指标上报)
+- [部署插件](#部署插件)
+  - [Ollama Export](#1-ollama-export-本地部署)
 - [推理插件](#推理插件)
   - [Beam Search](#1-beam-search-多路径搜索)
   - [Self-Consistency](#2-self-consistency-自洽推理)
@@ -611,6 +613,300 @@ report = {
     'activations': 1523,
     'log_size': 1000
 }
+```
+
+---
+
+## 🚀 部署插件
+
+### 1. Ollama Export (本地部署)
+
+#### 功能概述
+
+**Ollama Export Plugin** 将 APT 模型导出为 **Ollama 格式**，支持本地部署和推理。
+
+**核心功能**:
+```
+APT 模型 → GGUF格式 → Modelfile配置 → Ollama注册 → 本地运行
+```
+
+**支持的量化方式**:
+- ✅ Q4_0 - 4位量化 (最小体积)
+- ✅ Q4_K_M - 4位K-quants (推荐)
+- ✅ Q5_K_M - 5位K-quants (平衡)
+- ✅ Q8_0 - 8位量化 (高质量)
+- ✅ F16 - 半精度浮点
+
+**优势**:
+- ✅ 本地部署无需云端
+- ✅ 模型体积减小 70-80%
+- ✅ 推理速度提升
+- ✅ 隐私保护
+
+#### 使用方法
+
+**1. 基础使用**
+
+```python
+from apt_model.plugins.ollama_export_plugin import OllamaExportPlugin
+
+# 创建插件
+config = {
+    'quantization': 'Q4_K_M',    # 量化类型
+    'context_length': 2048,       # 上下文长度
+    'temperature': 0.7,           # 采样温度
+}
+
+plugin = OllamaExportPlugin(config)
+
+# 完整导出流程
+results = plugin.export_complete(
+    model_path="./trained_model",      # APT模型路径
+    output_dir="./ollama_export",      # 输出目录
+    model_name="apt-chinese",          # Ollama模型名称
+    register=True                      # 自动注册到Ollama
+)
+
+print(f"✅ GGUF文件: {results['gguf_path']}")
+print(f"✅ Modelfile: {results['modelfile_path']}")
+print(f"✅ 已注册: {results['registered']}")
+```
+
+**2. 分步导出**
+
+```python
+# Step 1: 转换为GGUF格式
+gguf_path = plugin.export_to_gguf(
+    model_path="./trained_model",
+    output_path="./apt-model.gguf",
+    quantization="Q4_K_M"
+)
+
+# Step 2: 创建Modelfile
+modelfile_path = plugin.create_modelfile(
+    gguf_path=gguf_path,
+    system_prompt="你是一个由APT模型驱动的AI助手。",
+    template="""{{ if .System }}{{ .System }}{{ end }}
+{{ if .Prompt }}用户: {{ .Prompt }}{{ end }}
+助手: """
+)
+
+# Step 3: 注册到Ollama
+success = plugin.register_to_ollama(
+    modelfile_path=modelfile_path,
+    model_name="apt-chinese:latest"
+)
+
+if success:
+    print("✅ 模型已注册到Ollama!")
+    print("运行: ollama run apt-chinese:latest")
+```
+
+**3. 训练后自动导出**
+
+```python
+# 配置自动导出
+config = {
+    'quantization': 'Q4_K_M',
+    'auto_export': True,           # 训练结束自动导出
+    'auto_register': True,         # 自动注册到Ollama
+    'output_dir': './ollama_models'
+}
+
+plugin = OllamaExportPlugin(config)
+
+# 在训练循环中注册插件
+from apt_model.console.plugin_bus import PluginBus
+bus = PluginBus()
+bus.register(plugin)
+
+# 训练结束后会自动触发导出
+# bus.dispatch_event('on_training_end', context={
+#     'checkpoint_path': './final_model'
+# })
+```
+
+**4. 测试导出的模型**
+
+```python
+# 测试模型
+response = plugin.test_model(
+    model_name="apt-chinese:latest",
+    prompt="你好！介绍一下你自己。"
+)
+
+print(f"模型响应: {response}")
+
+# 或使用命令行
+# $ ollama run apt-chinese:latest
+# >>> 你好！介绍一下你自己。
+# 你好！我是一个由APT模型驱动的AI助手...
+```
+
+**5. 不同量化方式对比**
+
+```python
+# 导出多个量化版本进行对比
+quantizations = ['Q4_0', 'Q4_K_M', 'Q5_K_M', 'Q8_0']
+
+for quant in quantizations:
+    plugin = OllamaExportPlugin({'quantization': quant})
+
+    results = plugin.export_complete(
+        model_path="./trained_model",
+        output_dir=f"./ollama_export_{quant}",
+        model_name=f"apt-model-{quant.lower()}",
+        register=True
+    )
+
+    # 检查文件大小
+    import os
+    size_mb = os.path.getsize(results['gguf_path']) / (1024 * 1024)
+    print(f"{quant}: {size_mb:.2f} MB")
+
+# 输出示例:
+# Q4_0:   1250.32 MB  (最小)
+# Q4_K_M: 1380.45 MB  (推荐)
+# Q5_K_M: 1620.78 MB  (平衡)
+# Q8_0:   2340.92 MB  (高质量)
+```
+
+#### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `quantization` | str | 'Q4_K_M' | 量化类型 |
+| `context_length` | int | 2048 | 上下文长度 |
+| `temperature` | float | 0.7 | 采样温度 |
+| `auto_export` | bool | False | 训练后自动导出 |
+| `auto_register` | bool | False | 自动注册到Ollama |
+| `output_dir` | str | './ollama_export' | 输出目录 |
+
+#### 量化方式说明
+
+| 量化类型 | 精度 | 体积 | 速度 | 适用场景 |
+|---------|------|------|------|---------|
+| **Q4_0** | ⭐⭐ | 最小 | 最快 | 资源受限环境 |
+| **Q4_K_M** | ⭐⭐⭐ | 小 | 快 | **推荐用于生产** |
+| **Q5_K_M** | ⭐⭐⭐⭐ | 中 | 中 | 质量要求高 |
+| **Q8_0** | ⭐⭐⭐⭐⭐ | 大 | 慢 | 最高质量 |
+| **F16** | ⭐⭐⭐⭐⭐ | 最大 | 最慢 | 研究/对比 |
+
+#### Modelfile 自定义
+
+```python
+# 创建自定义Modelfile
+custom_system_prompt = """你是一个专业的中文AI助手，专注于以下领域:
+- 技术问答
+- 代码生成
+- 文档写作
+
+请用简洁、专业的语言回答问题。"""
+
+custom_template = """{{ if .System }}系统: {{ .System }}
+
+{{ end }}{{ if .Prompt }}用户: {{ .Prompt }}
+{{ end }}助手: """
+
+modelfile_path = plugin.create_modelfile(
+    gguf_path="./apt-model.gguf",
+    output_path="./Modelfile",
+    system_prompt=custom_system_prompt,
+    template=custom_template
+)
+```
+
+#### 命令行使用
+
+导出后可以直接用Ollama命令行:
+
+```bash
+# 运行模型
+ollama run apt-chinese:latest
+
+# 交互式对话
+>>> 你好！
+你好！我是一个由APT模型驱动的AI助手...
+
+>>> 请用Python写一个快速排序
+当然，下面是Python实现的快速排序算法:
+```python
+def quicksort(arr):
+    if len(arr) <= 1:
+        return arr
+    ...
+```
+
+# 查看模型列表
+ollama list
+
+# 删除模型
+ollama rm apt-chinese:latest
+
+# 复制模型
+ollama cp apt-chinese:latest apt-chinese:backup
+```
+
+#### 输出文件结构
+
+```
+ollama_export/
+├── apt-chinese.gguf         # GGUF模型文件 (量化后)
+├── Modelfile                 # Ollama配置文件
+└── README.md                 # 使用说明 (可选)
+```
+
+#### 故障排查
+
+**1. Ollama未安装**
+
+```
+❌ Ollama命令未找到
+```
+
+**解决方案**:
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Windows
+# 访问 https://ollama.ai/download
+```
+
+**2. GGUF转换失败**
+
+```
+❌ GGUF转换失败: KeyError: 'model.embed_tokens.weight'
+```
+
+**解决方案**:
+```python
+# 确保模型路径正确，包含 pytorch_model.bin
+import os
+print(os.listdir("./trained_model"))
+# 应该看到: ['pytorch_model.bin', 'config.json', ...]
+
+# 或者使用HuggingFace格式
+model = AutoModelForCausalLM.from_pretrained("./trained_model")
+model.save_pretrained("./trained_model_fixed")
+```
+
+**3. 注册失败**
+
+```
+❌ 注册失败: Error: model already exists
+```
+
+**解决方案**:
+```bash
+# 删除旧模型
+ollama rm apt-chinese:latest
+
+# 或使用不同的标签
+python export.py --model-name apt-chinese:v2
 ```
 
 ---
