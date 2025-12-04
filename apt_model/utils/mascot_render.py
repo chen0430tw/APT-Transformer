@@ -121,7 +121,67 @@ def ansi_line_truecolor(row_u8: np.ndarray) -> str:
 
 
 # =========================
-# 吉祥物渲染主函数
+# 黑白 ASCII 渲染（跨平台稳定）
+# =========================
+
+def render_mascot_ascii(
+    image_path: str,
+    cols: int = 50,
+    char_aspect: float = 2.0,
+    smooth_k: int = 3,
+    unsharp: float = 0.5,
+    edge_mix: float = 0.30,
+    gamma: float = 1.0,
+    charset: str = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+) -> str:
+    """
+    渲染兔子吉祥物为纯 ASCII 艺术（类似 Linux Tux）
+
+    使用纯 ASCII 字符，任何平台都能正常显示，不会偏移
+    """
+    if not os.path.exists(image_path):
+        return ""
+
+    try:
+        # 1) 加载并缩放
+        im = Image.open(image_path).convert("RGB")
+        imr = resize_for_terminal(im, cols=cols, char_aspect=char_aspect)
+        rgb01 = np.asarray(imr, np.uint8).astype(np.float32) / 255.0
+
+        # 2) 湿层处理
+        wet = box_blur_float01(rgb01, k=smooth_k)
+        wet = unsharp_like(wet, amount=unsharp, inner_k=3)
+
+        # 3) 边缘提示融合
+        gray = to_gray01(wet)
+        if edge_mix > 0:
+            edge = sobel_fast(gray)
+            gray = np.clip((1-edge_mix)*gray + edge_mix*(gray + 0.5*edge), 0, 1)
+
+        # 4) γ 调整
+        if abs(gamma - 1.0) > 1e-6:
+            gray = np.clip(gray, 0, 1) ** gamma
+
+        # 5) 归一化
+        gmin, gmax = float(gray.min()), float(gray.max())
+        gray = (gray - gmin) / (gmax - gmin + 1e-8)
+
+        # 6) 映射字符（反转：暗色用密集字符，亮色用稀疏字符）
+        bins = np.linspace(0, 1, num=len(charset)+1)
+        idx = np.digitize(gray, bins) - 1
+        idx = np.clip(idx, 0, len(charset)-1)
+
+        # 反转索引（让深色区域用复杂字符）
+        idx = len(charset) - 1 - idx
+
+        lines = ["".join(charset[j] for j in row) for row in idx]
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+# =========================
+# 彩色 ANSI 渲染（需要终端支持）
 # =========================
 
 def render_mascot_ansi(
@@ -185,13 +245,14 @@ def render_mascot_ansi(
         return f"[错误] 渲染失败: {e}"
 
 
-def print_apt_mascot(cols: int = 60, show_banner: bool = True):
+def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool = False):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux）
 
     参数:
         cols: 显示宽度（字符数）
         show_banner: 是否显示横幅文字
+        color_mode: 是否使用彩色模式（默认 False，使用纯 ASCII）
     """
     # 获取兔子图片路径
     script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -201,29 +262,49 @@ def print_apt_mascot(cols: int = 60, show_banner: bool = True):
         # 如果找不到图片，显示简单的文字横幅
         if show_banner:
             print("\n" + "="*70)
-            print(" APT - Autopoietic Transformer")
-            print(" 自生成变换器")
+            print("  APT - Autopoietic Transformer")
+            print("  自生成变换器")
             print("="*70 + "\n")
         return
 
-    # 渲染并打印兔子
-    ansi_art = render_mascot_ansi(
-        mascot_path,
-        cols=cols,
-        char_aspect=2.0,
-        smooth_k=5,
-        unsharp=0.5,
-        edge_mix=0.30,
-        dither_strength=0.9
-    )
+    # 渲染兔子（默认使用纯 ASCII，更稳定）
+    if color_mode:
+        # 彩色 ANSI 模式（需要终端支持）
+        mascot_art = render_mascot_ansi(
+            mascot_path,
+            cols=cols,
+            char_aspect=2.0,
+            smooth_k=5,
+            unsharp=0.5,
+            edge_mix=0.30,
+            dither_strength=0.9
+        )
+    else:
+        # 纯 ASCII 模式（类似 Linux Tux，跨平台稳定）
+        mascot_art = render_mascot_ascii(
+            mascot_path,
+            cols=cols,
+            char_aspect=2.0,
+            smooth_k=3,
+            unsharp=0.5,
+            edge_mix=0.30,
+            gamma=1.0
+        )
 
+    # 打印吉祥物和横幅
     if show_banner:
         print("\n" + "="*70)
-    print(ansi_art)
+        print("  APT - Autopoietic Transformer | 自生成变换器")
+        print("="*70)
+
+    if mascot_art:
+        # 居中显示吉祥物
+        for line in mascot_art.split('\n'):
+            print(line)
+
     if show_banner:
         print("="*70)
-        print(" APT - Autopoietic Transformer | 自生成变换器")
-        print(" Training Session Starting... | 训练会话启动中...")
+        print("  Training Session Starting... | 训练会话启动中...")
         print("="*70 + "\n")
 
 

@@ -204,18 +204,21 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     # 设置随机种子
     set_seed(42)
 
-    # 显示 APT 兔子吉祥物（在安柏消息之前）
+    # 显示 APT 兔子吉祥物（类似 Linux Tux，纯 ASCII 跨平台稳定）
     try:
         from apt_model.utils.mascot_render import print_apt_mascot
-        print_apt_mascot(cols=60, show_banner=False)
+        print_apt_mascot(cols=50, show_banner=True, color_mode=False)
     except Exception:
-        pass  # 如果渲染失败，静默忽略
+        # 如果渲染失败，至少显示文字横幅
+        info_print("\n" + "="*70)
+        info_print("  APT - Autopoietic Transformer | 自生成变换器")
+        info_print("="*70 + "\n")
 
     # 显示安柏的欢迎消息
     if language == "zh" or (language is None and any(ord(c) > 127 for text in (texts or get_training_texts())[:3] for c in text[:20])):
-        info_print("\n安柏：一起来训练吧！\n")
+        info_print("安柏：一起来训练吧！\n")
     else:
-        info_print("\nAmber: Let's train together!\n")
+        info_print("Amber: Let's train together!\n")
 
     if logger:
         logger.info("开始训练模型...")
