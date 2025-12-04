@@ -19,6 +19,7 @@ from apt_model.modeling.apt_model import APTModel, APTLargeModel
 from apt_model.generation.generator import generate_natural_text
 from apt_model.generation.evaluator import evaluate_text_quality
 from apt_model.config.settings_manager import settings
+from apt_model.training.training_guard import TrainingGuard, EarlyStopping
 
 # 导入中文分词器相关函数
 from apt_model.modeling.chinese_tokenizer_integration import (
@@ -193,10 +194,13 @@ def get_training_texts():
 # =============================================================================
 # 主训练函数
 # =============================================================================
-def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model", 
-                logger=None, resource_monitor=None, multimodal_config=None, 
-                tokenizer_type=None, language=None, texts=None, tokenizer=None):
-    """训练模型的主函数"""
+def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_model",
+                logger=None, resource_monitor=None, multimodal_config=None,
+                tokenizer_type=None, language=None, texts=None, tokenizer=None,
+                # Training guard parameters
+                enable_guard=True, max_steps=None, max_time_hours=None,
+                early_stopping_patience=None, guard_verbose=True):
+    """训练模型的主函数（带训练保护）"""
     # 设置随机种子
     set_seed(42)
     
@@ -305,6 +309,26 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     best_loss = float('inf')
     patience = 5
     patience_counter = 0
+
+    # 训练保护设置
+    guard = None
+    if enable_guard:
+        early_stopping = None
+        if early_stopping_patience is not None:
+            early_stopping = EarlyStopping(
+                patience=early_stopping_patience,
+                mode='min',
+                verbose=guard_verbose
+            )
+
+        guard = TrainingGuard(
+            max_steps=max_steps,
+            max_time_hours=max_time_hours,
+            early_stopping=early_stopping,
+            verbose=guard_verbose
+        )
+        guard.start()
+        info_print("🛡️ 训练保护已启用")
     
     # 尝试使用tensorboard记录训练过程
     try:
@@ -458,7 +482,13 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                     writer.add_scalar('Learning_rate', scheduler.get_last_lr()[0], global_step)
                 
                 global_step += 1
-                
+
+                # 训练保护检查
+                if guard:
+                    if not guard.step(loss=loss.item() * accumulation_steps, model=model):
+                        info_print("🛑 训练保护触发停止")
+                        break
+
                 if global_step % 50 == 0 or i == len(dataloader) - 1:
                     # 测试生成和评估代码保持不变...
                     pass
@@ -472,10 +502,17 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
 
         avg_loss = total_loss / max(1, len(dataloader))
         info_print(f"Epoch {epoch+1}/{epochs} 完成, 平均损失: {avg_loss:.4f}")
-        
+
+        # 训练保护验证检查
+        should_stop_guard = False
+        if guard:
+            if not guard.validate(avg_loss):
+                info_print("🛑 训练保护 Early Stopping 触发")
+                should_stop_guard = True
+
         if use_tensorboard:
             writer.add_scalar('Loss/epoch', avg_loss, epoch)
-            
+
         try:
             if avg_loss < best_loss:
                 best_loss = avg_loss
@@ -488,6 +525,9 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                     info_print(f"早停: {patience} 轮没有改善，停止训练")
                     break
 
+            if should_stop_guard:
+                break
+
             _test_generation_after_epoch(model, tokenizer, logger, detected_language)
         except Exception as e:
             if logger:
@@ -496,8 +536,23 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     
     if use_tensorboard:
         writer.close()
-    
-    info_print("\n✓ 训练完成！最终模型已保存。")
+
+    # 打印训练保护统计
+    if guard:
+        stats = guard.get_stats()
+        info_print(f"\n{'='*80}")
+        info_print("训练保护统计:")
+        info_print(f"  总步数: {stats['total_steps']}")
+        info_print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
+        info_print(f"  NaN 损失: {stats['nan_losses']}")
+        info_print(f"  Inf 损失: {stats['inf_losses']}")
+        info_print(f"  梯度爆炸: {stats['gradient_explosions']}")
+        info_print(f"  内存警告: {stats['memory_warnings']}")
+        if stats['stopped']:
+            info_print(f"  停止原因: {stats['stop_reason']}")
+        info_print(f"{'='*80}\n")
+
+    info_print("✓ 训练完成！最终模型已保存。")
 
     try:
         _compare_model_outputs(untrained_model, model, tokenizer, detected_language)
