@@ -1,5 +1,7 @@
 # Core ML/DL框架
 torch>=2.2
+torchaudio>=2.2
+torchvision>=0.17
 transformers>=4.45
 datasets>=3.0
 accelerate>=1.0
@@ -27,6 +29,7 @@ tqdm>=4.65
 sentencepiece>=0.1.99
 tokenizers>=0.19
 jieba>=0.42
+fugashi>=1.3  # 日语分词器
 
 # 序列化和配置
 safetensors>=0.4
@@ -39,6 +42,7 @@ optuna>=3.6
 # 系统监控
 GPUtil>=1.4
 psutil>=5.9
+pynvml>=11.5  # NVIDIA GPU 监控
 
 # Web框架和API
 gradio>=4.0.0
@@ -49,6 +53,16 @@ python-multipart>=0.0.6
 # HTTP和网络
 requests>=2.31
 aiohttp>=3.9
+
+# AI API 提供商
+anthropic>=0.25  # Claude API
+openai>=1.30  # GPT API
+
+# AI 搜索和检索
+duckduckgo-search>=6.1  # DuckDuckGo 搜索后端
+
+# 终端美化
+rich>=13.7  # 进度条和输出美化
 
 # 图处理（GraphRAG）
 networkx>=3.1
