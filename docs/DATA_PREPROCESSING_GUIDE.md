@@ -1,10 +1,14 @@
-# 数据清洗与预处理指南
+# APT 数据预处理与清洗指南
 
 <div align="center">
 
-**APT 模型训练数据清洗完整教程**
+**APT 模型训练数据处理完整教程**
 
 从原始数据到高质量训练语料
+
+> **文档说明 (Option B 方式)**
+> ✅ **实际实现**: 项目中已存在的可用代码
+> 📝 **扩展示例**: 需要额外实现或依赖的功能
 
 </div>
 
@@ -12,17 +16,21 @@
 
 ## 📋 目录
 
-- [为什么需要数据清洗](#为什么需要数据清洗)
-- [数据质量标准](#数据质量标准)
-- [清洗流程](#清洗流程)
-- [去重策略](#去重策略)
-- [质量过滤](#质量过滤)
-- [格式规范化](#格式规范化)
-- [分词与标记化](#分词与标记化)
-- [数据平衡](#数据平衡)
+### ✅ 实际实现部分
+- [核心数据处理器 (DataProcessor)](#核心数据处理器-dataprocessor)
+- [数据集类 (Dataset Classes)](#数据集类-dataset-classes)
+- [数据处理插件 (DataProcessorsPlugin)](#数据处理插件-dataprocessorsplugin)
+- [文件加载与批处理](#文件加载与批处理)
+
+### 📝 扩展功能部分
 - [流式加载训练数据](#流式加载训练数据)
 - [公开数据集使用](#公开数据集使用)
 - [图像训练数据集](#图像训练数据集)
+- [高级数据增强](#高级数据增强)
+
+### 通用知识
+- [为什么需要数据清洗](#为什么需要数据清洗)
+- [数据质量标准](#数据质量标准)
 - [完整示例](#完整示例)
 
 ---
@@ -91,7 +99,446 @@ QUALITY_STANDARDS = {
 
 ---
 
+## ✅ 核心数据处理器 (DataProcessor)
+
+### 实际实现
+
+**文件位置**: `apt_model/data/data_processor.py`
+
+`DataProcessor` 是 APT 项目的核心数据预处理类，提供文本清洗、分词、数据增强等功能。
+
+#### 基础使用
+
+```python
+from apt_model.data.data_processor import DataProcessor
+from transformers import AutoTokenizer
+
+# 初始化分词器
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+# 创建数据处理器
+processor = DataProcessor(
+    tokenizer=tokenizer,
+    max_seq_length=512,
+    lower_case=True,           # 转小写
+    remove_accents=True,       # 移除重音符号
+    clean_text=True,           # 启用文本清洗
+    language='en'              # 语言: 'en' 或 'zh'
+)
+
+# 处理单个文本
+text = "This is   a sample  text with   extra spaces."
+cleaned_text = processor.process_text(text)
+
+# 批量处理文本
+texts = ["Text 1", "Text 2", "Text 3"]
+cleaned_texts = processor.process_batch(texts, show_progress=True)
+```
+
+#### 已实现的清洗功能
+
+✅ **自动执行的清洗操作** (`_clean_text` 方法):
+- 合并多余空格和换行
+- 移除/替换 URL 为 `[URL]`
+- 移除 HTML 标签
+- 全角转半角 (中文)
+- 统一标点符号
+
+```python
+# 示例
+processor = DataProcessor(tokenizer=tokenizer, clean_text=True, language='en')
+dirty_text = "Visit  https://example.com   for <b>more</b> info"
+clean_text = processor.process_text(dirty_text)
+# 结果: "visit [url] for more info"
+```
+
+#### 分词与编码
+
+```python
+# 单个文本分词
+encoding = processor.tokenize_text("Hello, world!")
+# 返回: {'input_ids': tensor([...]), 'attention_mask': tensor([...])}
+
+# 批量分词
+texts = ["Text 1", "Text 2", "Text 3"]
+batch_encoding = processor.tokenize_batch(texts, return_tensors="pt")
+
+# 创建 PyTorch 数据集
+texts = ["Text 1", "Text 2", "Text 3"]
+labels = [0, 1, 0]
+dataset = processor.create_dataset(texts, labels)
+```
+
+#### 辅助工具类
+
+**TextCleaner** - 文本清洗静态方法:
+
+```python
+from apt_model.data.data_processor import TextCleaner
+
+# 移除 HTML 标签
+text = TextCleaner.remove_html_tags("<p>Hello</p>")
+
+# 移除 URL
+text = TextCleaner.remove_urls("Visit http://example.com")
+
+# 移除表情符号
+text = TextCleaner.remove_emoji("Hello 😊 World 🌍")
+
+# 完整清洗
+text = TextCleaner.clean_text_complete(raw_text)
+```
+
+**DatasetStatistics** - 数据集统计:
+
+```python
+from apt_model.data.data_processor import DatasetStatistics
+
+texts = ["Sample text 1", "Another sample", "Third example"]
+labels = [0, 1, 0]
+
+# 文本长度统计
+stats = DatasetStatistics.get_text_length_stats(texts)
+
+# 词汇统计
+vocab_stats = DatasetStatistics.get_vocabulary_stats(texts)
+
+# 完整摘要
+summary = DatasetStatistics.summarize_dataset(texts, labels)
+DatasetStatistics.print_dataset_summary(summary)
+```
+
+---
+
+## ✅ 数据集类 (Dataset Classes)
+
+### 实际实现
+
+**文件位置**: `apt_model/training/data_loading.py`
+
+项目提供三种数据集类，覆盖不同的训练场景。
+
+### TextDataset - 基础文本数据集
+
+用于自回归语言模型训练。
+
+```python
+from apt_model.training.data_loading import TextDataset
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+texts = ["Sample 1", "Sample 2", "Sample 3"]
+
+dataset = TextDataset(
+    texts=texts,
+    tokenizer=tokenizer,
+    max_length=128,
+    return_tensors=True,
+    truncation=True,
+    preprocessing_fn=lambda x: x.lower()  # 可选的预处理函数
+)
+
+# 获取样本
+input_ids, target_ids = dataset[0]
+# 注意: 对于自回归训练，input_ids 和 target_ids 相同
+```
+
+### PairedTextDataset - 配对文本数据集
+
+用于序列到序列训练 (如翻译、摘要、问答)。
+
+```python
+from apt_model.training.data_loading import PairedTextDataset
+
+source_texts = ["Translate this", "What is AI?"]
+target_texts = ["Traduisez ceci", "AI is..."]
+
+dataset = PairedTextDataset(
+    source_texts=source_texts,
+    target_texts=target_texts,
+    tokenizer=tokenizer,
+    max_source_length=128,
+    max_target_length=128
+)
+
+source_ids, target_ids = dataset[0]
+```
+
+### MultimodalDataset - 多模态数据集
+
+用于文本+图像+音频的多模态训练。
+
+```python
+from apt_model.training.data_loading import MultimodalDataset
+
+text_data = ["Caption 1", "Caption 2"]
+image_paths = ["img1.jpg", "img2.jpg"]
+audio_paths = ["audio1.wav", "audio2.wav"]
+
+dataset = MultimodalDataset(
+    text_data=text_data,
+    image_paths=image_paths,
+    audio_paths=audio_paths,
+    tokenizer=tokenizer,
+    image_processor=image_processor,  # 需要提供
+    audio_processor=audio_processor,  # 需要提供
+    max_text_length=128
+)
+
+sample = dataset[0]
+# 返回: {'text': ..., 'image': ..., 'audio': ...}
+```
+
+### 从文件加载数据
+
+```python
+from apt_model.training.data_loading import (
+    load_text_data_from_file,
+    load_paired_data_from_file,
+    load_multimodal_data_from_directory
+)
+
+# 加载单模态文本数据 (支持 .txt, .json, .csv, .jsonl)
+texts = load_text_data_from_file("data/train.txt")
+
+# 加载配对文本数据 (支持 .tsv, .csv, .json, .jsonl)
+source_texts, target_texts = load_paired_data_from_file("data/paired_data.json")
+
+# 加载多模态数据
+multimodal_data = load_multimodal_data_from_directory(
+    directory="data/multimodal",
+    image_dir="data/multimodal/images",
+    audio_dir="data/multimodal/audio",
+    metadata_file="data/multimodal/metadata.json"
+)
+```
+
+### 准备训练数据 (一站式)
+
+```python
+from apt_model.training.data_loading import prepare_training_data
+from types import SimpleNamespace
+
+config = SimpleNamespace(
+    tokenizer_name="gpt2",
+    max_seq_len=128,
+    enable_image=True,
+    enable_audio=False
+)
+
+# 方式1: 单模态文本
+dataloader, processors = prepare_training_data(
+    config,
+    text_data=texts,
+    batch_size=8
+)
+
+# 方式2: 配对文本
+dataloader, processors = prepare_training_data(
+    config,
+    paired_data=(source_texts, target_texts),
+    batch_size=8
+)
+
+# 方式3: 多模态
+dataloader, processors = prepare_training_data(
+    config,
+    multimodal_data=multimodal_data,
+    batch_size=8
+)
+```
+
+---
+
+## ✅ 数据处理插件 (DataProcessorsPlugin)
+
+### 实际实现
+
+**文件位置**: `legacy_plugins/batch2/plugin_7_data_processors.py`
+
+高级数据处理插件，提供数据清洗、增强、平衡、质量检查等功能。
+
+### 初始化插件
+
+```python
+from legacy_plugins.batch2.plugin_7_data_processors import DataProcessorsPlugin
+
+config = {
+    'enable_cleaning': True,
+    'enable_augmentation': True,
+    'augmentation_ratio': 0.3,
+    'normalize_urls': True
+}
+
+plugin = DataProcessorsPlugin(config)
+```
+
+### 文本清洗与标准化
+
+```python
+# 清洗单个文本
+cleaned = plugin.clean_text("This  is   a  sample.")
+# 结果: "This is a sample."
+
+# 标准化文本
+normalized = plugin.normalize_text(text, lowercase=True)
+
+# 批量去重
+unique_texts = plugin.remove_duplicates(texts)
+```
+
+### 数据增强 (✅ 基础实现)
+
+**已实现的增强方法**:
+- `random_swap`: 随机交换词序
+- `random_insertion`: 随机插入词
+- `random_deletion`: 随机删除词
+- `synonym_replacement`: 同义词替换 (简化版，使用内置字典)
+
+```python
+# 单文本增强
+augmented = plugin.augment_text(
+    "This is a good example",
+    methods=['synonym_replacement', 'random_swap']
+)
+
+# 数据集增强
+data = [{'text': 'Sample 1', 'label': 0}]
+augmented_data = plugin.augment_dataset(
+    data,
+    text_key='text',
+    augmentation_factor=0.5
+)
+```
+
+### 数据平衡
+
+```python
+# 不平衡数据
+data = [
+    {'text': 'Sample 1', 'label': 0},
+    {'text': 'Sample 2', 'label': 0},
+    {'text': 'Sample 3', 'label': 1},
+]
+
+# 过采样 (复制少数类样本)
+balanced_data = plugin.balance_dataset(
+    data,
+    label_key='label',
+    method='oversample'
+)
+
+# 欠采样 (删除多数类样本)
+balanced_data = plugin.balance_dataset(
+    data,
+    label_key='label',
+    method='undersample'
+)
+```
+
+### 特征提取
+
+```python
+# 提取文本特征
+features = plugin.extract_features(
+    "Sample text",
+    include_stats=True,
+    include_ngrams=True
+)
+# 返回: length, word_count, avg_word_length, bigrams, trigrams 等
+
+# 为数据集添加特征
+enhanced_data = plugin.add_features_to_dataset(data, text_key='text')
+```
+
+### 数据质量检查
+
+```python
+# 质量检查
+issues = plugin.check_quality(
+    data,
+    text_key='text',
+    min_length=10,
+    max_length=10000
+)
+# 返回: {'empty': [...], 'too_short': [...], 'duplicates': [...], ...}
+
+# 根据质量问题过滤数据
+filtered_data = plugin.filter_by_quality(
+    data,
+    issues,
+    remove_types=['empty', 'too_short', 'unusual_chars']
+)
+```
+
+### 完整处理管道
+
+```python
+processed_data = plugin.process_pipeline(
+    data,
+    text_key='text',
+    label_key='label',
+    steps=[
+        'clean',              # 清洗文本
+        'quality_check',      # 质量检查并过滤
+        'remove_duplicates',  # 去重
+        'augment',            # 数据增强
+        'balance'             # 数据平衡
+    ]
+)
+
+# 查看统计信息
+stats = plugin.get_statistics()
+```
+
+---
+
+## ✅ 文件加载与批处理
+
+### 实际实现
+
+#### 创建 DataLoader
+
+```python
+from apt_model.training.data_loading import prepare_dataloader
+
+dataloader = prepare_dataloader(
+    dataset=dataset,
+    batch_size=16,
+    shuffle=True,
+    collate_fn=text_collate_fn,
+    num_workers=4
+)
+
+for batch in dataloader:
+    # 训练代码
+    pass
+```
+
+#### 批处理整理函数
+
+```python
+from apt_model.training.data_loading import (
+    text_collate_fn,
+    multimodal_collate_fn
+)
+
+# 使用 text_collate_fn
+dataloader = DataLoader(
+    dataset,
+    batch_size=4,
+    collate_fn=lambda batch: text_collate_fn(batch, pad_token_id=0)
+)
+
+# 返回格式: {'src_ids', 'src_mask', 'tgt_ids', 'tgt_mask'}
+```
+
+---
+
 ## 🔄 清洗流程
+
+### 📝 扩展示例 - 完整清洗流程类
 
 ### 完整流程图
 
@@ -731,7 +1178,9 @@ def balance_difficulty(data: List[Dict]) -> List[Dict]:
 
 ---
 
-## 🌊 流式加载训练数据
+## 📝 流式加载训练数据
+
+### 扩展功能 (需要额外实现)
 
 ### 为什么需要流式加载？
 
@@ -949,7 +1398,11 @@ loader = DataLoader(dataset, batch_size=16)
 
 ---
 
-## 📚 公开数据集使用
+## 📝 公开数据集使用
+
+### 扩展功能 (需要安装 HuggingFace datasets 库)
+
+需要安装: `pip install datasets`
 
 ### 常用文本数据集
 
@@ -1107,7 +1560,11 @@ def weighted_sample(datasets_weights):
 
 ---
 
-## 🖼️ 图像训练数据集
+## 📝 图像训练数据集
+
+### 扩展功能 (需要torchvision和PIL库)
+
+需要安装: `pip install torchvision pillow`
 
 ### 多模态数据集（图像 + 文本）
 
@@ -1449,91 +1906,130 @@ dataset.save_to_disk('coco_dataset')
 
 ## 📦 完整示例
 
-### 端到端数据清理
+### ✅ 使用实际实现的端到端数据处理
 
 ```python
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-完整数据清理流程示例
+使用APT实际实现的完整数据处理流程
 """
+from apt_model.data.data_processor import DataProcessor, DatasetStatistics
+from apt_model.training.data_loading import (
+    load_text_data_from_file,
+    TextDataset,
+    prepare_dataloader
+)
+from legacy_plugins.batch2.plugin_7_data_processors import DataProcessorsPlugin
+from transformers import AutoTokenizer
+from torch.utils.data import DataLoader
 
 def main():
     # ==================== 1. 读取原始数据 ====================
     print("📂 读取原始数据...")
-    with open('raw_data.txt', 'r', encoding='utf-8') as f:
-        raw_texts = f.readlines()
 
+    # 使用 APT 的文件加载函数
+    raw_texts = load_text_data_from_file("data/train.txt")
     print(f"原始数据: {len(raw_texts):,} 条")
 
-    # ==================== 2. 数据清理 ====================
-    print("\n🧹 开始数据清理...")
-    cleaner = APTDataCleaner()
-    clean_data = cleaner.clean_pipeline(raw_texts)
+    # ==================== 2. 数据质量分析 ====================
+    print("\n📊 数据质量分析...")
+    summary = DatasetStatistics.summarize_dataset(raw_texts)
+    DatasetStatistics.print_dataset_summary(summary)
 
-    # ==================== 3. 数据平衡 ====================
-    print("\n⚖️ 数据平衡...")
-    balanced_data = balance_domains(clean_data, {
-        'code': 0.2,
-        'math': 0.1,
-        'news': 0.15,
-        'academic': 0.15,
-        'general': 0.4
+    # ==================== 3. 数据清理与处理 ====================
+    print("\n🧹 开始数据清理...")
+
+    # 初始化数据处理插件
+    plugin = DataProcessorsPlugin({
+        'enable_cleaning': True,
+        'enable_augmentation': True,
+        'augmentation_ratio': 0.2,
+        'normalize_urls': True
     })
 
-    print(f"平衡后数据: {len(balanced_data):,} 条")
+    # 转换为字典格式
+    data = [{'text': text} for text in raw_texts]
 
-    # ==================== 4. 统计分析 ====================
-    print("\n📊 数据统计:")
+    # 执行处理管道
+    processed_data = plugin.process_pipeline(
+        data,
+        text_key='text',
+        steps=['clean', 'quality_check', 'remove_duplicates']
+    )
 
-    # 领域分布
-    domain_counts = Counter(item['domain'] for item in balanced_data)
-    print("\n领域分布:")
-    for domain, count in domain_counts.most_common():
-        ratio = count / len(balanced_data) * 100
-        print(f"  {domain:12s}: {count:6,} ({ratio:5.2f}%)")
+    # 提取处理后的文本
+    clean_texts = [item['text'] for item in processed_data]
+    print(f"\n清理后数据: {len(clean_texts):,} 条")
 
-    # 难度分布
-    difficulty_counts = Counter(item['difficulty'] for item in balanced_data)
-    print("\n难度分布:")
-    for diff, count in difficulty_counts.most_common():
-        ratio = count / len(balanced_data) * 100
-        print(f"  {diff:12s}: {count:6,} ({ratio:5.2f}%)")
+    # ==================== 4. 创建数据处理器和数据集 ====================
+    print("\n🔧 创建数据处理器...")
 
-    # 质量分布
-    avg_quality = sum(item['quality_score'] for item in balanced_data) / len(balanced_data)
-    print(f"\n平均质量分数: {avg_quality:.3f}")
+    # 初始化分词器和处理器
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    # ==================== 5. 保存清理后数据 ====================
-    print("\n💾 保存清理后数据...")
+    processor = DataProcessor(
+        tokenizer=tokenizer,
+        max_seq_length=512,
+        clean_text=False,  # 已经清洗过了
+        language='en'
+    )
 
-    # 保存为纯文本（训练用）
+    # 创建数据集
+    dataset = processor.create_dataset(clean_texts)
+    print(f"数据集大小: {len(dataset)}")
+
+    # ==================== 5. 创建数据加载器 ====================
+    print("\n📦 创建数据加载器...")
+
+    from apt_model.training.data_loading import text_collate_fn
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=16,
+        shuffle=True,
+        collate_fn=lambda batch: text_collate_fn(batch, pad_token_id=tokenizer.pad_token_id),
+        num_workers=4,
+        pin_memory=True
+    )
+
+    print(f"批次数量: {len(dataloader)}")
+    print(f"批次大小: 16")
+
+    # ==================== 6. 保存处理后数据 ====================
+    print("\n💾 保存处理后数据...")
+
+    # 保存为纯文本
     with open('clean_train.txt', 'w', encoding='utf-8') as f:
-        for item in balanced_data:
-            f.write(item['text'] + '\n\n')
+        for text in clean_texts:
+            f.write(text + '\n')
 
-    # 保存为 JSON（带元数据）
+    # 保存为 JSON
     import json
-    with open('clean_train_meta.json', 'w', encoding='utf-8') as f:
-        json.dump(balanced_data, f, ensure_ascii=False, indent=2)
+    with open('clean_train.json', 'w', encoding='utf-8') as f:
+        json.dump(processed_data, f, ensure_ascii=False, indent=2)
 
-    print("✅ 数据清理完成！")
+    print("✅ 数据处理完成！")
     print(f"\n输出文件:")
     print(f"  - clean_train.txt (纯文本)")
-    print(f"  - clean_train_meta.json (带元数据)")
+    print(f"  - clean_train.json (带元数据)")
 
-    # ==================== 6. 质量验证 ====================
-    print("\n🔍 质量验证（随机抽样 5 条）...")
-    import random
-    samples = random.sample(balanced_data, min(5, len(balanced_data)))
+    # ==================== 7. 测试数据加载 ====================
+    print("\n🔍 测试数据加载...")
 
-    for i, sample in enumerate(samples, 1):
-        print(f"\n--- 样本 {i} ---")
-        print(f"领域: {sample['domain']}")
-        print(f"难度: {sample['difficulty']}")
-        print(f"质量: {sample['quality_score']:.3f}")
-        print(f"长度: {sample['length']} 字符")
-        print(f"内容预览: {sample['text'][:100]}...")
+    # 获取一个批次
+    batch = next(iter(dataloader))
+    print(f"\n批次数据:")
+    print(f"  - src_ids shape: {batch['src_ids'].shape}")
+    print(f"  - src_mask shape: {batch['src_mask'].shape}")
+    print(f"  - tgt_ids shape: {batch['tgt_ids'].shape}")
+    print(f"  - tgt_mask shape: {batch['tgt_mask'].shape}")
+
+    # 查看插件统计
+    stats = plugin.get_statistics()
+    print(f"\n处理统计: {stats}")
 
 
 if __name__ == "__main__":
@@ -1641,7 +2137,76 @@ python data_cleaning.py
 
 ---
 
+## 📋 功能总结
+
+### ✅ 可直接使用的实际实现
+
+**核心功能** (`apt_model/data/data_processor.py`):
+- ✅ DataProcessor - 文本清洗、分词、编码
+- ✅ TextCleaner - 静态清洗方法集合
+- ✅ DatasetStatistics - 数据集统计分析
+
+**数据集类** (`apt_model/training/data_loading.py`):
+- ✅ TextDataset - 自回归训练数据集
+- ✅ PairedTextDataset - Seq2Seq训练数据集
+- ✅ MultimodalDataset - 多模态数据集
+- ✅ 文件加载函数 - 支持 .txt, .json, .csv, .jsonl
+- ✅ 批处理整理函数 - text_collate_fn, multimodal_collate_fn
+
+**数据处理插件** (`legacy_plugins/batch2/plugin_7_data_processors.py`):
+- ✅ 文本清洗与标准化
+- ✅ 数据增强 (基础方法: swap, delete, insert, synonym_replacement)
+- ✅ 数据平衡 (oversample, undersample)
+- ✅ 特征提取
+- ✅ 数据质量检查
+- ✅ 完整处理管道
+
+### 📝 需要扩展的功能
+
+**流式数据加载**:
+- 📝 StreamingTextDataset - 需要自行实现
+- 📝 分块加载 - 需要自行实现
+
+**公共数据集集成**:
+- 📝 HuggingFace Datasets - 需要安装 `datasets` 库
+- 📝 数据集混合策略 - 需要额外实现
+
+**图像数据集**:
+- 📝 ImageTextDataset - 需要 torchvision 和 PIL
+- 📝 COCO/LAION 数据集加载 - 需要额外依赖
+
+**高级数据增强**:
+- 📝 回译 (Back-translation) - 需要翻译模型
+- 📝 BERT上下文增强 - 需要 nlpaug 库
+- 📝 SMOTE平衡 - 需要 imbalanced-learn 库
+
+### 依赖关系
+
+```bash
+# 核心依赖 (已包含在项目中)
+torch
+numpy
+tqdm
+transformers
+
+# 可选依赖 (用于扩展功能)
+datasets          # HuggingFace 数据集
+nlpaug            # 高级数据增强
+imbalanced-learn  # SMOTE 等平衡技术
+torchvision       # 图像处理
+pillow            # 图像加载
+torchaudio        # 音频处理
+```
+
+---
+
 ## 📝 更新日志
+
+- **v1.2.0** (2025-12) - Option B 标注版本
+  - ✅ 清晰标注实际实现和扩展示例
+  - ✅ 添加实际代码的完整使用示例
+  - ✅ 添加文件位置和函数签名
+  - ✅ 区分核心功能、数据集类、插件功能
 
 - **v1.1.0** (2025-12) - 功能扩展版
   - ✅ 流式加载训练数据（支持 TB 级数据集）
