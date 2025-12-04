@@ -137,18 +137,18 @@ def create_training_launcher_tab(webui_state):
             try:
                 # 构建训练命令
                 cmd = [
-                    "python", "-m", "apt_model.training.train",
-                    "--train_file", train_file.name,
+                    "python", "-u", "-m", "apt_model", "train",
+                    "--data-path", train_file.name,
                     "--epochs", str(int(n_epochs)),
-                    "--batch_size", str(int(batch_sz)),
-                    "--learning_rate", str(lr),
-                    "--max_length", str(int(max_len)),
-                    "--save_steps", str(int(save_step)),
-                    "--output_dir", out_dir
+                    "--batch-size", str(int(batch_sz)),
+                    "--learning-rate", str(lr),
+                    "--max-length", str(int(max_len)),
+                    "--save-steps", str(int(save_step)),
+                    "--save-path", out_dir
                 ]
 
                 if val_file is not None:
-                    cmd.extend(["--val_file", val_file.name])
+                    cmd.extend(["--val-data-path", val_file.name])
 
                 # 启动训练进程
                 webui_state.training_process = subprocess.Popen(

@@ -254,11 +254,30 @@ class CommandRegistry:
 command_registry = CommandRegistry()
 
 
-def register_command(*args, **kwargs) -> None:
+def register_command(**kwargs):
     """
-    快捷注册函数（使用全局注册中心）
+    装饰器工厂：注册命令（使用全局注册中心）
+
+    用法：
+    @register_command(name="cmd_name", category="console", help_text="...")
+    def my_command(args):
+        ...
+
+    或者直接注册（不作为装饰器）：
+    register_command(name="cmd_name", func=my_func, category="console")
     """
-    command_registry.register(*args, **kwargs)
+    # 如果提供了func参数，说明是直接调用而不是装饰器
+    if 'func' in kwargs:
+        command_registry.register(**kwargs)
+        return None
+
+    # 装饰器模式
+    def decorator(func: Callable) -> Callable:
+        # 从kwargs中提取name，如果没有则使用函数名
+        cmd_name = kwargs.pop('name', func.__name__)
+        command_registry.register(name=cmd_name, func=func, **kwargs)
+        return func
+    return decorator
 
 
 def get_command(name: str) -> Optional[CommandMetadata]:
