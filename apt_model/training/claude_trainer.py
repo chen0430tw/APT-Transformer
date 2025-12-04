@@ -13,6 +13,7 @@ from typing import Optional, Dict, List, Tuple
 from tqdm import tqdm
 import os
 from datetime import datetime
+import logging
 
 from apt_model.modeling.claude4_model import ClaudeUnifiedModel, create_claude_unified
 from apt_model.utils import get_device
@@ -21,6 +22,9 @@ from apt_model.modeling.chinese_tokenizer_integration import (
     save_tokenizer,
 )
 from apt_model.training.training_guard import TrainingGuard, EarlyStopping
+
+# 创建 logger
+logger = logging.getLogger(__name__)
 
 
 class ClaudeDataset(Dataset):
@@ -457,6 +461,7 @@ def train_claude_unified(
     if device is None:
         device = get_device()
 
+    # 用户友好的输出（保留 print）
     print(f"\n{'='*80}")
     print(f"训练 Claude 统一模型")
     print(f"{'='*80}")
@@ -470,32 +475,44 @@ def train_claude_unified(
     print(f"学习率: {learning_rate}")
     print(f"反思权重: {reflection_weight}")
 
+    # 系统日志
+    logger.info(f"Starting Claude Unified Model training: model_size={model_size}, "
+                f"reflection_mode={reflection_mode}, device={device}")
+
     # 加载tokenizer
     print("\n[1/6] 加载tokenizer...")
+    logger.info("Loading tokenizer...")
     tokenizer = get_appropriate_tokenizer(language='en')
     vocab_size = tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else 50000
     print(f"词汇表大小: {vocab_size}")
+    logger.info(f"Tokenizer loaded: vocab_size={vocab_size}")
 
     # 创建模型
     print(f"\n[2/6] 创建Claude模型...")
+    logger.info(f"Creating Claude model: size={model_size}, reflection={reflection_mode}")
     model = create_claude_unified(
         vocab_size=vocab_size,
         model_size=model_size,
         reflection_mode=reflection_mode
     )
-    print(f"模型参数量: {sum(p.numel() for p in model.parameters()):,}")
+    param_count = sum(p.numel() for p in model.parameters())
+    print(f"模型参数量: {param_count:,}")
+    logger.info(f"Model created: {param_count:,} parameters")
 
     # 准备数据
     print("\n[3/6] 准备训练数据...")
+    logger.info("Preparing training data...")
     if texts is None:
         texts = get_claude_training_data()
     print(f"训练样本数: {len(texts)}")
+    logger.info(f"Training data prepared: {len(texts)} samples")
 
     dataset = ClaudeDataset(texts, tokenizer, max_length=128)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # 创建训练器
     print("\n[4/6] 初始化训练器...")
+    logger.info("Initializing trainer...")
     trainer = ClaudeTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -507,9 +524,11 @@ def train_claude_unified(
         max_time_hours=max_time_hours,
         early_stopping_patience=early_stopping_patience
     )
+    logger.info(f"Trainer initialized: lr={learning_rate}, reflection_weight={reflection_weight}")
 
     # 训练循环
     print(f"\n[5/6] 开始训练...\n")
+    logger.info(f"Starting training loop: {epochs} epochs")
 
     best_loss = float('inf')
 
@@ -519,7 +538,7 @@ def train_claude_unified(
             dataloader, epoch, epochs, start_guard=(epoch == 0)
         )
 
-        # 打印epoch总结
+        # 打印epoch总结（用户友好）
         print(f"\nEpoch {epoch+1}/{epochs} 总结:")
         print(f"  总损失: {losses['total']:.4f}")
         print(f"  语言模型损失: {losses['lm']:.4f}")
@@ -534,10 +553,15 @@ def train_claude_unified(
         if 'graph_complexity' in losses:
             print(f"  图论复杂度: {losses['graph_complexity']:.4f}")
 
+        # 系统日志（详细记录）
+        logger.info(f"Epoch {epoch+1}/{epochs}: total_loss={losses['total']:.4f}, "
+                   f"lm_loss={losses['lm']:.4f}, reflection_loss={losses['reflection']:.4f}")
+
         # 保存最佳模型
         if losses['total'] < best_loss:
             best_loss = losses['total']
             print(f"  ✓ 新的最佳模型（损失: {best_loss:.4f}）")
+            logger.info(f"New best model saved: loss={best_loss:.4f}")
 
         # Early stopping 检查
         if trainer.guard and trainer.guard.early_stopping:
@@ -548,7 +572,7 @@ def train_claude_unified(
         if should_stop:
             break
 
-    # 打印训练保护统计
+    # 打印训练保护统计（用户友好）
     if trainer.guard:
         stats = trainer.guard.get_stats()
         print(f"\n{'='*80}")
@@ -559,8 +583,14 @@ def train_claude_unified(
             print(f"  停止原因: {stats['stop_reason']}")
         print(f"{'='*80}\n")
 
+        # 系统日志
+        logger.info(f"Training guard stats: total_steps={stats['total_steps']}, "
+                   f"elapsed_hours={stats['elapsed_hours']:.2f}, "
+                   f"stopped={stats['stopped']}, stop_reason={stats.get('stop_reason', 'N/A')}")
+
     # 保存模型
     print(f"[6/6] 保存模型...")
+    logger.info("Saving model...")
     if save_path is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         save_path = f"./claude_{reflection_mode}_{model_size}_{timestamp}"
@@ -568,6 +598,7 @@ def train_claude_unified(
     os.makedirs(save_path, exist_ok=True)
 
     # 保存模型权重
+    checkpoint_path = os.path.join(save_path, 'claude_unified_model.pt')
     torch.save({
         'model_state_dict': model.state_dict(),
         'model_size': model_size,
@@ -575,15 +606,20 @@ def train_claude_unified(
         'vocab_size': vocab_size,
         'epoch': epochs,
         'best_loss': best_loss
-    }, os.path.join(save_path, 'claude_unified_model.pt'))
+    }, checkpoint_path)
+    logger.info(f"Model checkpoint saved: {checkpoint_path}")
 
     # 保存tokenizer
     save_tokenizer(tokenizer, save_path)
+    logger.info(f"Tokenizer saved: {save_path}")
 
+    # 用户友好的最终输出（保留 print）
     print(f"模型已保存到: {save_path}")
     print(f"\n{'='*80}")
     print(f"Claude模型训练完成！")
     print(f"{'='*80}\n")
+
+    logger.info(f"Claude training completed successfully: best_loss={best_loss:.4f}")
 
     return model, tokenizer
 
