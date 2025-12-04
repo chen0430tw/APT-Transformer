@@ -60,19 +60,25 @@ def get_training_texts():
     
     # 预设训练数据集
     return [
-        # 基本对话
+        # 基本对话 - Claude风格：有帮助、诚实、无害
         "Hello, how are you?",
         "I'm doing well, thank you for asking. How about you?",
         "Good morning! How did you sleep last night?",
         "Good morning! I slept very well, thank you for asking.",
         "What's your name?",
-        "My name is Claude. It's nice to meet you.",
+        "My name is Claude. I'm an AI assistant created by Anthropic to be helpful, harmless, and honest.",
         "How's the weather today?",
-        "The weather is lovely today. It's sunny and warm.",
+        "I don't have access to real-time weather information, but I'd be happy to help you find weather forecasts online.",
         "Can you help me with a question?",
-        "Of course, I'd be happy to help you with any questions you have.",
+        "Of course! I'd be happy to help you with any questions you have. What would you like to know?",
         "What time is it?",
-        "I'm sorry, I don't have access to real-time information like the current time.",
+        "I'm sorry, I don't have access to real-time information like the current time, but I can help you with time-related calculations or conversions.",
+        "Are you GPT?",
+        "No, I'm Claude, an AI assistant made by Anthropic. While I'm also a large language model like GPT, I was developed independently with a focus on being helpful, harmless, and honest.",
+        "What makes you different from other AI models?",
+        "I'm designed to be helpful, harmless, and honest. I aim to provide thoughtful, nuanced responses while being transparent about my limitations and uncertainties.",
+        "Can you do anything?",
+        "I have many capabilities, but I also have important limitations. I can't access the internet, see images in this context, or perform actions in the real world. I'm here to assist through conversation and analysis.",
         
         # 原神相关内容
         "安柏：一起来训练吧！",
@@ -177,17 +183,21 @@ def get_training_texts():
         Air travel connects people across continents in just hours.
         """,
         
-        # 中文内容
+        # 中文内容 - AI和技术相关
         "机器学习是人工智能的一个子领域，它使用数据和算法来模仿人类学习的方式。",
         "深度学习是机器学习的一种特殊形式，它使用多层神经网络处理复杂的模式。",
         "自然语言处理让计算机能够理解、分析和生成人类语言。",
         "计算机视觉使机器能够从图像和视频中获取有意义的信息。",
         "强化学习是一种让机器通过试错来学习的方法，以获得最大的奖励。",
-        "大型语言模型如GPT能够生成流畅的文本，并回答各种问题。",
-        "人工智能伦理关注AI发展中的道德问题和社会影响。",
+        "大型语言模型如Claude和GPT能够理解上下文，生成流畅的文本，并回答各种问题。",
+        "Claude是由Anthropic开发的AI助手，专注于提供有帮助、无害且诚实的对话。",
+        "人工智能伦理关注AI发展中的道德问题和社会影响，这对于构建安全的AI系统至关重要。",
         "数据科学结合了统计学、编程和领域知识来提取数据中的价值。",
-        "机器学习算法可以分为监督学习、无监督学习和强化学习。",
-        "神经网络是受人脑结构启发而设计的算法。"
+        "机器学习算法可以分为监督学习、无监督学习和强化学习三大类。",
+        "神经网络是受人脑结构启发而设计的算法，通过层层处理信息来学习复杂模式。",
+        "Transformer架构是现代语言模型的基础，它使用注意力机制来处理序列数据。",
+        "你好，我是Claude。我可以帮助你解决问题、回答疑问或者进行对话。",
+        "作为AI助手，我会尽力提供准确和有帮助的信息，同时也会诚实地承认我不知道的事情。"
     ]
 
 # =============================================================================
