@@ -8,7 +8,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[特性](#特性) • [快速开始](#快速开始) • [文档](APT_MODEL_HANDBOOK.md) • [示例](#使用示例)
+[特性](#特性) • [快速开始](#快速开始) • [文档](docs/APT_MODEL_HANDBOOK.md) • [示例](#使用示例)
 
 </div>
 

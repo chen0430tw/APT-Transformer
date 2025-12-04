@@ -40,15 +40,14 @@ def integrate_chinese_tokenizer(*args, **kwargs) -> PreTrainedTokenizer:
 def _should_allow_remote_downloads() -> bool:
     """Return whether remote Hugging Face downloads are allowed.
 
-    The function checks an environment variable so projects can opt-in to
-    network access explicitly.  By default we assume offline execution to keep
-    unit tests and CI runs deterministic and to avoid repeated download
-    attempts in restricted environments.
+    The function checks an environment variable so projects can opt-in/opt-out of
+    network access. By default we ALLOW downloads to ensure tokenizers work out
+    of the box. Set APT_ALLOW_REMOTE_DOWNLOADS=0 to disable downloads.
     """
 
     flag = os.environ.get("APT_ALLOW_REMOTE_DOWNLOADS")
     if flag is None:
-        return False
+        return True  # 默认允许下载，确保开箱即用
 
     return flag.strip().lower() in {"1", "true", "yes", "on"}
 
@@ -134,21 +133,28 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
             tokenizer = GPT2Tokenizer.from_pretrained("gpt2", **local_kwargs)
             if tokenizer.pad_token_id is None:
                 tokenizer.pad_token = tokenizer.eos_token
+            logger.info("GPT2分词器加载成功")
             return tokenizer
         except Exception as local_error:
             if allow_remote:
-                logger.info("本地未找到GPT2分词器缓存，尝试从Hugging Face下载: %s", local_error)
+                logger.info("本地未找到GPT2分词器缓存，正在从Hugging Face下载...")
+                print("\n正在下载 GPT-2 分词器...")
                 try:
                     tokenizer = GPT2Tokenizer.from_pretrained("gpt2", cache_dir=cache_dir)
                     if tokenizer.pad_token_id is None:
                         tokenizer.pad_token = tokenizer.eos_token
+                    print("✓ GPT-2 分词器下载完成")
+                    logger.info("GPT2分词器下载成功")
                     return tokenizer
                 except Exception as download_error:
                     logger.error("下载GPT2分词器失败: %s", download_error)
+                    print(f"✗ 下载失败: {download_error}")
             else:
                 logger.error("离线模式下加载GPT2分词器失败: %s", local_error)
+                print(f"离线模式：无法加载分词器。设置环境变量 APT_ALLOW_REMOTE_DOWNLOADS=1 以启用下载")
 
             logger.warning("创建备用简单分词器")
+            print("使用备用简单分词器...")
 
             # 简单的备用分词器
             class SimpleTokenizer:

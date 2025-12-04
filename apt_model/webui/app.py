@@ -955,18 +955,18 @@ def create_training_launcher_tab(webui_state):
             try:
                 # 构建训练命令
                 cmd = [
-                    "python", "-u", "-m", "apt_model.training.train",
-                    "--train_file", train_file.name,
+                    "python", "-u", "-m", "apt_model", "train",
+                    "--data-path", train_file.name,
                     "--epochs", str(int(n_epochs)),
-                    "--batch_size", str(int(batch_sz)),
-                    "--learning_rate", str(lr),
-                    "--max_length", str(int(max_len)),
-                    "--save_steps", str(int(save_step)),
-                    "--output_dir", out_dir
+                    "--batch-size", str(int(batch_sz)),
+                    "--learning-rate", str(lr),
+                    "--max-length", str(int(max_len)),
+                    "--save-steps", str(int(save_step)),
+                    "--save-path", out_dir
                 ]
 
                 if val_file is not None:
-                    cmd.extend(["--val_file", val_file.name])
+                    cmd.extend(["--val-data-path", val_file.name])
 
                 # 启动训练进程
                 webui_state.training_process = subprocess.Popen(
@@ -982,8 +982,18 @@ def create_training_launcher_tab(webui_state):
 
                 # 启动日志读取线程
                 def read_logs():
-                    for line in webui_state.training_process.stdout:
-                        webui_state.training_logs.append(line)
+                    try:
+                        # 检查 stdout 是否为 None
+                        if webui_state.training_process.stdout is None:
+                            webui_state.training_logs.append("错误: 无法读取进程输出流\n")
+                            return
+
+                        for line in webui_state.training_process.stdout:
+                            webui_state.training_logs.append(line)
+                    except (BrokenPipeError, ValueError, AttributeError) as e:
+                        webui_state.training_logs.append(f"日志读取错误: {e}\n")
+                    except Exception as e:
+                        webui_state.training_logs.append(f"未知日志读取错误: {e}\n")
 
                 log_thread = threading.Thread(target=read_logs, daemon=True)
                 log_thread.start()
@@ -1086,16 +1096,8 @@ def create_webui():
 
     with gr.Blocks(**blocks_kwargs) as app:
 
-        # Language selector
-        with gr.Row():
-            with gr.Column(scale=4):
-                gr.Markdown(f"# {TRANSLATIONS[webui_state.language]['title']}")
-            with gr.Column(scale=1):
-                language_selector = gr.Radio(
-                    choices=["中文 (zh)", "English (en)"],
-                    value="中文 (zh)" if webui_state.language == 'zh' else "English (en)",
-                    label="🌐 Language / 语言"
-                )
+        # Header
+        gr.Markdown(f"# {TRANSLATIONS[webui_state.language]['title']}")
 
         lang = webui_state.language
         gr.Markdown(
@@ -1107,35 +1109,7 @@ def create_webui():
             - {TRANSLATIONS[lang]['gradient_monitor']}
             - {TRANSLATIONS[lang]['checkpoint_mgmt']}
             - {TRANSLATIONS[lang]['inference_test']}
-
-            **提示 / Tip**: 切换语言后请刷新页面 / Refresh page after changing language
             """
-        )
-
-        def change_language(lang_choice):
-            """Change interface language"""
-            webui_state.language = 'zh' if lang_choice.startswith('中文') else 'en'
-            msg = f"⚠️ 语言已设置为 {lang_choice}\n\n" \
-                  f"由于Gradio限制，需要**重启WebUI**才能生效：\n" \
-                  f"1. 按 Ctrl+C 停止服务\n" \
-                  f"2. 重新运行: python -m apt_model.webui.app\n\n" \
-                  f"Language set to {lang_choice}\n" \
-                  f"Due to Gradio limitations, please **restart the WebUI**:\n" \
-                  f"1. Press Ctrl+C to stop\n" \
-                  f"2. Run again: python -m apt_model.webui.app"
-            return msg
-
-        lang_status = gr.Textbox(
-            label="⚙️ 语言切换说明 / Language Switch Info",
-            value="",
-            visible=True,
-            interactive=False,
-            lines=6
-        )
-        language_selector.change(
-            fn=change_language,
-            inputs=[language_selector],
-            outputs=[lang_status]
         )
 
         # Create all tabs - wrapped in gr.Tabs() for Gradio 6.x compatibility

@@ -219,9 +219,11 @@ class MultimodalDataset(Dataset):
             if image_path is not None:
                 try:
                     from PIL import Image
-                    image = Image.open(image_path).convert("RGB")
-                    image_encoding = self.image_processor(image)
-                    result["image"] = image_encoding
+                    # 使用上下文管理器确保文件句柄正确关闭
+                    with Image.open(image_path) as image:
+                        image = image.convert("RGB")
+                        image_encoding = self.image_processor(image)
+                        result["image"] = image_encoding
                 except Exception as e:
                     print(f"无法加载图像 {image_path}: {e}")
                     result["image"] = None

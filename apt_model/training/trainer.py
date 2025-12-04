@@ -219,11 +219,16 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     
     # 自动检测语言并选择合适的分词器
     tokenizer, detected_language = get_appropriate_tokenizer(
-        train_texts, 
-        tokenizer_type=tokenizer_type, 
+        train_texts,
+        tokenizer_type=tokenizer_type,
         language=language
     )
-    
+
+    # 验证和修复 tokenizer 属性
+    if not hasattr(tokenizer, 'pad_token_id') or tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = 0
+        debug_print("警告: tokenizer 缺少 pad_token_id，已设置为 0")
+
     debug_print(f"使用{detected_language}语言分词器: {type(tokenizer).__name__}")
     
     # 设置数据集和数据加载器
@@ -271,8 +276,15 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     )
 
     debug_print("创建模型配置...")
+
+    # 安全获取 vocab_size
+    vocab_size = getattr(tokenizer, 'vocab_size', None)
+    if not vocab_size or vocab_size <= 0:
+        vocab_size = 50257  # 默认 GPT-2 词汇表大小
+        debug_print(f"警告: 无法获取词汇表大小，使用默认值: {vocab_size}")
+
     config = APTConfig(
-        vocab_size=tokenizer.vocab_size,
+        vocab_size=vocab_size,
         d_model=768,
         d_ff=2048,
         num_heads=12,
@@ -510,64 +522,34 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
 
 def _test_generation_after_epoch(model, tokenizer, logger=None, language="en"):
     """测试每个轮次后的生成效果"""
-    # 添加诊断打印
-    #print("\n===== 开始诊断 _test_generation_after_epoch =====")
-    #print(f"模型类型: {type(model)}")
-    #print(f"模型属性: {dir(model)}")
-    #print("检查是否有generate方法:", hasattr(model, 'generate'))
-    #print("检查是否是APTModel的实例:", isinstance(model, APTModel))
-    
-    #if hasattr(model, 'generate'):
-        #print("generate方法的签名:", model.generate.__code__.co_varnames)
-    #print("===== 诊断结束 =====\n")
     # 根据语言选择测试提示
     if language == "zh":
         test_prompts = ["人工智能", "深度学习", "自然语言", "安柏是"]
     else:
         test_prompts = ["Hello", "What is", "The quick", "Artificial"]
-        
+
     model.eval()
-    if settings.get_debug_enabled():
-        debug_print("\n本轮训练后的文本生成示例:")
+    info_print("\n本轮训练后的文本生成示例:")
     gen_texts = []
     for prompt in test_prompts:
         with torch.no_grad():
             gen_text, _, _, _ = generate_natural_text(model, tokenizer, prompt, max_steps=15)
-            debug_print(f"提示: '{prompt}'")
-            debug_print(f"生成: '{gen_text}'")
-            debug_print("-" * 30)
+            info_print(f"提示: '{prompt}'")
+            info_print(f"生成: '{gen_text}'")
+            info_print("-" * 30)
             gen_texts.append(gen_text)
     avg_quality = sum(evaluate_text_quality(text)[0] for text in gen_texts) / len(gen_texts)
-    if settings.get_debug_enabled():
-        debug_print(f"本轮生成文本平均质量: {avg_quality:.2f}/100")
-        if avg_quality < 40:
-            debug_print("\n安柏：训练...还不够...")
+    info_print(f"本轮生成文本平均质量: {avg_quality:.2f}/100")
+    if avg_quality < 40:
+        info_print("\n安柏：训练...还不够...")
     model.train()
     return avg_quality
 
 def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="en"):
     """比较训练前后的模型输出"""
-    # 添加诊断打印
-    #print("\n===== 开始诊断 _compare_model_outputs =====")
-    #print(f"未训练模型类型: {type(untrained_model)}")
-    #print(f"已训练模型类型: {type(trained_model)}")
-    #print("未训练模型是否有generate方法:", hasattr(untrained_model, 'generate'))
-    #print("已训练模型是否有generate方法:", hasattr(trained_model, 'generate'))
-    
-    # 检查generate_natural_text函数
-    #import inspect
-    #if 'generate_natural_text' in globals():
-        #print("generate_natural_text函数签名:", inspect.signature(generate_natural_text))
-    #else:
-        #print("generate_natural_text函数不存在于全局空间")
-    #print("===== 诊断结束 =====\n")
-    if not settings.get_debug_enabled():
-        # 非Debug模式下不显示详细对比
-        return
-
-    debug_print("\n====================")
-    debug_print("训练前后效果对比")
-    debug_print("====================")
+    info_print("\n====================")
+    info_print("训练前后效果对比")
+    info_print("====================")
 
     # 根据语言选择测试提示
     if language == "zh":
@@ -593,32 +575,37 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
     trained_scores = []
 
     for prompt in test_prompts:
-        debug_print(f"\n提示: '{prompt}'")
+        info_print(f"\n提示: '{prompt}'")
         with torch.no_grad():
             untrained_text, _, _, _ = generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
             untrained_score, untrained_feedback = evaluate_text_quality(untrained_text)
             untrained_scores.append(untrained_score)
-        debug_print(f"未训练模型: '{untrained_text}'")
-        debug_print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
+        info_print(f"未训练模型: '{untrained_text}'")
+        info_print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
 
         with torch.no_grad():
             trained_text, _, _, _ = generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
             trained_score, trained_feedback = evaluate_text_quality(trained_text)
             trained_scores.append(trained_score)
-        debug_print(f"训练后模型: '{trained_text}'")
-        debug_print(f"质量评分: {trained_score}/100 - {trained_feedback}")
-        debug_print("-" * 50)
+        info_print(f"训练后模型: '{trained_text}'")
+        info_print(f"质量评分: {trained_score}/100 - {trained_feedback}")
+        info_print("-" * 50)
 
     avg_untrained = sum(untrained_scores) / len(untrained_scores)
     avg_trained = sum(trained_scores) / len(trained_scores)
     improvement = avg_trained - avg_untrained
 
-    debug_print(f"\n整体评估:")
-    debug_print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
-    debug_print(f"训练后模型平均质量: {avg_trained:.2f}/100")
-    debug_print(f"质量提升: {improvement:.2f} 分")
+    info_print(f"\n整体评估:")
+    info_print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
+    info_print(f"训练后模型平均质量: {avg_trained:.2f}/100")
+    info_print(f"质量提升: {improvement:.2f} 分")
 
-    if avg_trained < 50:
-        debug_print("\n安柏：训练...还不够...")
+    # 【修复逻辑】增加对"退步"的判断
+    if improvement < -5:
+        info_print("\n安柏：奇怪……怎么感觉它变笨了？（质量下降，建议检查超参数）")
+    elif improvement < 0:
+        info_print("\n安柏：看起来效果差不多，也许还需要更多训练数据？")
+    elif avg_trained < 50:
+        info_print("\n安柏：虽然有进步，但还远远不够哦！继续加油！")
     else:
-        debug_print("\n安柏：训练完成得不错！")
+        info_print("\n安柏：训练完成得不错！侦察骑士为你点赞！")

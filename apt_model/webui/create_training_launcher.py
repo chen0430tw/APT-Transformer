@@ -137,18 +137,18 @@ def create_training_launcher_tab(webui_state):
             try:
                 # 构建训练命令
                 cmd = [
-                    "python", "-m", "apt_model.training.train",
-                    "--train_file", train_file.name,
+                    "python", "-u", "-m", "apt_model", "train",
+                    "--data-path", train_file.name,
                     "--epochs", str(int(n_epochs)),
-                    "--batch_size", str(int(batch_sz)),
-                    "--learning_rate", str(lr),
-                    "--max_length", str(int(max_len)),
-                    "--save_steps", str(int(save_step)),
-                    "--output_dir", out_dir
+                    "--batch-size", str(int(batch_sz)),
+                    "--learning-rate", str(lr),
+                    "--max-length", str(int(max_len)),
+                    "--save-steps", str(int(save_step)),
+                    "--save-path", out_dir
                 ]
 
                 if val_file is not None:
-                    cmd.extend(["--val_file", val_file.name])
+                    cmd.extend(["--val-data-path", val_file.name])
 
                 # 启动训练进程
                 webui_state.training_process = subprocess.Popen(
@@ -164,8 +164,18 @@ def create_training_launcher_tab(webui_state):
 
                 # 启动日志读取线程
                 def read_logs():
-                    for line in webui_state.training_process.stdout:
-                        webui_state.training_logs.append(line)
+                    try:
+                        # 检查 stdout 是否为 None
+                        if webui_state.training_process.stdout is None:
+                            webui_state.training_logs.append("错误: 无法读取进程输出流\n")
+                            return
+
+                        for line in webui_state.training_process.stdout:
+                            webui_state.training_logs.append(line)
+                    except (BrokenPipeError, ValueError, AttributeError) as e:
+                        webui_state.training_logs.append(f"日志读取错误: {e}\n")
+                    except Exception as e:
+                        webui_state.training_logs.append(f"未知日志读取错误: {e}\n")
 
                 log_thread = threading.Thread(target=read_logs, daemon=True)
                 log_thread.start()
@@ -232,9 +242,9 @@ def create_training_launcher_tab(webui_state):
             outputs=[log_output]
         )
 
-        # 自动刷新日志
-        log_output.change(
-            fn=update_logs,
-            outputs=[log_output],
-            every=1  # 每秒刷新
-        )
+        # 自动刷新日志 (Gradio 6.x 不支持 every 参数，改用轮询)
+        # 注意: Gradio 6.x 移除了 every 参数，需要使用其他方式实现轮询
+        # log_output.change(
+        #     fn=update_logs,
+        #     outputs=[log_output]
+        # )
