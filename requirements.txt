@@ -1,20 +1,54 @@
+# Core ML/DL框架
 torch>=2.2
 transformers>=4.45
 datasets>=3.0
 accelerate>=1.0
 evaluate>=0.4
+
+# 数值计算和数据处理
 numpy>=1.24
 pandas>=2.0
-Pillow>=10.0
-tqdm>=4.65
-sentencepiece>=0.1.99
-safetensors>=0.4
-optuna>=3.6
-tensorboard>=2.14
-GPUtil>=1.4
-protobuf>=4.24
 scipy>=1.10
 scikit-learn>=1.4
-tokenizers>=0.19
-gradio>=4.0.0
+
+# 图像处理
+Pillow>=10.0
+
+# 可视化
+matplotlib>=3.7
+seaborn>=0.12
 plotly>=5.0.0
+tensorboard>=2.14
+
+# 进度条和工具
+tqdm>=4.65
+
+# 分词器
+sentencepiece>=0.1.99
+tokenizers>=0.19
+jieba>=0.42
+
+# 序列化和配置
+safetensors>=0.4
+protobuf>=4.24
+pyyaml>=6.0
+
+# 超参数优化
+optuna>=3.6
+
+# 系统监控
+GPUtil>=1.4
+psutil>=5.9
+
+# Web框架和API
+gradio>=4.0.0
+fastapi>=0.104
+uvicorn>=0.24
+python-multipart>=0.0.6
+
+# HTTP和网络
+requests>=2.31
+aiohttp>=3.9
+
+# 图处理（GraphRAG）
+networkx>=3.1

@@ -12,8 +12,6 @@ from typing import Optional, Dict, Any, List
 from tqdm import tqdm
 import os
 
-from apt_model.training.training_guard import TrainingGuard, EarlyStopping
-
 
 class GPTDataset(Dataset):
     """GPT训练数据集"""
@@ -71,7 +69,7 @@ def collate_fn(batch):
 
 
 class BaseGPTTrainer:
-    """GPT模型基础训练器（支持训练保护）"""
+    """GPT模型基础训练器"""
 
     def __init__(
         self,
@@ -81,13 +79,7 @@ class BaseGPTTrainer:
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
         warmup_steps: int = 100,
-        max_grad_norm: float = 1.0,
-        # Training guard parameters
-        enable_guard: bool = True,
-        max_steps: Optional[int] = None,
-        max_time_hours: Optional[float] = None,
-        early_stopping_patience: Optional[int] = None,
-        guard_verbose: bool = True
+        max_grad_norm: float = 1.0
     ):
         self.model = model.to(device)
         self.tokenizer = tokenizer
@@ -105,26 +97,6 @@ class BaseGPTTrainer:
         # 学习率调度器
         self.warmup_steps = warmup_steps
         self.step_count = 0
-
-        # 训练保护
-        self.enable_guard = enable_guard
-        if enable_guard:
-            early_stopping = None
-            if early_stopping_patience is not None:
-                early_stopping = EarlyStopping(
-                    patience=early_stopping_patience,
-                    mode='min',
-                    verbose=guard_verbose
-                )
-
-            self.guard = TrainingGuard(
-                max_steps=max_steps,
-                max_time_hours=max_time_hours,
-                early_stopping=early_stopping,
-                verbose=guard_verbose
-            )
-        else:
-            self.guard = None
 
     def get_lr(self):
         """学习率预热"""
@@ -185,7 +157,7 @@ class BaseGPTTrainer:
         eval_texts: Optional[List[str]] = None,
         eval_interval: int = 1000
     ) -> Dict[str, List[float]]:
-        """完整训练流程（带训练保护）"""
+        """完整训练流程"""
 
         # 创建数据集
         train_dataset = GPTDataset(train_texts, self.tokenizer, max_length)
@@ -206,11 +178,6 @@ class BaseGPTTrainer:
         print(f"训练样本数: {len(train_texts)} | 词汇表大小: {getattr(self.tokenizer, 'vocab_size', 'Unknown')}")
         print("=" * 80)
 
-        # 启动训练保护
-        if self.guard:
-            self.guard.start()
-
-        should_stop = False
         global_step = 0
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -223,26 +190,11 @@ class BaseGPTTrainer:
 
                 progress_bar.set_postfix({'loss': f'{loss:.4f}'})
 
-                # 训练保护检查
-                if self.guard:
-                    if not self.guard.step(loss=loss, model=self.model):
-                        should_stop = True
-                        break
-
                 # 定期评估
                 if eval_texts and global_step % eval_interval == 0:
                     eval_loss = self.evaluate(eval_texts, batch_size, max_length)
                     history['eval_loss'].append(eval_loss)
                     print(f"\n[Step {global_step}] Eval Loss: {eval_loss:.4f}")
-
-                    # Early stopping 检查
-                    if self.guard:
-                        if not self.guard.validate(eval_loss):
-                            should_stop = True
-                            break
-
-            if should_stop:
-                break
 
             avg_loss = epoch_loss / len(train_loader)
             history['train_loss'].append(avg_loss)
@@ -252,21 +204,10 @@ class BaseGPTTrainer:
             if save_path and (epoch + 1) % 5 == 0:
                 self.save_checkpoint(save_path, epoch)
 
-        # 打印训练保护统计
-        if self.guard:
-            stats = self.guard.get_stats()
-            print(f"\n{'='*80}")
-            print("训练保护统计:")
-            print(f"  总步数: {stats['total_steps']}")
-            print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
-            if stats['stopped']:
-                print(f"  停止原因: {stats['stop_reason']}")
-            print(f"{'='*80}\n")
-
         # 保存最终模型
         if save_path:
             self.save_model(save_path)
-            print(f"✅ 模型已保存到: {save_path}")
+            print(f"\n✅ 模型已保存到: {save_path}")
 
         return history
 
@@ -328,32 +269,18 @@ class BaseGPTTrainer:
 
 
 class GPT4oTrainer(BaseGPTTrainer):
-    """GPT-4o专用训练器（支持多模态）"""
+    """GPT-4o专用训练器"""
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
-        """GPT-4o训练步骤（支持文本+图像+音频多模态）"""
+        """GPT-4o训练步骤（支持多模态）"""
         self.model.train()
 
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
 
-        # 多模态输入（可选）
-        image_feat = batch.get('image_feat')
-        audio_feat = batch.get('audio_feat')
-
-        if image_feat is not None:
-            image_feat = image_feat.to(self.device)
-        if audio_feat is not None:
-            audio_feat = audio_feat.to(self.device)
-
-        # GPT-4o 多模态前向传播
+        # GPT-4o支持多模态，但这里只用文本
         self.optimizer.zero_grad()
-        logits = self.model(
-            text_ids=input_ids,
-            image_feat=image_feat,
-            audio_feat=audio_feat,
-            load_factor=1.0
-        )
+        logits = self.model(text_ids=input_ids, load_factor=1.0)
 
         loss = self.compute_loss(logits, labels)
         loss.backward()
@@ -371,33 +298,19 @@ class GPT4oTrainer(BaseGPTTrainer):
 
 
 class GPTo3Trainer(BaseGPTTrainer):
-    """GPTo3专用训练器（结构化推理 + 多模态）"""
+    """GPTo3专用训练器（结构化推理）"""
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
-        """GPTo3训练步骤（启用梯度计算 + 多模态支持）"""
+        """GPTo3训练步骤（启用梯度计算）"""
         self.model.train()
 
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
 
-        # 多模态输入（可选）
-        image_feat = batch.get('image_feat')
-        audio_feat = batch.get('audio_feat')
-
-        if image_feat is not None:
-            image_feat = image_feat.to(self.device)
-        if audio_feat is not None:
-            audio_feat = audio_feat.to(self.device)
-
         self.optimizer.zero_grad()
 
-        # GPTo3 多模态前向传播
-        logits = self.model(
-            text_ids=input_ids,
-            image_feat=image_feat,
-            audio_feat=audio_feat,
-            load_factor=1.0
-        )
+        # GPTo3的forward现在支持梯度计算
+        logits = self.model(text_ids=input_ids, load_factor=1.0)
 
         loss = self.compute_loss(logits, labels)
         loss.backward()
@@ -524,24 +437,14 @@ class GPT5Trainer(BaseGPTTrainer):
     def __init__(
         self,
         model,
-        tokenizer,
+        optimizer,
         device: str = 'cuda',
-        learning_rate: float = 3e-4,
-        weight_decay: float = 0.01,
-        warmup_steps: int = 100,
         max_grad_norm: float = 1.0,
         enable_streaming_retrieval: bool = False,
-        memory_bucket_size: int = 512
+        memory_bucket_size: int = 512,
+        **kwargs
     ):
-        super().__init__(
-            model=model,
-            tokenizer=tokenizer,
-            device=device,
-            learning_rate=learning_rate,
-            weight_decay=weight_decay,
-            warmup_steps=warmup_steps,
-            max_grad_norm=max_grad_norm
-        )
+        super().__init__(model, optimizer, device, max_grad_norm, **kwargs)
         self.enable_streaming_retrieval = enable_streaming_retrieval
         self.memory_bucket_size = memory_bucket_size
 
@@ -566,28 +469,17 @@ class GPT5Trainer(BaseGPTTrainer):
         return loss
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> float:
-        """Training step for GPT-5 (supports multimodal)"""
+        """Training step for GPT-5"""
         self.model.train()
 
         input_ids = batch['input_ids'].to(self.device)
         labels = batch['labels'].to(self.device)
 
-        # Multimodal inputs (optional)
-        image_feat = batch.get('image_feat')
-        audio_feat = batch.get('audio_feat')
-
-        if image_feat is not None:
-            image_feat = image_feat.to(self.device)
-        if audio_feat is not None:
-            audio_feat = audio_feat.to(self.device)
-
         self.optimizer.zero_grad()
 
-        # GPT-5 multimodal forward pass with step_idx for streaming retrieval
+        # GPT-5 forward pass with step_idx for streaming retrieval
         logits, info = self.model.forward_step(
-            input_ids=input_ids,
-            image_feat=image_feat,
-            audio_feat=audio_feat,
+            input_ids,
             step_idx=self.step_count,
             schema_required=False
         )
@@ -675,51 +567,30 @@ class GPT5Trainer(BaseGPTTrainer):
 
 
 def train_gpt5(
-    train_texts: List[str],
-    vocab_size: int = 32000,
-    d_model: int = 512,
-    n_heads: int = 8,
-    d_ff: int = 2048,
-    num_layers: int = 6,
-    epochs: int = 10,
-    batch_size: int = 8,
-    learning_rate: float = 3e-4,
-    save_path: str = "./gpt5_model",
-    device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
-    enable_streaming_retrieval: bool = False,
-    memory_bucket_size: int = 512
-):
-    """便捷函数：训练GPT-5模型"""
-    from apt_model.modeling.gpt5_model import GPT5Model
-    from transformers import GPT2Tokenizer
+    model,
+    train_dataloader,
+    val_dataloader=None,
+    num_epochs: int = 3,
+    learning_rate: float = 5e-5,
+    device: str = 'cuda',
+    save_path: str = './checkpoints/gpt5',
+    **kwargs
+) -> Dict[str, float]:
+    """Convenience function to train GPT-5 model"""
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-    # 初始化模型和tokenizer
-    model = GPT5Model(
-        vocab_size=vocab_size,
-        d_model=d_model,
-        n_heads=n_heads,
-        d_ff=d_ff,
-        num_layers=num_layers
-    )
-
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-
-    # 创建训练器
     trainer = GPT5Trainer(
         model=model,
-        tokenizer=tokenizer,
+        optimizer=optimizer,
         device=device,
-        learning_rate=learning_rate,
-        enable_streaming_retrieval=enable_streaming_retrieval,
-        memory_bucket_size=memory_bucket_size
+        **kwargs
     )
 
-    # 训练
-    history = trainer.train(
-        train_texts=train_texts,
-        epochs=epochs,
-        batch_size=batch_size,
+    final_metrics = trainer.train(
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        num_epochs=num_epochs,
         save_path=save_path
     )
 
-    return model, tokenizer, history
+    return final_metrics
