@@ -133,6 +133,14 @@ def run_train_command(args):
     logger, lang_manager, device = _initialize_common(args)
     _ = lambda key, *params: lang_manager.get(key).format(*params) if params else lang_manager.get(key)
 
+    # 显示 APT 兔子吉祥物（类似 Linux Tux）
+    try:
+        from apt_model.utils.mascot_render import print_apt_mascot
+        print_apt_mascot(cols=60, show_banner=True)
+    except Exception as e:
+        # 如果渲染失败，继续训练流程
+        logger.debug(f"吉祥物渲染失败: {e}")
+
     logger.info(_("training.start"))
 
     # 检查硬件兼容性
@@ -177,6 +185,15 @@ def run_train_custom_command(args):
         int: 退出码
     """
     logger, lang_manager, device = _initialize_common(args)
+
+    # 显示 APT 兔子吉祥物（类似 Linux Tux）
+    try:
+        from apt_model.utils.mascot_render import print_apt_mascot
+        print_apt_mascot(cols=60, show_banner=True)
+    except Exception as e:
+        # 如果渲染失败，继续训练流程
+        logger.debug(f"吉祥物渲染失败: {e}")
+
     logger.info("开始使用自定义数据训练模型...")
 
     # 设置资源监控
