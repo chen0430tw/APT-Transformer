@@ -103,9 +103,39 @@ APT项目实现了完整的图脑(Graph Brain)系统，基于**非平衡态统�
 #### 核心组件
 
 **1. GeneralizedGraph** (`generalized_graph.py`)
-- **泛图数据结构**: 支持0-单元(节点)、1-单元(边)、2-单元(面)等高维拓扑结构
-- **知识图谱构建**: 从三元组 `(subject, relation, object)` 构建图
-- **拓扑操作**: 边界算子、协边界算子、拉普拉斯算子
+
+泛图 G = ({I_p}_{p=0}^P, ∂, τ, w, O) 是统一的图表示框架：
+
+- **p-细胞数据结构**: 支持任意维度的拓扑单元
+  - 0-细胞 (0-cell): 节点/顶点
+  - 1-细胞 (1-cell): 边/连接
+  - 2-细胞 (2-cell): 面/三角形
+  - 3-细胞 (3-cell): 体/四面体
+  - 更高维度: 支持到任意P维
+
+- **支持的图类型**:
+  - 普通图 (P=1): 只有点和边
+  - 超图 (Hypergraph): 任意p-细胞，边可连接多个节点
+  - 单纯复形 (Simplicial Complex): 几何拓扑结构
+  - CW复形: 组合拓扑结构
+  - 时空层图/网格: 多层动态图
+
+- **核心组件**:
+  - I_p: p维细胞集合
+  - ∂: 边界映射 (满足链复形条件 ∂∘∂=0)
+  - τ: 取向 (定向)
+  - w: 权重
+  - O: 结构运算库
+
+- **拓扑查询**:
+  - 边界 (boundary): ∂_p(cell) - 细胞的边界
+  - 上边界 (coboundary): ∂^*(cell) - 以该细胞为边界的高维细胞
+  - 同维邻居: 共享边界的细胞
+  - 度数计算: 边界+上边界的数量
+
+- **链复形验证**: 验证 ∂_{p-1} ∘ ∂_p = ∅ (边界的边界为空)
+
+- **关联矩阵**: B_p: I_p -> I_{p-1} (p-细胞到(p-1)-细胞的映射)
 
 **2. GraphBrainEngine** (`graph_brain.py`)
 - **认知自由能最小化**: F = U - T_cog × S
@@ -222,7 +252,81 @@ print(f"📖 增强上下文:\n{augmented_context}")
 # response = llm.generate(llm_input)
 ```
 
-##### 拓扑分析
+##### 泛图分析和拓扑查询
+
+```python
+from apt_model.core.graph_rag import GeneralizedGraph
+
+# 1. 构建普通图 (P=1)
+edges = [("A", "B"), ("B", "C"), ("C", "A"), ("A", "D")]
+gg = GeneralizedGraph.from_edge_list(edges, directed=False)
+
+print("=== 泛图摘要 ===")
+print(gg.summary())
+# 输出:
+# 最大维度: 1
+# 总细胞数: 12
+#   0-细胞: 4 (节点)
+#   1-细胞: 8 (边)
+
+# 2. 拓扑查询
+# 获取节点A的邻居
+neighbors = gg.get_neighbors(0, "A")
+print(f"节点A的邻居: {neighbors}")
+
+# 获取边的边界
+boundary = gg.get_boundary(1, "e0_A->B")
+print(f"边 A->B 的边界: {boundary}")  # {'A', 'B'}
+
+# 获取节点的上边界 (哪些边连接到它)
+coboundary = gg.get_coboundary(0, "A")
+print(f"节点A的上边界 (连接的边): {coboundary}")
+
+# 计算度数
+degree = gg.compute_degree(0, "A")
+print(f"节点A的度数: {degree}")
+
+# 3. 构建超图 (任意维度)
+gg_hyper = GeneralizedGraph(max_dimension=3)
+
+# 添加0-细胞 (节点)
+for node in ["v1", "v2", "v3", "v4"]:
+    gg_hyper.add_cell(0, node)
+
+# 添加1-细胞 (边)
+gg_hyper.add_cell(1, "e1", boundary={"v1", "v2"})
+gg_hyper.add_cell(1, "e2", boundary={"v2", "v3"})
+gg_hyper.add_cell(1, "e3", boundary={"v3", "v1"})
+
+# 添加2-细胞 (面/三角形)
+gg_hyper.add_cell(2, "face1", boundary={"e1", "e2", "e3"})
+
+# 添加3-细胞 (体)
+gg_hyper.add_cell(1, "e4", boundary={"v3", "v4"})
+gg_hyper.add_cell(2, "face2", boundary={"e2", "e4"})
+gg_hyper.add_cell(3, "volume1", boundary={"face1", "face2"})
+
+print(gg_hyper.summary())
+
+# 4. 验证链复形条件 (∂∘∂=0)
+is_valid = gg_hyper.verify_chain_complex()
+print(f"链复形条件满足: {is_valid}")
+
+# 5. 计算关联矩阵
+B1 = gg_hyper.compute_incidence_matrix(1)  # 边 -> 节点
+B2 = gg_hyper.compute_incidence_matrix(2)  # 面 -> 边
+print(f"B_1 shape: {B1.shape}, nnz: {B1.nnz}")
+print(f"B_2 shape: {B2.shape}, nnz: {B2.nnz}")
+
+# 6. 统计信息
+stats = gg_hyper.get_statistics()
+print(f"📊 统计信息:")
+print(f"   总细胞数: {stats['total_cells']}")
+print(f"   各维度细胞数: {stats['num_cells_by_dim']}")
+print(f"   平均度数: {stats['avg_degree_by_dim']}")
+```
+
+##### Hodge拉普拉斯和谱分析
 
 ```python
 from apt_model.core.graph_rag import HodgeLaplacian
@@ -286,7 +390,11 @@ dw/dt = -(w - w_target) / τ_w + η · (活性相关项)
 |------|---------------------------|-------------------|
 | **理论基础** | 非平衡态统计物理 | 图神经网络 |
 | **核心机制** | 自由能最小化 + CPHL | 消息传递 + 注意力 |
-| **拓扑结构** | 泛图 (k-单元) | 标准图 (节点+边) |
+| **拓扑结构** | 泛图 (p-细胞, P≤3) | 标准图 (节点+边) |
+| **图类型支持** | ✅ 普通图/超图/单纯复形/CW复形 | ❌ 仅普通图 |
+| **高维拓扑** | ✅ 0/1/2/3-细胞完整支持 | ❌ 无高维支持 |
+| **边界算子** | ✅ ∂, ∂^*, 链复形验证 | ❌ 无拓扑算子 |
+| **关联矩阵** | ✅ B_p 关联矩阵计算 | ❌ 仅邻接矩阵 |
 | **动力学** | ✅ 显式时间演化 | ❌ 静态前向传播 |
 | **自适应性** | ✅ 拓扑相变 | ❌ 固定结构 |
 | **用途** | ✅ 已实现 (RAG系统) | 📝 概念设计 (推理架构) |
