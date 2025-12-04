@@ -6,6 +6,7 @@ transformers>=4.45
 datasets>=3.0
 accelerate>=1.0
 evaluate>=0.4
+huggingface-hub>=0.23  # HuggingFace Hub集成
 
 # 数值计算和数据处理
 numpy>=1.24
@@ -35,6 +36,7 @@ fugashi>=1.3  # 日语分词器
 safetensors>=0.4
 protobuf>=4.24
 pyyaml>=6.0
+packaging>=24.0  # 版本管理工具
 
 # 超参数优化
 optuna>=3.6
@@ -66,3 +68,16 @@ rich>=13.7  # 进度条和输出美化
 
 # 图处理（GraphRAG）
 networkx>=3.1
+
+# 云存储和模型Hub（Legacy Plugins）
+boto3>=1.34  # AWS S3 支持
+oss2>=2.18  # 阿里云 OSS 支持
+modelscope>=1.12  # 魔搭社区
+
+# 测试框架
+pytest>=8.0  # 单元测试
+pytest-cov>=4.1  # 测试覆盖率
+
+# 数据处理工具（可选）
+openpyxl>=3.1  # Excel 支持
+beautifulsoup4>=4.12  # HTML 解析
