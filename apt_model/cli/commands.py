@@ -197,8 +197,14 @@ def run_train_custom_command(args):
                 custom_texts = get_training_texts()
                 print(f"使用预设数据，共 {len(custom_texts)} 条文本")
 
-        if not custom_texts:
+        # 验证数据加载
+        if not custom_texts or len(custom_texts) == 0:
             logger.error("无法加载数据或数据为空")
+            print("错误: 无法加载训练数据或数据为空")
+            print("请检查:")
+            print(f"  1. 数据文件路径是否正确: {args.data_path if args.data_path else '(未指定)'}")
+            print("  2. 数据文件是否包含有效内容")
+            print("  3. 文件格式是否正确 (txt/json)")
             return 1
 
         # 获取tokenizer并检测语言

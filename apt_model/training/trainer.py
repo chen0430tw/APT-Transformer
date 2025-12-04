@@ -219,11 +219,16 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     
     # 自动检测语言并选择合适的分词器
     tokenizer, detected_language = get_appropriate_tokenizer(
-        train_texts, 
-        tokenizer_type=tokenizer_type, 
+        train_texts,
+        tokenizer_type=tokenizer_type,
         language=language
     )
-    
+
+    # 验证和修复 tokenizer 属性
+    if not hasattr(tokenizer, 'pad_token_id') or tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = 0
+        debug_print("警告: tokenizer 缺少 pad_token_id，已设置为 0")
+
     debug_print(f"使用{detected_language}语言分词器: {type(tokenizer).__name__}")
     
     # 设置数据集和数据加载器
@@ -271,8 +276,15 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     )
 
     debug_print("创建模型配置...")
+
+    # 安全获取 vocab_size
+    vocab_size = getattr(tokenizer, 'vocab_size', None)
+    if not vocab_size or vocab_size <= 0:
+        vocab_size = 50257  # 默认 GPT-2 词汇表大小
+        debug_print(f"警告: 无法获取词汇表大小，使用默认值: {vocab_size}")
+
     config = APTConfig(
-        vocab_size=tokenizer.vocab_size,
+        vocab_size=vocab_size,
         d_model=768,
         d_ff=2048,
         num_heads=12,
