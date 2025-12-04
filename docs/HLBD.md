@@ -16,7 +16,7 @@ HLBD的设计灵感来自人类的语言学习过程：
 
 ### 8个标准层级
 
-每个HLBD样本包含一个核心**概念（concept）**和8个表达层级：
+每个HLBD样本包含一个核心 **概念**（concept）和8个表达层级：
 
 | 层级 | 名称 | 说明 | 示例 |
 |------|------|------|------|
@@ -321,14 +321,14 @@ HLBD提供了丰富的平行语料，适合训练多语言翻译模型。
 ## 🚀 性能建议
 
 ### 训练建议
-- **小数据集（<50概念）**：20-50 epochs，batch_size=4
-- **中等数据集（50-200概念）**：50-100 epochs，batch_size=8
-- **大数据集（>200概念）**：100-500 epochs，batch_size=16
+- **小数据集**（<50概念）：20-50 epochs，batch_size=4
+- **中等数据集**（50-200概念）：50-100 epochs，batch_size=8
+- **大数据集**（>200概念）：100-500 epochs，batch_size=16
 
 ### 硬件建议
 - **CPU训练**：batch_size≤4，d_model≤512
-- **单GPU（8GB）**：batch_size≤8，d_model≤768
-- **单GPU（16GB+）**：batch_size≤16，d_model≤1024
+- **单GPU**（8GB）：batch_size≤8，d_model≤768
+- **单GPU**（16GB+）：batch_size≤16，d_model≤1024
 
 ## 🆘 常见问题
 

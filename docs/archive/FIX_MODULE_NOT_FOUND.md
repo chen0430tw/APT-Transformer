@@ -118,7 +118,7 @@ pip install -e .
 
 ### 对于用户
 
-**第一步：安装包（必须！）**
+**第一步：安装包**（必须！）
 
 ```bash
 cd APT-Transformer

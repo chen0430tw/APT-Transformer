@@ -2,7 +2,7 @@
 
 ## 概述 (Overview)
 
-Claude-4 是基于 GPT-4o 架构的增强版模型，添加了**图论反思层（Graph-based Reflection Layer）**来实现深度推理能力。
+Claude-4 是基于 GPT-4o 架构的增强版模型，添加了 **图论反思层**（Graph-based Reflection Layer）来实现深度推理能力。
 
 核心创新：
 1. **图连通度分析** - 使用 BFS 找到信息流的关键路径
@@ -224,7 +224,7 @@ model = Claude4Model(
 )
 ```
 
-**禁用反思（等价于 GPT-4o）**:
+**禁用反思**（等价于 GPT-4o）:
 
 ```python
 model = Claude4Model(
@@ -447,7 +447,7 @@ scaler.update()
 
 ### 3. 内存优化
 
-**梯度检查点（Gradient Checkpointing）**
+**梯度检查点**（Gradient Checkpointing）
 
 ```python
 import torch.utils.checkpoint as checkpoint

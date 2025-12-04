@@ -172,19 +172,24 @@ history = trainer.train(
 )
 ```
 
-### GPT-5 🔬 实验性
+### GPT-5 🔬 高级
 
 **适用场景：**
 - ✅ MoE（专家混合）研究
 - ✅ CPU友好训练
 - ✅ 流式检索应用
-- ⚠️ 仍在开发中
+- ⚠️ 需要配置VeinProjector依赖
 
 **特点：**
 - Codebook MoE
 - Leaf-Vote投票机制
 - 流式检索器
 - 记忆桶（Memory Bucket）
+
+**注意事项：**
+- 需要安装 `apt_model.modeling.blocks.VeinProjector`
+- 适合MoE架构研究和大规模训练
+- 详见 [GPT Models Analysis](GPT_MODELS_ANALYSIS.md) 了解完整特性
 
 ---
 
@@ -806,11 +811,16 @@ if __name__ == "__main__":
 
 ## 📝 更新日志
 
+- **v1.1.0** (2025-12) - 功能完善版
+  - ✅ GPT-4o, GPT-5, GPTo3 全面支持
+  - ✅ 混合精度训练优化
+  - ✅ 分布式训练支持
+  - ✅ 完整的故障排除指南
+  - ✅ 生产级训练流程
+
 - **v1.0.0** (2024-12) - 初始版本
-  - 支持GPT-4o, GPT-5, GPTo3训练
-  - 混合精度训练
-  - 分布式训练支持
-  - 完整的故障排除指南
+  - 基础训练功能
+  - 模型架构实现
 
 ---
 
