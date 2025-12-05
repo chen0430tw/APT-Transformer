@@ -254,27 +254,43 @@ class CommandRegistry:
 command_registry = CommandRegistry()
 
 
-def register_command(**kwargs):
+def register_command(name=None, func=None, **kwargs):
     """
-    装饰器工厂：注册命令（使用全局注册中心）
+    万能兼容版命令注册函数（支持三种调用方式）
 
-    用法：
-    @register_command(name="cmd_name", category="console", help_text="...")
-    def my_command(args):
-        ...
+    用法1 - 位置参数直接注册（兼容旧版）：
+        register_command("train", run_train_command, category="training", help_text="...")
 
-    或者直接注册（不作为装饰器）：
-    register_command(name="cmd_name", func=my_func, category="console")
+    用法2 - 关键字参数直接注册：
+        register_command(name="cmd_name", func=my_func, category="console")
+
+    用法3 - 装饰器模式：
+        @register_command(name="cmd_name", category="console", help_text="...")
+        def my_command(args):
+            ...
     """
-    # 如果提供了func参数，说明是直接调用而不是装饰器
-    if 'func' in kwargs:
-        command_registry.register(**kwargs)
+    # 情况1: 两个位置参数都提供了（旧版调用方式）
+    if name is not None and func is not None:
+        command_registry.register(name=name, func=func, **kwargs)
         return None
 
-    # 装饰器模式
+    # 情况2: 只提供了name作为位置参数，func在kwargs中
+    if name is not None and 'func' in kwargs:
+        func = kwargs.pop('func')
+        command_registry.register(name=name, func=func, **kwargs)
+        return None
+
+    # 情况3: func在kwargs中（关键字参数调用）
+    if 'func' in kwargs:
+        cmd_name = kwargs.pop('name', name)
+        func = kwargs.pop('func')
+        command_registry.register(name=cmd_name, func=func, **kwargs)
+        return None
+
+    # 情况4: 装饰器模式
     def decorator(func: Callable) -> Callable:
         # 从kwargs中提取name，如果没有则使用函数名
-        cmd_name = kwargs.pop('name', func.__name__)
+        cmd_name = kwargs.pop('name', name or func.__name__)
         command_registry.register(name=cmd_name, func=func, **kwargs)
         return func
     return decorator
