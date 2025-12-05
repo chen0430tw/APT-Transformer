@@ -1,0 +1,538 @@
+{
+  "legacy_plugins": {
+    "batch1": {
+      "model_distillation_plugin.py": "file",
+      "QUICKSTART.md": "file",
+      "install_dependencies.sh": "file",
+      "README.md": "file",
+      "huggingface_integration_plugin.py": "file",
+      "APT_Plugin_Implementation_Plan.md": "file",
+      "cloud_storage_plugin.py": "file",
+      "model_pruning_plugin.py": "file"
+    },
+    "batch2": {
+      "plugin_7_data_processors.py": "file",
+      "plugin_6_multimodal_training.py": "file",
+      "PLUGINS_GUIDE.md": "file",
+      "plugin_8_advanced_debugging.py": "file"
+    }
+  },
+  "MANIFEST.in": "file",
+  "examples": {
+    "claude4_demo.py": "file",
+    "core_registry.py": "file",
+    "multilingual_example.py": "file",
+    "STARTUP_EXAMPLES.md": "file",
+    "plugin_template": {
+      "plugin": {
+        "__init__.py": "file"
+      },
+      "plugin.yaml": "file",
+      "commands": {
+        "example_command.py": "file"
+      },
+      "tests": {
+        "test_plugin.py": "file"
+      },
+      "README.md": "file"
+    },
+    "rl_examples": {
+      "dpo_example.py": "file",
+      "grpo_example.py": "file"
+    },
+    "training_monitor_examples": {
+      "basic_monitoring.py": "file"
+    },
+    "train_distributed.py": "file",
+    "pretraining_examples": {
+      "mlm_example.py": "file",
+      "contrastive_example.py": "file"
+    },
+    "gpt5_mcp_demo.py": "file",
+    "multimodal_inference.py": "file",
+    "visual_distillation_example.py": "file",
+    "profiles": {
+      "gpt5_moe_reasoning.yaml": "file",
+      "tiny_debug.yaml": "file"
+    },
+    "test_implementations.py": "file",
+    "demo_startup.py": "file",
+    "USAGE_GUIDE.md": "file",
+    "graph_rag_examples": {
+      "basic_usage.py": "file"
+    },
+    "sample_knowledge.txt": "file",
+    "example_plugin.py": "file",
+    "train_multimodal.py": "file"
+  },
+  "make_repo_index.py": "file",
+  "bert": {
+    "vocab.txt": "file",
+    "bert-base-chinese": {
+      ".gitattributes": "file",
+      "pytorch_model.bin": "file",
+      "vocab.txt": "file",
+      "config.json": "file",
+      "tokenizer_config.json": "file"
+    }
+  },
+  "experiments": {
+    "hpo": {
+      "apt_optuna.py": "file",
+      "apt_optuna_auto.py": "file"
+    },
+    "configs": {
+      "best": {
+        "best_apt_config_20250310_162705.py": "file"
+      }
+    }
+  },
+  "INSTALLATION.md": "file",
+  "tests": {
+    "test_terminator_scenario.py": "file",
+    "test_plugin_system.py": "file",
+    "test_compression_minimal.py": "file",
+    "test_console.py": "file",
+    "test_vft_tva.py": "file",
+    "test_smoke.py": "file",
+    "test_compression_plugins.py": "file",
+    "test_plugin_system_standalone.py": "file",
+    "test_legacy_adapters.py": "file",
+    "README.md": "file",
+    "test_dbc_acceleration.py": "file",
+    "test_small_apt_model.py": "file",
+    "test_error_persistence.py": "file",
+    "test_multimodal.py": "file",
+    "conftest.py": "file",
+    "test_trainer_complete.py": "file",
+    "test_callbacks.py": "file",
+    "test_admin_mode_structure.py": "file",
+    "test_multilingual.py": "file",
+    "test_core_imports.py": "file",
+    "test_plugin_version_manager.py": "file",
+    "test_bert_tokenizer.py": "file",
+    "test_compression_plugin.py": "file",
+    "test_hlbd_quick_learning.py": "file",
+    "test_terminator_logic.py": "file"
+  },
+  "README.md": "file",
+  "requirements-dev.txt": "file",
+  ".gitignore": "file",
+  "setup.py": "file",
+  "scripts": {
+    "start_admin_mode.py": "file",
+    "run_optuna_optimization.sh": "file",
+    "run_optuna_quick_test.sh": "file",
+    "launchers": {
+      "create_desktop_shortcut.py": "file",
+      "apt_launcher.pyw": "file",
+      "APT_Launcher.sh": "file",
+      "APT_Launcher.bat": "file"
+    },
+    "launch_distributed.sh": "file",
+    "README.md": "file",
+    "download_optional_assets.py": "file",
+    "archived": {
+      "vft_tva_legacy.py": "file",
+      "APT_ALL_MODULES.tar.gz": "file"
+    },
+    "apx_converter.py": "file",
+    "test_generate_fix.py": "file",
+    "apt_eqi_manager.py": "file",
+    "eqi.py": "file",
+    "test_webui_simple.py": "file",
+    "ptpf_render.py": "file",
+    "DELETE_BRANCHES.sh": "file",
+    "run_best_training.sh": "file"
+  },
+  "docs": {
+    "MODULE_INTEGRATION_PLAN.md": "file",
+    "API_PROVIDERS_GUIDE.md": "file",
+    "FINE_TUNING_GUIDE.md": "file",
+    "assets": {
+      "兔兔伯爵.png": "file"
+    },
+    "DISTILLATION_PRINCIPLE.md": "file",
+    "DEBUG_MODE_GUIDE.md": "file",
+    "VISUAL_DISTILLATION_GUIDE.md": "file",
+    "DATA_PREPROCESSING_GUIDE.md": "file",
+    "GPT_TRAINING_GUIDE.md": "file",
+    "PLUGIN_SYSTEM.md": "file",
+    "CLAUDE4_MODEL_GUIDE.md": "file",
+    "RL_PRETRAINING_GUIDE.md": "file",
+    "SELF_SUPERVISED_RL_CHECK_REPORT.md": "file",
+    "BUG_REPORT.md": "file",
+    "MCP_INTEGRATION_GUIDE.md": "file",
+    "APX.md": "file",
+    "README.md": "file",
+    "GPT_MODELS_ANALYSIS.md": "file",
+    "PLUGINS_USAGE_GUIDE.md": "file",
+    "WEB_SEARCH_PLUGIN_GUIDE.md": "file",
+    "HLBD.md": "file",
+    "APT_MODEL_HANDBOOK.md": "file",
+    "OPTUNA_GUIDE.md": "file",
+    "repo_schema.md": "file",
+    "DEEPSEEK_TRAINING_GUIDE.md": "file",
+    "KNOWLEDGE_GRAPH_GUIDE.md": "file",
+    "LAUNCHER_README.md": "file",
+    "archive": {
+      "FIX_MODULE_NOT_FOUND.md": "file",
+      "ALL_FIXES_SUMMARY.md": "file",
+      "PR_DESCRIPTION.md": "file",
+      "BUG_FIXES_SUMMARY.md": "file",
+      "PR_SETUP_FIX.md": "file"
+    },
+    "TEACHER_API_GUIDE.md": "file",
+    "GRAPH_BRAIN_TRAINING_GUIDE.md": "file",
+    "training_protection_guide.md": "file"
+  },
+  "requirements.txt": "file",
+  "Makefile": "file",
+  "apt": {
+    "multilingual": {
+      "language.py": "file",
+      "detector.py": "file",
+      "__init__.py": "file",
+      "tokenizer.py": "file",
+      "registry.py": "file"
+    },
+    "__init__.py": "file",
+    "plugins": {
+      "hooks.py": "file",
+      "base.py": "file",
+      "__init__.py": "file",
+      "manager.py": "file",
+      "builtin": {
+        "__init__.py": "file"
+      }
+    },
+    "core": {
+      "codecs": {
+        "unicode_norm.py": "file",
+        "api.py": "file",
+        "__init__.py": "file",
+        "registry.py": "file"
+      },
+      "providers": {
+        "retrieval_exact.py": "file",
+        "router.py": "file",
+        "retrieval_faiss.py": "file",
+        "__init__.py": "file",
+        "kg_retrieval_provider.py": "file",
+        "retrieval.py": "file",
+        "ffn.py": "file",
+        "retrieval_annoy.py": "file",
+        "attention.py": "file",
+        "align.py": "file"
+      },
+      "__init__.py": "file",
+      "schedules.py": "file",
+      "config.py": "file",
+      "registry.py": "file"
+    },
+    "modeling": {
+      "compose.py": "file",
+      "__init__.py": "file"
+    }
+  },
+  "apt_model": {
+    "codecs": {
+      "__init__.py": "file",
+      "plugins": {
+        "en_gpt2": {
+          "__init__.py": "file",
+          "codec.py": "file"
+        },
+        "zh_char": {
+          "__init__.py": "file",
+          "codec.py": "file"
+        },
+        "ja_mecab": {
+          "__init__.py": "file",
+          "codec.py": "file"
+        }
+      },
+      "compat.py": "file"
+    },
+    "pretraining": {
+      "__init__.py": "file",
+      "mlm_pretrain.py": "file",
+      "contrastive_pretrain.py": "file"
+    },
+    "api": {
+      "server.py": "file",
+      "__init__.py": "file"
+    },
+    "best_train_cmd_20250310_162705.sh": "file",
+    "webui": {
+      "__init__.py": "file",
+      "app.py": "file",
+      "create_training_launcher.py": "file"
+    },
+    "__main__.py": "file",
+    "generation": {
+      "generator.py": "file",
+      "__init__.py": "file",
+      "evaluator.py": "file"
+    },
+    "exceptions.py": "file",
+    "apt_optuna_20250310_1602.db": "file",
+    "infrastructure": {
+      "errors.py": "file",
+      "__init__.py": "file",
+      "logging.py": "file"
+    },
+    "tools": {
+      "apx": {
+        "converter.py": "file",
+        "adapters.py": "file",
+        "README.md": "file",
+        "__init__.py": "file",
+        "templates.py": "file",
+        "detectors.py": "file"
+      },
+      "apg": {
+        "__init__.py": "file",
+        "packager.py": "file"
+      }
+    },
+    "zh_train.txt": "file",
+    "config": {
+      "settings_manager.py": "file",
+      "multimodal_config.py": "file",
+      "apt_config.py": "file",
+      "__init__.py": "file",
+      "optimized_config.py": "file",
+      "settings.yaml": "file",
+      "hardware_profile.py": "file",
+      "module_config.py": "file"
+    },
+    "__init__.py": "file",
+    "utils": {
+      "hardware_check.py": "file",
+      "visualization.py": "file",
+      "resource_monitor.py": "file",
+      "language_manager.py": "file",
+      "error_handler.py": "file",
+      "__init__.py": "file",
+      "time_estimator.py": "file",
+      "mascot_render.py": "file",
+      "logging_config.py": "file",
+      "logging_utils.py": "file",
+      "validators.py": "file",
+      "common.py": "file",
+      "error_persistence.py": "file",
+      "cache_manager.py": "file"
+    },
+    "diagnose_tokenizer.py": "file",
+    "run_apt.py": "file",
+    "report": {
+      "model_category_comparison_1741429081.png": "file",
+      "model_comparison_1741429081.png": "file",
+      "model_report_1741429081.md": "file",
+      "model_comparison_1741417970.png": "file",
+      "category_performance.png": "file",
+      "training_history.png": "file",
+      "visualization_report.md": "file",
+      "quality_trend.png": "file",
+      "attention_heatmap.png": "file",
+      "capability_radar.png": "file",
+      "model_report_1741417971.md": "file",
+      "model_category_comparison_1741417971.png": "file"
+    },
+    "plugins": {
+      "web_search_plugin.py": "file",
+      "visual_distillation_plugin.py": "file",
+      "version_manager.py": "file",
+      "compression_plugin.py": "file",
+      "ollama_export_plugin.py": "file",
+      "graph_rag_plugin.py": "file",
+      "teacher_api.py": "file",
+      "training_monitor_plugin.py": "file"
+    },
+    "main.py": "file",
+    "optuna_history_20250310_162704.png": "file",
+    "optuna_results_20250309_202621.txt": "file",
+    "train.txt": "file",
+    "config.json": "file",
+    "optuna_importance_20250310_162704.png": "file",
+    "core": {
+      "hardware.py": "file",
+      "__init__.py": "file",
+      "system.py": "file",
+      "api_providers.py": "file",
+      "graph_rag": {
+        "graph_brain.py": "file",
+        "INTEGRATION.md": "file",
+        "demo_full.py": "file",
+        "README.md": "file",
+        "hodge_laplacian.py": "file",
+        "__init__.py": "file",
+        "generalized_graph.py": "file",
+        "graph_rag_manager.py": "file",
+        "PROJECT_STRUCTURE.md": "file",
+        "START_HERE.md": "file"
+      },
+      "resources.py": "file",
+      "training": {
+        "apt_integration.py": "file",
+        "README.md": "file",
+        "__init__.py": "file",
+        "sosa_core.py": "file",
+        "QUICK_START.md": "file",
+        "training_monitor.py": "file"
+      }
+    },
+    "分层语言启蒙数据集.txt": "file",
+    "interactive": {
+      "chat.py": "file",
+      "__init__.py": "file",
+      "admin_mode.py": "file"
+    },
+    "optuna_results_20250310_162705.txt": "file",
+    "data": {
+      "data_processor.py": "file",
+      "huggingface_loader.py": "file",
+      "pipeline.py": "file",
+      "multimodal_dataset.py": "file",
+      "__init__.py": "file",
+      "external_data.py": "file",
+      "hlbd": {
+        "__main__.py": "file",
+        "__init__.py": "file",
+        "hlbd.py": "file",
+        "hlbd_adapter.py": "file"
+      },
+      "multimodal_adapter.py": "file"
+    },
+    "modeling": {
+      "claude4_model.py": "file",
+      "rag_integration.py": "file",
+      "vft_tva_model.py": "file",
+      "multimodal_model.py": "file",
+      "encoders": {
+        "vision_encoder.py": "file",
+        "__init__.py": "file",
+        "audio_encoder.py": "file",
+        "cross_modal_attention.py": "file"
+      },
+      "chinese_tokenizer_integration.py": "file",
+      "gpt4o_model.py": "file",
+      "knowledge_graph.py": "file",
+      "__init__.py": "file",
+      "utils.py": "file",
+      "chinese_tokenizer.py": "file",
+      "kg_rag_integration.py": "file",
+      "gpt5_model.py": "file",
+      "blocks": {
+        "vein.py": "file",
+        "vft_tva.py": "file",
+        "__init__.py": "file",
+        "registry.py": "file"
+      },
+      "apt_model.py": "file",
+      "gpto3_model.py": "file",
+      "mcp_integration.py": "file",
+      "embeddings.py": "file"
+    },
+    "rl": {
+      "rlhf_trainer.py": "file",
+      "reward_model.py": "file",
+      "__init__.py": "file",
+      "grpo_trainer.py": "file",
+      "dpo_trainer.py": "file"
+    },
+    "evaluation": {
+      "unified.py": "file",
+      "model_evaluator.py": "file",
+      "__init__.py": "file",
+      "comparison.py": "file"
+    },
+    "runtime": {
+      "decoder": {
+        "structured_reasoner.py": "file",
+        "routing.py": "file",
+        "reasoning_controller.py": "file",
+        "halting.py": "file",
+        "__init__.py": "file"
+      },
+      "__init__.py": "file"
+    },
+    "training": {
+      "hooks.py": "file",
+      "mixed_precision.py": "file",
+      "vft_tva_trainer.py": "file",
+      "training_guard.py": "file",
+      "train_reasoning.py": "file",
+      "trainer.py": "file",
+      "data_loading.py": "file",
+      "__init__.py": "file",
+      "gradient_monitor.py": "file",
+      "callbacks.py": "file",
+      "training_events.py": "file",
+      "optimizer.py": "file",
+      "claude_trainer.py": "file",
+      "finetuner.py": "file",
+      "checkpoint.py": "file",
+      "gpt_trainer.py": "file"
+    },
+    "resources": {
+      "README.md": "file"
+    },
+    "console": {
+      "legacy_plugins": {
+        "adapters.py": "file",
+        "__init__.py": "file"
+      },
+      "capability_plugin_map.py": "file",
+      "apx_loader.py": "file",
+      "plugin_registry.py": "file",
+      "commands": {
+        "__init__.py": "file",
+        "module_commands.py": "file",
+        "system_commands.py": "file",
+        "plugin_commands.py": "file"
+      },
+      "eqi_manager.py": "file",
+      "README.md": "file",
+      "plugin_adapter.py": "file",
+      "plugin_loader.py": "file",
+      "__init__.py": "file",
+      "version_checker.py": "file",
+      "module_manager.py": "file",
+      "plugins": {
+        "reasoning": {
+          "beam_search_plugin.py": "file",
+          "program_aided_plugin.py": "file",
+          "__init__.py": "file",
+          "self_consistency_plugin.py": "file"
+        },
+        "grpo_plugin.py": "file",
+        "eqi_reporter_plugin.py": "file",
+        "__init__.py": "file",
+        "route_optimizer_plugin.py": "file"
+      },
+      "core.py": "file",
+      "plugin_bus.py": "file",
+      "cli_organizer.py": "file",
+      "auto_loader.py": "file",
+      "plugin_standards.py": "file"
+    },
+    "best_train_cmd_20250310_162705.bat": "file",
+    "cli": {
+      "command_registry.py": "file",
+      "__init__.py": "file",
+      "PLUGIN_GUIDE.md": "file",
+      "parser.py": "file",
+      "apx_commands.py": "file",
+      "commands.py": "file"
+    }
+  },
+  "requirements-minimal.txt": "file",
+  ".env.example": "file",
+  ".github": {
+    "workflows": {
+      "test.yml": "file"
+    }
+  }
+}
