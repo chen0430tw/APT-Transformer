@@ -15,7 +15,11 @@ try:
     from chafa import Canvas, CanvasConfig, PixelMode
     from chafa.loader import Loader
     HAS_CHAFA = True
-except ImportError:
+except (ImportError, FileNotFoundError, OSError, Exception):
+    # ImportError: chafa.py 未安装
+    # FileNotFoundError: Windows 上 ImageMagick 未安装
+    # OSError: 其他系统级错误
+    # Exception: 其他未预期的错误
     HAS_CHAFA = False
 
 
@@ -57,8 +61,10 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
 
     # 检查 chafa.py 是否安装
     if not HAS_CHAFA:
-        print_func("  提示: 安装 chafa.py 可以显示精美的吉祥物图案")
-        print_func("  pip install chafa.py")
+        print_func("  🐰 提示: 安装以下依赖可以显示精美的兔子吉祥物:")
+        print_func("     • Linux/Mac: pip install chafa.py")
+        print_func("     • Windows: pip install chafa.py + 安装 ImageMagick")
+        print_func("       (ImageMagick下载: https://imagemagick.org/script/download.php)")
         if show_banner:
             print_func("="*70)
             print_func("  Training Session Starting... | 训练会话启动中...")

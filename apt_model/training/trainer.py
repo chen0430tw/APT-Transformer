@@ -216,14 +216,10 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         # 传递 info_print 以便在 logger 环境中正确显示
         mascot_module.print_apt_mascot(cols=50, show_banner=True, print_func=info_print)
     except Exception as e:
-        # 如果渲染失败，至少显示文字横幅
+        # 如果渲染失败，至少显示文字横幅（静默失败，不影响训练）
         info_print("\n" + "="*70)
         info_print("  APT - Autopoietic Transformer | 自生成变换器")
         info_print("="*70 + "\n")
-        # DEBUG: 打印异常信息以便诊断
-        import traceback
-        info_print(f"[DEBUG] 吉祥物渲染失败: {type(e).__name__}: {e}")
-        info_print(f"[DEBUG] 详细信息:\n{traceback.format_exc()}")
 
     # 显示安柏的欢迎消息（默认中文）
     # 只有明确指定language="en"时才显示英文
