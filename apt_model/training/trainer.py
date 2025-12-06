@@ -214,11 +214,13 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         info_print("  APT - Autopoietic Transformer | 自生成变换器")
         info_print("="*70 + "\n")
 
-    # 显示安柏的欢迎消息
-    if language == "zh" or (language is None and any(ord(c) > 127 for text in (texts or get_training_texts())[:3] for c in text[:20])):
-        info_print("安柏：一起来训练吧！\n")
-    else:
+    # 显示安柏的欢迎消息（默认中文）
+    # 只有明确指定language="en"时才显示英文
+    if language == "en":
         info_print("Amber: Let's train together!\n")
+    else:
+        # 默认中文或language="zh"或检测到中文
+        info_print("安柏：一起来训练吧！\n")
 
     if logger:
         logger.info("开始训练模型...")
