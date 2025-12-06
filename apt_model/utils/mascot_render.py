@@ -19,7 +19,7 @@ except ImportError:
     HAS_CHAFA = False
 
 
-def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool = True):
+def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool = True, print_func=None):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
@@ -27,17 +27,22 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         cols: 显示宽度（字符数，默认20字符宽，类似Linux企鹅大小）
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
+        print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
 
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
         - 使用 chafa.py 库实现高质量终端渲染
         - 支持彩色和黑白两种模式
     """
+    # 默认使用 print，除非指定了自定义函数
+    if print_func is None:
+        print_func = print
+
     # 显示横幅
     if show_banner:
-        print("\n" + "="*70)
-        print("  APT - Autopoietic Transformer | 自生成变换器")
-        print("="*70)
+        print_func("\n" + "="*70)
+        print_func("  APT - Autopoietic Transformer | 自生成变换器")
+        print_func("="*70)
 
     # 获取兔子图片路径
     script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,18 +51,18 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
     if not os.path.exists(mascot_path):
         # 如果找不到图片，显示简单的文字横幅
         if show_banner:
-            print("  Training Session Starting... | 训练会话启动中...")
-            print("="*70 + "\n")
+            print_func("  Training Session Starting... | 训练会话启动中...")
+            print_func("="*70 + "\n")
         return
 
     # 检查 chafa.py 是否安装
     if not HAS_CHAFA:
-        print("  提示: 安装 chafa.py 可以显示精美的吉祥物图案")
-        print("  pip install chafa.py")
+        print_func("  提示: 安装 chafa.py 可以显示精美的吉祥物图案")
+        print_func("  pip install chafa.py")
         if show_banner:
-            print("="*70)
-            print("  Training Session Starting... | 训练会话启动中...")
-            print("="*70 + "\n")
+            print_func("="*70)
+            print_func("  Training Session Starting... | 训练会话启动中...")
+            print_func("="*70 + "\n")
         return
 
     try:
@@ -103,16 +108,16 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
 
         # 获取并打印输出
         output = canvas.print()
-        print(output.decode())
+        print_func(output.decode())
 
     except Exception as e:
         # 静默失败，不影响程序运行
-        print(f"  (无法渲染吉祥物: {e})")
+        print_func(f"  (无法渲染吉祥物: {e})")
 
     if show_banner:
-        print("="*70)
-        print("  Training Session Starting... | 训练会话启动中...")
-        print("="*70 + "\n")
+        print_func("="*70)
+        print_func("  Training Session Starting... | 训练会话启动中...")
+        print_func("="*70 + "\n")
 
 
 if __name__ == "__main__":
