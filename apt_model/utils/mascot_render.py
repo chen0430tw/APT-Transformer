@@ -98,7 +98,7 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # chafa 会自动将原图下采样到 canvas 尺寸
         canvas.draw_all_pixels(
             image.pixel_type,
-            image.pixels,
+            image.get_pixels(),  # 使用 get_pixels() 方法获取像素数据
             image.width,
             image.height,
             image.rowstride
