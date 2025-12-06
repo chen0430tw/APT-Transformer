@@ -232,8 +232,8 @@ if __name__ == "__main__":
     if use_sixel:
         print("使用 Sixel 模式（完美像素图片）")
         print("支持终端：Windows Terminal v1.22+, WezTerm, mintty, Konsole, iTerm2\n")
-        # Sixel 模式：使用像素宽度而不是字符宽度
-        print_apt_mascot(cols=200, show_banner=True, color_mode=True, use_sixel=True)
+        # Sixel 模式：35 字符宽度等效，适合终端显示
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=True)
     else:
         print("使用字符艺术模式")
         print("提示：添加 --sixel 参数可切换到 Sixel 高清像素模式\n")
