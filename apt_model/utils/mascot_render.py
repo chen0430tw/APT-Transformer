@@ -72,30 +72,12 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         return
 
     try:
-        # 先用 PIL 加载并缩放图片
-        from PIL import Image as PILImage
+        # 使用 chafa 的原生 Loader 加载图片
+        # Loader 会正确处理图片并提供与 draw_all_pixels 兼容的像素数据
+        image = Loader(mascot_path)
 
-        pil_image = PILImage.open(mascot_path)
-
-        # 计算缩放后的尺寸
-        aspect_ratio = pil_image.height / pil_image.width
-        target_width = cols * 4  # 每个字符对应约4个像素
-        target_height = int(target_width * aspect_ratio)
-
-        # 缩放图片
-        pil_image = pil_image.resize((target_width, target_height), PILImage.Resampling.LANCZOS)
-
-        # 转换为 RGB（如果是 RGBA）
-        if pil_image.mode == 'RGBA':
-            # 创建白色背景
-            background = PILImage.new('RGB', pil_image.size, (255, 255, 255))
-            background.paste(pil_image, mask=pil_image.split()[3])
-            pil_image = background
-        elif pil_image.mode != 'RGB':
-            pil_image = pil_image.convert('RGB')
-
-        # 获取像素数据
-        pixel_data = pil_image.tobytes()
+        # 计算画布尺寸
+        aspect_ratio = image.height / image.width
 
         # 创建 chafa 配置
         config = CanvasConfig()
@@ -104,32 +86,22 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 【调试信息】
-        print_func(f"[DEBUG] 原图: {PILImage.open(mascot_path).size}")
-        print_func(f"[DEBUG] 缩放后: {pil_image.size}")
+        print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
         print_func(f"[DEBUG] Canvas: {config.width}x{config.height}")
+        print_func(f"[DEBUG] 像素类型: {image.pixel_type}")
+        print_func(f"[DEBUG] Rowstride: {image.rowstride}")
 
         # 创建画布并绘制
         canvas = Canvas(config)
-        from chafa import PixelType
 
-        # 【调试信息】像素数据详情
-        rowstride = pil_image.width * 3
-        print_func(f"[DEBUG] 像素数据长度: {len(pixel_data)} bytes")
-        print_func(f"[DEBUG] 预期长度: {pil_image.width * pil_image.height * 3} bytes")
-        print_func(f"[DEBUG] 传给 chafa 的参数:")
-        print_func(f"  - pixel_type: RGB8")
-        print_func(f"  - width: {pil_image.width}")
-        print_func(f"  - height: {pil_image.height}")
-        print_func(f"  - rowstride: {rowstride}")
-        print_func(f"  - canvas: {config.width}x{config.height}")
-        print_func(f"[DEBUG] 尺寸比例: 图片{pil_image.width}x{pil_image.height} -> Canvas{config.width}x{config.height}")
-
+        # 使用 Loader 提供的原生属性绘制
+        # chafa 会自动将原图下采样到 canvas 尺寸
         canvas.draw_all_pixels(
-            PixelType.CHAFA_PIXEL_RGB8,
-            pixel_data,
-            pil_image.width,
-            pil_image.height,
-            rowstride
+            image.pixel_type,
+            image.pixels,
+            image.width,
+            image.height,
+            image.rowstride
         )
 
         # 获取并打印输出
