@@ -75,16 +75,26 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 创建 chafa 配置
         config = CanvasConfig()
 
-        # 设置输出尺寸 - 手动控制高度比例
+        # 设置输出宽度
         config.width = cols
-        # Windows 终端字符比例需要手动压扁，使用约 1/2.5 的比例
-        config.height = int(cols * 0.4)  # 20 -> 8，让图片不那么细长
+        config.height = cols  # 临时值，后面会重新计算
 
         # 设置像素模式为更清晰的符号模式
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 加载图片
         image = Loader(mascot_path)
+
+        # Windows PowerShell 的字符比例不同，需要更大的 font_ratio
+        # 标准值 0.5，Windows 上用 0.8-1.0 让图片更矮更紧凑
+        FONT_RATIO = 0.9
+
+        # 根据图片比例和字体比例自动计算合适的高度（保持细节）
+        config.calc_canvas_geometry(
+            image.width,
+            image.height,
+            FONT_RATIO
+        )
 
         # 创建画布
         canvas = Canvas(config)
