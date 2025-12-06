@@ -70,11 +70,18 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
 
         # 如果 PATH 中找不到，尝试常见的 winget 安装路径
         if not chafa_cmd:
-            winget_paths = [
-                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\chafa.exe"),
-                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\hpjansson.Chafa_*\bin\chafa.exe"),
-            ]
             import glob
+            winget_base = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages")
+            winget_paths = [
+                # WinGet Links（符号链接目录）
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\chafa.exe"),
+                # WinGet Packages 目录（包含完整 Source 后缀 + 版本号子目录）
+                # 结构: hpjansson.Chafa_Microsoft.Winget.Source_xxx/chafa-x.x.x-x-xxx/bin/chafa.exe
+                os.path.join(winget_base, "hpjansson.Chafa*", "chafa-*", "bin", "chafa.exe"),
+                os.path.join(winget_base, "hpjansson.Chafa*", "chafa-*", "chafa.exe"),
+                os.path.join(winget_base, "hpjansson.Chafa*", "bin", "chafa.exe"),
+                os.path.join(winget_base, "hpjansson.Chafa*", "chafa.exe"),
+            ]
             for path_pattern in winget_paths:
                 matches = glob.glob(path_pattern)
                 if matches:
