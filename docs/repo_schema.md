@@ -94,9 +94,16 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 - server.py                : FastAPI服务器 - 10+端点REST API(生成/训练/压缩/评估)支持异步请求
 
 ## apt_model/cli
-- commands.py              : CLI命令实现 - train/eval/compress/export等命令的具体逻辑
+- commands.py              : CLI命令实现 - 26+命令(train/eval/compress/export等)，所有命令通过系统性验证
+  * **核心训练命令**: train, fine-tune, train-hf, train-reasoning
+  * **评估命令**: eval, test, compare
+  * **数据命令**: process-data, clean-cache
+  * **工具命令**: info, list, size, prune, backup
+  * **分发命令**: upload, export-ollama
+  * **高级命令**: distill, compress
+  * **健壮性**: 7个问题已修复(编码处理/目录检查/除零保护/字典安全访问)
 - parser.py                : 参数解析 - argparse包装，支持子命令和配置文件
-- command_registry.py      : 命令注册表 - 动态注册和发现CLI命令
+- command_registry.py      : 命令注册表 - 动态注册和发现CLI命令，支持3种调用风格(位置/关键字/装饰器)
 - apx_commands.py          : APX格式命令 - APX模型格式转换相关CLI
 
 ## apt_model/console
@@ -195,6 +202,7 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 - .env.example             : Environment variables template (160 lines)
 - Makefile                 : Build automation
 - config.json              : Module configuration
+- command_verification_report.md : CLI命令验证报告 - 12个命令的系统性检查，7个问题已修复(330行)
 
 ---
 
