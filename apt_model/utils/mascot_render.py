@@ -19,12 +19,12 @@ except ImportError:
     HAS_CHAFA = False
 
 
-def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool = True):
+def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
     参数:
-        cols: 显示宽度（字符数，默认20字符宽，类似Linux企鹅大小）
+        cols: 显示宽度（字符数，默认35字符宽，适合终端显示）
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
 
@@ -32,6 +32,7 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
         - 使用 chafa.py 库实现高质量终端渲染
         - 支持彩色和黑白两种模式
+        - chafa 自动计算高度以保持图片比例
     """
     # 显示横幅
     if show_banner:
@@ -116,5 +117,5 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
 
 
 if __name__ == "__main__":
-    # 测试渲染（小巧 Logo，20 字符宽，类似 Linux 企鹅）
-    print_apt_mascot(cols=20, show_banner=True, color_mode=True)
+    # 测试渲染（35 字符宽，适合终端显示）
+    print_apt_mascot(cols=35, show_banner=True, color_mode=True)

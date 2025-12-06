@@ -213,7 +213,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         spec = importlib.util.spec_from_file_location("mascot_render", mascot_path)
         mascot_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mascot_module)
-        mascot_module.print_apt_mascot(cols=50, show_banner=True)  # 默认彩色模式
+        mascot_module.print_apt_mascot(cols=35, show_banner=True)  # 默认彩色模式，35字符宽适合终端显示
     except Exception as e:
         # 如果渲染失败，至少显示文字横幅
         info_print("\n" + "="*70)
