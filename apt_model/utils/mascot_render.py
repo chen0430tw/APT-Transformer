@@ -85,10 +85,13 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
 
         if use_sixel:
             # Sixel 模式：显示完美像素图片
-            # Sixel 不需要手动计算高度，chafa 会自动处理
+            # 根据图片比例计算高度（像素级）
+            calculated_height = int(cols * (image.height / image.width))
+
             config.width = cols
+            config.height = calculated_height
             config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SIXELS
-            print_func(f"[DEBUG] Sixel 模式: {cols}px 宽")
+            print_func(f"[DEBUG] Sixel 模式: {cols}x{calculated_height} px")
         else:
             # 字符艺术模式
             # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
