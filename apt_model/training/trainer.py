@@ -214,8 +214,8 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         mascot_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mascot_module)
         # 传递 info_print 以便在 logger 环境中正确显示
-        # cols=45 确保图片不被截断，显示完整的兔子
-        mascot_module.print_apt_mascot(cols=45, show_banner=True, print_func=info_print)
+        # cols=35 经测试效果最佳，适合终端显示
+        mascot_module.print_apt_mascot(cols=35, show_banner=True, print_func=info_print)
     except Exception as e:
         # 如果渲染失败，至少显示文字横幅（静默失败，不影响训练）
         info_print("\n" + "="*70)
