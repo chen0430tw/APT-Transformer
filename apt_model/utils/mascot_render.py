@@ -80,17 +80,14 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
         FONT_RATIO = 0.5  # width/height
 
+        # 手动计算合适的高度（保持图片比例 × 字符纵横比）
+        # height = width * (图片高度/图片宽度) * (字符宽度/字符高度)
+        calculated_height = int(cols * (image.height / image.width) * FONT_RATIO)
+
         # 创建 chafa 配置
         config = CanvasConfig()
         config.width = cols
-
-        # 使用 chafa 自动计算合适的高度（考虑字符纵横比）
-        config.calc_canvas_geometry(
-            image.width,
-            image.height,
-            FONT_RATIO
-        )
-
+        config.height = calculated_height
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 【调试信息】
