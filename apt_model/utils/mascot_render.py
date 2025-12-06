@@ -52,6 +52,48 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
     if print_func is None:
         print_func = print
 
+    # Sixel 模式：使用系统 chafa 命令（更可靠）
+    if use_sixel:
+        import subprocess
+        import shutil
+
+        # 获取兔子图片路径
+        script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        mascot_path = os.path.join(script_dir, "docs", "assets", "兔兔伯爵.png")
+
+        if not os.path.exists(mascot_path):
+            print_func("  (找不到吉祥物图片)")
+            return
+
+        # 检查系统是否有 chafa 命令
+        chafa_cmd = shutil.which("chafa")
+        if chafa_cmd:
+            if show_banner:
+                print_func("\n" + "="*70)
+                print_func("  APT - Autopoietic Transformer | 自生成变换器")
+                print_func("="*70)
+
+            try:
+                # 使用系统 chafa 命令渲染 Sixel
+                result = subprocess.run(
+                    [chafa_cmd, "-f", "sixels", "-s", f"{cols}x", mascot_path],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                print_func(result.stdout)
+            except subprocess.CalledProcessError as e:
+                print_func(f"  (Sixel 渲染失败: {e})")
+
+            if show_banner:
+                print_func("="*70)
+                print_func("  Training Session Starting... | 训练会话启动中...")
+                print_func("="*70 + "\n")
+            return
+        else:
+            print_func("  (未找到 chafa 命令，切换到字符模式)")
+            use_sixel = False  # 回退到字符模式
+
     # 显示横幅
     if show_banner:
         print_func("\n" + "="*70)
