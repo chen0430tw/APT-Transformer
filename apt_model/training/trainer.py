@@ -505,9 +505,17 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                         info_print("🛑 训练保护触发停止")
                         break
 
-                if global_step % 50 == 0 or i == len(dataloader) - 1:
-                    # 测试生成和评估代码保持不变...
-                    pass
+                # 每20个batch显示一次训练文本（不限制debug模式）
+                if (i + 1) % 20 == 0:
+                    try:
+                        # 显示当前batch的第一个样本
+                        sample_ids = src_ids[0].cpu().tolist()
+                        # 移除padding token
+                        sample_ids = [tid for tid in sample_ids if tid != tokenizer.pad_token_id]
+                        sample_text = tokenizer.decode(sample_ids, skip_special_tokens=True)
+                        info_print(f"\n📝 训练样本 (Batch {i+1}): {sample_text[:100]}...")
+                    except Exception as e:
+                        pass  # 静默忽略解码错误
                     
             except Exception as e:
                 if logger:

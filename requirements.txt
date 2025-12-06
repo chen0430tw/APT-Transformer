@@ -16,6 +16,7 @@ scikit-learn>=1.4
 
 # 图像处理
 Pillow>=10.0
+chafa.py>=1.1.0  # 终端图像渲染（吉祥物显示）
 
 # 可视化
 matplotlib>=3.7
