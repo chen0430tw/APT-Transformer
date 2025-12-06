@@ -1094,6 +1094,17 @@ def run_size_command(args):
     """
     logger, lang_manager, device = _initialize_common(args)
 
+    def format_param_count(count):
+        """格式化参数数量，自动选择 M/B 单位"""
+        if count >= 1e9:
+            return f"{count / 1e9:.2f}B"
+        elif count >= 1e6:
+            return f"{count / 1e6:.2f}M"
+        elif count >= 1e3:
+            return f"{count / 1e3:.2f}K"
+        else:
+            return str(count)
+
     try:
         model_path = getattr(args, 'model', None)
         data_path = getattr(args, 'data', None)
@@ -1139,11 +1150,11 @@ def run_size_command(args):
                     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
                     frozen_params = total_params - trainable_params
 
-                    print(f"  总参数: {total_params:,} ({total_params / 1e6:.2f}M)")
-                    print(f"  可训练参数: {trainable_params:,} ({trainable_params / 1e6:.2f}M)")
+                    print(f"  总参数: {total_params:,} ({format_param_count(total_params)})")
+                    print(f"  可训练参数: {trainable_params:,} ({format_param_count(trainable_params)})")
 
                     if frozen_params > 0:
-                        print(f"  冻结参数: {frozen_params:,} ({frozen_params / 1e6:.2f}M)")
+                        print(f"  冻结参数: {frozen_params:,} ({format_param_count(frozen_params)})")
 
                     # 估算内存占用
                     # FP32: 4 bytes per parameter
@@ -1169,7 +1180,7 @@ def run_size_command(args):
                         # 按参数量排序
                         sorted_layers = sorted(layer_params.items(), key=lambda x: x[1], reverse=True)
                         for layer_name, param_count in sorted_layers[:10]:
-                            print(f"    {layer_name:30s} {param_count:>12,} ({param_count / 1e6:>6.2f}M)")
+                            print(f"    {layer_name:30s} {param_count:>12,} ({format_param_count(param_count):>8s})")
 
                     # 清理模型释放内存
                     del model
