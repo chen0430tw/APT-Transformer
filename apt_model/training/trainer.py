@@ -206,9 +206,15 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
 
     # 显示 APT 兔子吉祥物（彩色 ANSI 艺术，结合安柏形象增强用户粘性）
     try:
-        from apt_model.utils.mascot_render import print_apt_mascot
-        print_apt_mascot(cols=50, show_banner=True)  # 默认彩色模式
-    except Exception:
+        # 使用 importlib 直接导入模块，避免触发 utils.__init__ 的重量级导入
+        import importlib.util
+        import sys
+        mascot_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'utils', 'mascot_render.py')
+        spec = importlib.util.spec_from_file_location("mascot_render", mascot_path)
+        mascot_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mascot_module)
+        mascot_module.print_apt_mascot(cols=50, show_banner=True)  # 默认彩色模式
+    except Exception as e:
         # 如果渲染失败，至少显示文字横幅
         info_print("\n" + "="*70)
         info_print("  APT - Autopoietic Transformer | 自生成变换器")
