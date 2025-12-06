@@ -123,7 +123,14 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
 
         # 获取并打印输出
         output = canvas.print()
+
+        # 【调试信息】原始输出
+        print_func(f"[DEBUG] 原始输出长度: {len(output)} bytes")
+        print_func(f"[DEBUG] 原始输出前100字节: {output[:100]}")
+
         decoded_output = output.decode()
+        print_func(f"[DEBUG] 解码后长度: {len(decoded_output)} chars")
+
         # 在每一行末尾添加颜色重置，防止背景色溢出
         lines = decoded_output.split('\n')
 
