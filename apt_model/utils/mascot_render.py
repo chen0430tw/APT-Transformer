@@ -15,11 +15,15 @@ try:
     from chafa import Canvas, CanvasConfig, PixelMode
     from chafa.loader import Loader
     HAS_CHAFA = True
-except ImportError:
+except (ImportError, FileNotFoundError, OSError, Exception):
+    # ImportError: chafa.py 未安装
+    # FileNotFoundError: Windows 上 ImageMagick 未安装
+    # OSError: 其他系统级错误
+    # Exception: 其他未预期的错误
     HAS_CHAFA = False
 
 
-def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool = True):
+def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool = True, print_func=None):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
@@ -27,17 +31,22 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         cols: 显示宽度（字符数，默认20字符宽，类似Linux企鹅大小）
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
+        print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
 
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
         - 使用 chafa.py 库实现高质量终端渲染
         - 支持彩色和黑白两种模式
     """
+    # 默认使用 print，除非指定了自定义函数
+    if print_func is None:
+        print_func = print
+
     # 显示横幅
     if show_banner:
-        print("\n" + "="*70)
-        print("  APT - Autopoietic Transformer | 自生成变换器")
-        print("="*70)
+        print_func("\n" + "="*70)
+        print_func("  APT - Autopoietic Transformer | 自生成变换器")
+        print_func("="*70)
 
     # 获取兔子图片路径
     script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,56 +55,50 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
     if not os.path.exists(mascot_path):
         # 如果找不到图片，显示简单的文字横幅
         if show_banner:
-            print("  Training Session Starting... | 训练会话启动中...")
-            print("="*70 + "\n")
+            print_func("  Training Session Starting... | 训练会话启动中...")
+            print_func("="*70 + "\n")
         return
 
     # 检查 chafa.py 是否安装
     if not HAS_CHAFA:
-        print("  提示: 安装 chafa.py 可以显示精美的吉祥物图案")
-        print("  pip install chafa.py")
+        print_func("  🐰 提示: 安装以下依赖可以显示精美的兔子吉祥物:")
+        print_func("     • Linux/Mac: pip install chafa.py")
+        print_func("     • Windows: pip install chafa.py + 安装 ImageMagick")
+        print_func("       (ImageMagick下载: https://imagemagick.org/script/download.php)")
         if show_banner:
-            print("="*70)
-            print("  Training Session Starting... | 训练会话启动中...")
-            print("="*70 + "\n")
+            print_func("="*70)
+            print_func("  Training Session Starting... | 训练会话启动中...")
+            print_func("="*70 + "\n")
         return
 
     try:
-        # 终端字体宽高比（通常终端字符高度是宽度的2倍左右）
-        FONT_RATIO = 0.5  # width/height
+        # 使用 chafa 的原生 Loader 加载图片
+        # Loader 会正确处理图片并提供与 draw_all_pixels 兼容的像素数据
+        image = Loader(mascot_path)
+
+        # 计算画布尺寸
+        aspect_ratio = image.height / image.width
 
         # 创建 chafa 配置
         config = CanvasConfig()
-
-        # 设置输出宽度
         config.width = cols
-        config.height = cols  # 先设置一个初始值，后面会自动计算
+        config.height = int(cols * aspect_ratio)
+        config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
-        # 加载图片
-        image = Loader(mascot_path)
+        # 【调试信息】
+        print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
+        print_func(f"[DEBUG] Canvas: {config.width}x{config.height}")
+        print_func(f"[DEBUG] 像素类型: {image.pixel_type}")
+        print_func(f"[DEBUG] Rowstride: {image.rowstride}")
 
-        # 根据图片比例和字体比例自动计算合适的高度
-        config.calc_canvas_geometry(
-            image.width,
-            image.height,
-            FONT_RATIO
-        )
-
-        # 如果启用彩色模式
-        if color_mode:
-            # 使用全彩色模式
-            config.set_color_space(2)  # CHAFA_COLOR_SPACE_RGB
-        else:
-            # 使用单色模式
-            config.set_color_space(0)  # CHAFA_COLOR_SPACE_NONE
-
-        # 创建画布
+        # 创建画布并绘制
         canvas = Canvas(config)
 
-        # 绘制所有像素
+        # 使用 Loader 提供的原生属性绘制
+        # chafa 会自动将原图下采样到 canvas 尺寸
         canvas.draw_all_pixels(
             image.pixel_type,
-            image.get_pixels(),
+            image.get_pixels(),  # 使用 get_pixels() 方法获取像素数据
             image.width,
             image.height,
             image.rowstride
@@ -103,16 +106,33 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
 
         # 获取并打印输出
         output = canvas.print()
-        print(output.decode())
+        decoded_output = output.decode()
+        # 在每一行末尾添加颜色重置，防止背景色溢出
+        lines = decoded_output.split('\n')
+
+        # 【调试信息】打印输出统计
+        print_func(f"[DEBUG] 输出行数: {len(lines)}")
+        print_func(f"[DEBUG] 非空行数: {len([l for l in lines if l.strip()])}")
+        print_func("=" * 70)
+
+        # 逐行打印，避免单次 print 输出过长导致截断
+        for line in lines:
+            if line.strip():
+                print_func(line + '\033[0m')  # 每行末尾添加颜色重置
+            else:
+                print_func(line)
+
+        # 最后再次重置，确保完全清除
+        print_func("\033[0m")
 
     except Exception as e:
         # 静默失败，不影响程序运行
-        print(f"  (无法渲染吉祥物: {e})")
+        print_func(f"  (无法渲染吉祥物: {e})")
 
     if show_banner:
-        print("="*70)
-        print("  Training Session Starting... | 训练会话启动中...")
-        print("="*70 + "\n")
+        print_func("="*70)
+        print_func("  Training Session Starting... | 训练会话启动中...")
+        print_func("="*70 + "\n")
 
 
 if __name__ == "__main__":
