@@ -72,28 +72,19 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         return
 
     try:
-        # 终端字体宽高比（通常终端字符高度是宽度的2倍左右）
-        FONT_RATIO = 0.5  # width/height
-
         # 创建 chafa 配置
         config = CanvasConfig()
 
-        # 设置输出宽度
+        # 设置输出尺寸 - 手动控制高度比例
         config.width = cols
-        config.height = cols  # 先设置一个初始值，后面会自动计算
+        # Windows 终端字符比例需要手动压扁，使用约 1/2.5 的比例
+        config.height = int(cols * 0.4)  # 20 -> 8，让图片不那么细长
 
         # 设置像素模式为更清晰的符号模式
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 加载图片
         image = Loader(mascot_path)
-
-        # 根据图片比例和字体比例自动计算合适的高度
-        config.calc_canvas_geometry(
-            image.width,
-            image.height,
-            FONT_RATIO
-        )
 
         # 创建画布
         canvas = Canvas(config)
