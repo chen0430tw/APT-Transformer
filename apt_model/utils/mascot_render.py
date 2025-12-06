@@ -14,6 +14,11 @@ from typing import Optional
 try:
     from chafa import Canvas, CanvasConfig, PixelMode
     from chafa.loader import Loader
+    try:
+        from chafa import TermDb, TermInfo
+        HAS_TERMDB = True
+    except ImportError:
+        HAS_TERMDB = False
     HAS_CHAFA = True
 except (ImportError, FileNotFoundError, OSError, Exception):
     # ImportError: chafa.py 未安装
@@ -21,6 +26,7 @@ except (ImportError, FileNotFoundError, OSError, Exception):
     # OSError: 其他系统级错误
     # Exception: 其他未预期的错误
     HAS_CHAFA = False
+    HAS_TERMDB = False
 
 
 def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None, use_sixel: bool = False):
@@ -125,7 +131,20 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         )
 
         # 获取并打印输出
-        output = canvas.print()
+        # Sixel 模式需要 fallback 参数告诉 chafa 终端支持 Sixel
+        if use_sixel and HAS_TERMDB:
+            # 创建支持 Sixel 的终端信息
+            term_db = TermDb()
+            term_info = term_db.detect()
+            print_func(f"[DEBUG] 检测到终端: {term_info}")
+            output = canvas.print(term_info=term_info)
+        elif use_sixel:
+            # 没有 TermDb，使用 fallback（假设终端支持 Sixel）
+            print_func("[DEBUG] 使用 fallback 模式（假设终端支持 Sixel）")
+            # 直接输出，假设终端支持
+            output = canvas.print()
+        else:
+            output = canvas.print()
 
         # 【调试信息】原始输出
         print_func(f"[DEBUG] 原始输出长度: {len(output)} bytes")
