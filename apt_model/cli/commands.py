@@ -700,8 +700,14 @@ def run_info_command(args):
 
             # 检查权重文件
             weight_files = []
-            for ext in ['.pt', '.pth', '.bin', '.safetensors']:
-                weight_files.extend([f for f in os.listdir(model_path) if f.endswith(ext)])
+            if os.path.isdir(model_path):
+                for ext in ['.pt', '.pth', '.bin', '.safetensors']:
+                    weight_files.extend([f for f in os.listdir(model_path) if f.endswith(ext)])
+            elif os.path.isfile(model_path):
+                # 单个模型文件
+                for ext in ['.pt', '.pth', '.bin', '.safetensors']:
+                    if model_path.endswith(ext):
+                        weight_files.append(os.path.basename(model_path))
 
             if weight_files:
                 print(f"\n权重文件:")
@@ -738,8 +744,17 @@ def run_info_command(args):
             print(f"文件大小: {file_size / 1024:.2f} KB ({file_size / 1024 / 1024:.2f} MB)")
 
             # 读取样本统计
-            with open(data_path, 'r', encoding='utf-8') as f:
-                lines = [line.strip() for line in f if line.strip()]
+            try:
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    lines = [line.strip() for line in f if line.strip()]
+            except UnicodeDecodeError:
+                print("⚠️  警告: 文件编码不是UTF-8，尝试使用其他编码...")
+                try:
+                    with open(data_path, 'r', encoding='gbk') as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                except:
+                    print("⚠️  无法读取文件内容（可能是二进制文件）")
+                    lines = []
 
             print(f"样本数量: {len(lines)}")
 
@@ -1239,11 +1254,20 @@ def run_size_command(args):
                 print(f"文件大小: {size / 1024:.2f} KB ({size / 1024 / 1024:.2f} MB)")
 
                 # 统计行数
-                with open(data_path, 'r', encoding='utf-8') as f:
-                    line_count = sum(1 for line in f if line.strip())
+                try:
+                    with open(data_path, 'r', encoding='utf-8') as f:
+                        line_count = sum(1 for line in f if line.strip())
+                except UnicodeDecodeError:
+                    try:
+                        with open(data_path, 'r', encoding='gbk') as f:
+                            line_count = sum(1 for line in f if line.strip())
+                    except:
+                        print("⚠️  无法读取文件内容（可能是二进制文件）")
+                        line_count = 0
 
-                print(f"样本数量: {line_count}")
-                print(f"平均每条: {size / line_count / 1024:.2f} KB" if line_count > 0 else "")
+                if line_count > 0:
+                    print(f"样本数量: {line_count}")
+                    print(f"平均每条: {size / line_count / 1024:.2f} KB")
             else:
                 # 目录中的多个数据文件
                 total_size = 0
@@ -1829,8 +1853,21 @@ def run_process_data_command(args):
         print(f"   语言: {language}")
 
         # 读取输入数据
-        with open(input_path, 'r', encoding='utf-8') as f:
-            raw_texts = [line.strip() for line in f if line.strip()]
+        try:
+            with open(input_path, 'r', encoding='utf-8') as f:
+                raw_texts = [line.strip() for line in f if line.strip()]
+        except UnicodeDecodeError:
+            print("⚠️  警告: 文件编码不是UTF-8，尝试使用GBK编码...")
+            try:
+                with open(input_path, 'r', encoding='gbk') as f:
+                    raw_texts = [line.strip() for line in f if line.strip()]
+            except Exception as e:
+                print(f"❌ 错误: 无法读取文件 - {e}")
+                return 1
+
+        if len(raw_texts) == 0:
+            print("❌ 错误: 输入文件为空或无有效数据")
+            return 1
 
         print(f"   原始样本数: {len(raw_texts)}")
 
@@ -1849,7 +1886,9 @@ def run_process_data_command(args):
                 f.write(text + '\n')
 
         print(f"\n✅ 数据处理完成！")
-        print(f"   清洗率: {(1 - len(processed_texts)/len(raw_texts))*100:.1f}%")
+        # 注意：len(raw_texts) > 0 已在前面检查，这里是安全的
+        clean_rate = (1 - len(processed_texts)/len(raw_texts))*100 if len(raw_texts) > 0 else 0
+        print(f"   清洗率: {clean_rate:.1f}%")
         print(f"   保存到: {output_path}")
 
         return 0
@@ -1958,6 +1997,11 @@ def run_backup_command(args):
                             ignored.append(f)
                     return ignored
 
+                # 如果备份目录已存在，先删除
+                if os.path.exists(backup_file):
+                    print(f"⚠️  备份目标已存在，将被覆盖: {backup_file}")
+                    shutil.rmtree(backup_file)
+
                 shutil.copytree(source, backup_file, ignore=ignore_func)
 
             # 计算总大小
@@ -2059,7 +2103,8 @@ def run_upload_command(args):
             try:
                 api = HfApi()
                 user_info = api.whoami()
-                print(f"✓ 已登录用户: {user_info['name']}")
+                user_name = user_info.get('name') or user_info.get('username', 'Unknown')
+                print(f"✓ 已登录用户: {user_name}")
             except Exception as e:
                 print("❌ 错误: 未登录 HuggingFace")
                 print("   请先运行: huggingface-cli login")
