@@ -2706,17 +2706,20 @@ def debug_tokenizer(args):
 
 def show_help(args=None):
     """
-    Show help information
+    Show help information - 优化版本，快速显示
     """
+    # 延迟导入，避免触发重量级初始化
     from apt_model.cli.command_registry import command_registry
 
-    print("Welcome to APT Model!")
-    print("\nUsage:")
-    print("  python -m apt_model [action] [options]")
+    print("="*70)
+    print(" 🚀 APT Model - Autopoietic Transformer")
+    print("="*70)
+    print("\n用法:")
+    print("  python -m apt_model <命令> [选项]")
     print("\n可用命令:")
 
-    # 按类别显示命令
-    commands_by_category = command_registry.get_commands_by_category(include_placeholders=True)
+    # 按类别显示命令（使用缓存的注册表，不重新初始化）
+    commands_by_category = command_registry.get_commands_by_category(include_placeholders=False)
 
     for category in sorted(commands_by_category.keys()):
         print(f"\n{category.upper()}:")

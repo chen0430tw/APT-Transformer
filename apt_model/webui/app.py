@@ -1060,6 +1060,13 @@ def create_training_launcher_tab(webui_state):
             outputs=[log_output]
         )
 
+        # 自动刷新日志 - 每秒更新一次
+        log_refresh_timer = gr.Timer(value=1.0)  # 1秒刷新间隔
+        log_refresh_timer.tick(
+            fn=update_logs,
+            outputs=[log_output]
+        )
+
 
 
 def create_webui():

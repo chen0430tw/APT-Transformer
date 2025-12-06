@@ -17,6 +17,10 @@ sys.stderr.reconfigure(encoding='utf-8')
 import traceback
 from datetime import datetime
 
+# 启用警告过滤器 - 美化错误消息
+from apt_model.utils.warning_filter import enable_clean_warnings
+enable_clean_warnings()
+
 from apt_model.cli.parser import parse_arguments
 from apt_model.utils.logging_utils import setup_logging
 from apt_model.utils.language_manager import LanguageManager
@@ -121,15 +125,30 @@ def main():
 
     启动器流程：
     1. 解析命令行参数
-    2. 初始化控制台核心
-    3. 加载核心模块
+    2. 快速命令直接执行（help等）
+    3. 其他命令初始化控制台核心
     4. 分发命令
     """
     try:
         # 解析命令行参数
         args = parse_arguments()
 
-        # 初始化启动器
+        # 快速命令 - 不需要初始化控制台（提升性能）
+        FAST_COMMANDS = {'help', 'version', '--help', '-h', '--version', '-v'}
+
+        if args.action in FAST_COMMANDS or args.action == 'help':
+            # 直接显示帮助，不初始化控制台
+            from apt_model.cli.commands import show_help
+            show_help(args)
+            sys.exit(0)
+
+        if not args.action:
+            # 没有命令，显示简化的帮助
+            from apt_model.cli.commands import show_help
+            show_help(args)
+            sys.exit(0)
+
+        # 初始化启动器（只有真正需要执行命令时才初始化）
         logger, console, device = initialize_launcher(args)
 
         # 根据动作选择功能
