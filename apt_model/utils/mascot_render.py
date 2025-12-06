@@ -115,8 +115,13 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         print_func(f"[DEBUG] 非空行数: {len([l for l in lines if l.strip()])}")
         print_func("=" * 70)
 
-        cleaned_lines = [line + '\033[0m' if line.strip() else line for line in lines]
-        print_func('\n'.join(cleaned_lines))
+        # 逐行打印，避免单次 print 输出过长导致截断
+        for line in lines:
+            if line.strip():
+                print_func(line + '\033[0m')  # 每行末尾添加颜色重置
+            else:
+                print_func(line)
+
         # 最后再次重置，确保完全清除
         print_func("\033[0m")
 
