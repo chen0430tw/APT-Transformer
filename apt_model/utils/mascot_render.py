@@ -78,30 +78,20 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 创建 chafa 配置
         config = CanvasConfig()
 
-        # 设置目标宽度和一个较大的初始高度
+        # 直接根据图片宽高比计算合适的高度，不使用 calc_canvas_geometry
+        # 因为 calc_canvas_geometry 会因为字符宽高比导致高度过小
+        aspect_ratio = image.height / image.width
         config.width = cols
-        config.height = cols * 3  # 设置较大的初始值，calc_canvas_geometry 会调整
+        # 不除以2，让高度足够大以显示完整图片
+        config.height = int(cols * aspect_ratio)
 
         # 使用符号模式避免渲染黑块
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
-        # 【调试信息】打印初始配置
+        # 【调试信息】打印配置
         print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
-        print_func(f"[DEBUG] 初始 canvas: {config.width}x{config.height}")
-
-        # 让 chafa 根据图片自动计算合适的 canvas 尺寸并缩放图片
-        # font_ratio = 0.5 表示终端字符高度是宽度的2倍
-        font_ratio = 0.5
-        config.calc_canvas_geometry(
-            image.width,
-            image.height,
-            font_ratio
-        )
-
-        # 【调试信息】打印 calc_canvas_geometry 之后的尺寸
-        print_func(f"[DEBUG] calc 后 canvas: {config.width}x{config.height}")
-        print_func(f"[DEBUG] font_ratio: {font_ratio}")
-        print_func(f"[DEBUG] 图片宽高比: {image.height/image.width:.2f}")
+        print_func(f"[DEBUG] 图片宽高比: {aspect_ratio:.2f}")
+        print_func(f"[DEBUG] Canvas 尺寸: {config.width}x{config.height}")
 
         # 创建画布
         canvas = Canvas(config)
