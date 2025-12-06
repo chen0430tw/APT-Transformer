@@ -85,9 +85,8 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 加载图片
         image = Loader(mascot_path)
 
-        # Windows PowerShell 的字符比例不同，需要更大的 font_ratio
-        # 标准值 0.5，Windows 上用 0.8-1.0 让图片更矮更紧凑
-        FONT_RATIO = 0.9
+        # 使用标准终端字符比例
+        FONT_RATIO = 0.5
 
         # 根据图片比例和字体比例自动计算合适的高度（保持细节）
         config.calc_canvas_geometry(
