@@ -79,8 +79,8 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         config.width = cols
         config.height = cols  # 临时值，后面会重新计算
 
-        # 不设置 pixel_mode，使用默认模式（更好的颜色和细节保留）
-        # 默认模式会保留白色眼睛等高对比度细节
+        # 使用符号模式避免渲染黑块
+        config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 加载图片
         image = Loader(mascot_path)
