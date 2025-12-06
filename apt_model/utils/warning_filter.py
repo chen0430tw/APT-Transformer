@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 
-class CleanWarningFormatter(warnings.showwarning):
+class CleanWarningFormatter:
     """美化的警告格式化器"""
 
     @staticmethod
