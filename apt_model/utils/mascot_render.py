@@ -110,6 +110,8 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 获取并打印输出
         output = canvas.print()
         print_func(output.decode())
+        # 重置终端颜色，避免残留背景色
+        print_func("\033[0m")
 
     except Exception as e:
         # 静默失败，不影响程序运行
