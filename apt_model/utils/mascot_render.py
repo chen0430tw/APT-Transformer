@@ -67,6 +67,20 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
 
         # 检查系统是否有 chafa 命令（Windows 需要 .exe）
         chafa_cmd = shutil.which("chafa") or shutil.which("chafa.exe")
+
+        # 如果 PATH 中找不到，尝试常见的 winget 安装路径
+        if not chafa_cmd:
+            winget_paths = [
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\chafa.exe"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\hpjansson.Chafa_*\bin\chafa.exe"),
+            ]
+            import glob
+            for path_pattern in winget_paths:
+                matches = glob.glob(path_pattern)
+                if matches:
+                    chafa_cmd = matches[0]
+                    break
+
         print_func(f"[DEBUG] 查找系统 chafa: {chafa_cmd}")
         if chafa_cmd:
             if show_banner:
