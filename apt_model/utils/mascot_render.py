@@ -82,8 +82,8 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 根据图片宽高比计算合适的终端字符数
         aspect_ratio = image.height / image.width  # 图片高/宽比
         config.width = cols
-        # Windows PowerShell 字符宽高比约为 1.2:1，使用较小的除数
-        config.height = int(cols * aspect_ratio * 0.8)
+        # 经过测试，0.15 是 Windows PowerShell 最佳系数
+        config.height = int(cols * aspect_ratio * 0.15)
 
         # 使用符号模式避免渲染黑块
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
@@ -102,8 +102,12 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
 
         # 获取并打印输出
         output = canvas.print()
-        print_func(output.decode())
-        # 重置终端颜色，避免残留背景色
+        decoded_output = output.decode()
+        # 在每一行末尾添加颜色重置，防止背景色溢出
+        lines = decoded_output.split('\n')
+        cleaned_lines = [line + '\033[0m' if line.strip() else line for line in lines]
+        print_func('\n'.join(cleaned_lines))
+        # 最后再次重置，确保完全清除
         print_func("\033[0m")
 
     except Exception as e:
