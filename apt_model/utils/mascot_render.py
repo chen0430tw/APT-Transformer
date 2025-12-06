@@ -78,9 +78,9 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 创建 chafa 配置
         config = CanvasConfig()
 
-        # 设置目标宽度
+        # 设置目标宽度和一个较大的初始高度
         config.width = cols
-        config.height = cols  # 临时值，calc_canvas_geometry 会重新计算
+        config.height = cols * 3  # 设置较大的初始值，calc_canvas_geometry 会调整
 
         # 使用符号模式避免渲染黑块
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
