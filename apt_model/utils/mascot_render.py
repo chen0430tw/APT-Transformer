@@ -72,37 +72,51 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         return
 
     try:
-        # 加载图片
-        image = Loader(mascot_path)
+        # 先用 PIL 加载并缩放图片
+        from PIL import Image as PILImage
+
+        pil_image = PILImage.open(mascot_path)
+
+        # 计算缩放后的尺寸
+        aspect_ratio = pil_image.height / pil_image.width
+        target_width = cols * 4  # 每个字符对应约4个像素
+        target_height = int(target_width * aspect_ratio)
+
+        # 缩放图片
+        pil_image = pil_image.resize((target_width, target_height), PILImage.Resampling.LANCZOS)
+
+        # 转换为 RGB（如果是 RGBA）
+        if pil_image.mode == 'RGBA':
+            # 创建白色背景
+            background = PILImage.new('RGB', pil_image.size, (255, 255, 255))
+            background.paste(pil_image, mask=pil_image.split()[3])
+            pil_image = background
+        elif pil_image.mode != 'RGB':
+            pil_image = pil_image.convert('RGB')
+
+        # 获取像素数据
+        pixel_data = pil_image.tobytes()
 
         # 创建 chafa 配置
         config = CanvasConfig()
-
-        # 直接根据图片宽高比计算合适的高度，不使用 calc_canvas_geometry
-        # 因为 calc_canvas_geometry 会因为字符宽高比导致高度过小
-        aspect_ratio = image.height / image.width
         config.width = cols
-        # 不除以2，让高度足够大以显示完整图片
         config.height = int(cols * aspect_ratio)
-
-        # 使用符号模式避免渲染黑块
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
-        # 【调试信息】打印配置
-        print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
-        print_func(f"[DEBUG] 图片宽高比: {aspect_ratio:.2f}")
-        print_func(f"[DEBUG] Canvas 尺寸: {config.width}x{config.height}")
+        # 【调试信息】
+        print_func(f"[DEBUG] 原图: {PILImage.open(mascot_path).size}")
+        print_func(f"[DEBUG] 缩放后: {pil_image.size}")
+        print_func(f"[DEBUG] Canvas: {config.width}x{config.height}")
 
-        # 创建画布
+        # 创建画布并绘制
         canvas = Canvas(config)
-
-        # 绘制所有像素
+        from chafa import PixelType
         canvas.draw_all_pixels(
-            image.pixel_type,
-            image.get_pixels(),
-            image.width,
-            image.height,
-            image.rowstride
+            PixelType.CHAFA_PIXEL_RGB8,
+            pixel_data,
+            pil_image.width,
+            pil_image.height,
+            pil_image.width * 3  # rowstride for RGB
         )
 
         # 获取并打印输出
