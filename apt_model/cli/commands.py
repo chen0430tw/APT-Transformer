@@ -959,35 +959,71 @@ def run_prune_command(args):
             else:
                 print(f"  只有 {len(checkpoint_files)} 个检查点，无需清理")
 
-        # 清理缓存
+        # 清理缓存 - 使用 CacheManager
         if prune_type in ['cache', 'all']:
             print(f"\n清理缓存文件:")
 
-            cache_dirs = [
-                '__pycache__',
-                '.pytest_cache',
-                '.apt_cache',
-                'apt_cache'
-            ]
+            try:
+                from apt_model.utils.cache_manager import CacheManager
 
-            for root, dirs, files in os.walk(base_dir):
-                for cache_dir in cache_dirs:
-                    if cache_dir in dirs:
-                        cache_path = os.path.join(root, cache_dir)
-                        # 计算大小
-                        dir_size = sum(
-                            os.path.getsize(os.path.join(dirpath, f))
-                            for dirpath, dirnames, filenames in os.walk(cache_path)
-                            for f in filenames
-                        )
+                # 使用 CacheManager 清理缓存
+                cache_manager = CacheManager(cache_dir=base_dir, logger=logger)
 
-                        size_mb = dir_size / 1024 / 1024
-                        print(f"  - {cache_path} ({size_mb:.1f} MB)")
+                if not dry_run:
+                    result = cache_manager.clean_cache(days=days_old)
+                    cleaned_files = result.get('cleaned_files', 0)
+                    cleaned_dirs = result.get('cleaned_dirs', 0)
+                    cache_size = result.get('freed_space', 0)
 
-                        if not dry_run:
-                            shutil.rmtree(cache_path)
-                            deleted_count += 1
-                            freed_space += dir_size
+                    print(f"  清理了 {cleaned_files} 个文件和 {cleaned_dirs} 个目录")
+                    print(f"  释放空间: {cache_size / 1024 / 1024:.2f} MB")
+
+                    deleted_count += cleaned_files + cleaned_dirs
+                    freed_space += cache_size
+                else:
+                    # 预览模式：扫描缓存目录
+                    cache_dirs = ['__pycache__', '.pytest_cache', '.apt_cache', 'apt_cache']
+
+                    for root, dirs, files in os.walk(base_dir):
+                        for cache_dir in cache_dirs:
+                            if cache_dir in dirs:
+                                cache_path = os.path.join(root, cache_dir)
+                                # 计算大小
+                                dir_size = sum(
+                                    os.path.getsize(os.path.join(dirpath, f))
+                                    for dirpath, dirnames, filenames in os.walk(cache_path)
+                                    for f in filenames
+                                )
+
+                                size_mb = dir_size / 1024 / 1024
+                                print(f"  - {cache_path} ({size_mb:.1f} MB)")
+                                deleted_count += 1
+                                freed_space += dir_size
+
+            except Exception as e:
+                logger.warning(f"使用 CacheManager 清理缓存失败，使用备用方法: {e}")
+
+                # 备用方法：手动清理
+                cache_dirs = ['__pycache__', '.pytest_cache', '.apt_cache', 'apt_cache']
+
+                for root, dirs, files in os.walk(base_dir):
+                    for cache_dir in cache_dirs:
+                        if cache_dir in dirs:
+                            cache_path = os.path.join(root, cache_dir)
+                            # 计算大小
+                            dir_size = sum(
+                                os.path.getsize(os.path.join(dirpath, f))
+                                for dirpath, dirnames, filenames in os.walk(cache_path)
+                                for f in filenames
+                            )
+
+                            size_mb = dir_size / 1024 / 1024
+                            print(f"  - {cache_path} ({size_mb:.1f} MB)")
+
+                            if not dry_run:
+                                shutil.rmtree(cache_path)
+                                deleted_count += 1
+                                freed_space += dir_size
 
         # 清理旧文件
         if prune_type in ['old', 'all']:
@@ -1080,10 +1116,78 @@ def run_size_command(args):
 
             print(f"\n模型: {model_path}")
 
+            # 尝试加载模型并计算参数量
+            try:
+                import torch
+                from apt_model.modeling.apt_model import APTModel
+                from apt_model.config.apt_config import APTConfig
+
+                # 检查是否是APT模型目录
+                config_path = os.path.join(model_path, 'config.json') if os.path.isdir(model_path) else None
+
+                if config_path and os.path.exists(config_path):
+                    print("\n📊 模型参数统计:")
+
+                    # 加载配置
+                    config = APTConfig.from_pretrained(model_path)
+
+                    # 加载模型（只为了计算参数）
+                    model = APTModel.from_pretrained(model_path, config=config)
+
+                    # 计算参数量
+                    total_params = sum(p.numel() for p in model.parameters())
+                    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                    frozen_params = total_params - trainable_params
+
+                    print(f"  总参数: {total_params:,} ({total_params / 1e6:.2f}M)")
+                    print(f"  可训练参数: {trainable_params:,} ({trainable_params / 1e6:.2f}M)")
+
+                    if frozen_params > 0:
+                        print(f"  冻结参数: {frozen_params:,} ({frozen_params / 1e6:.2f}M)")
+
+                    # 估算内存占用
+                    # FP32: 4 bytes per parameter
+                    # FP16: 2 bytes per parameter
+                    fp32_memory = total_params * 4 / 1024 / 1024  # MB
+                    fp16_memory = total_params * 2 / 1024 / 1024  # MB
+
+                    print(f"\n  内存占用估算:")
+                    print(f"    FP32: {fp32_memory:.2f} MB ({fp32_memory / 1024:.2f} GB)")
+                    print(f"    FP16: {fp16_memory:.2f} MB ({fp16_memory / 1024:.2f} GB)")
+
+                    # 分层参数统计
+                    if detailed:
+                        print(f"\n  分层参数统计:")
+                        layer_params = {}
+                        for name, param in model.named_parameters():
+                            # 提取层类型
+                            layer_type = name.split('.')[0] if '.' in name else name
+                            if layer_type not in layer_params:
+                                layer_params[layer_type] = 0
+                            layer_params[layer_type] += param.numel()
+
+                        # 按参数量排序
+                        sorted_layers = sorted(layer_params.items(), key=lambda x: x[1], reverse=True)
+                        for layer_name, param_count in sorted_layers[:10]:
+                            print(f"    {layer_name:30s} {param_count:>12,} ({param_count / 1e6:>6.2f}M)")
+
+                    # 清理模型释放内存
+                    del model
+                    import gc
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+            except Exception as e:
+                print(f"\n⚠️  无法加载模型计算参数量: {e}")
+
+            # 计算文件大小
+            print("\n💾 文件大小统计:")
+
             if os.path.isfile(model_path):
                 # 单个文件
                 size = os.path.getsize(model_path)
-                print(f"大小: {size / 1024 / 1024:.2f} MB ({size / 1024 / 1024 / 1024:.2f} GB)")
+                print(f"  文件大小: {size / 1024 / 1024:.2f} MB ({size / 1024 / 1024 / 1024:.2f} GB)")
             else:
                 # 目录
                 total_size = 0
@@ -1100,16 +1204,16 @@ def run_size_command(args):
                         if detailed:
                             file_sizes.append((f, size))
 
-                print(f"总大小: {total_size / 1024 / 1024:.2f} MB ({total_size / 1024 / 1024 / 1024:.2f} GB)")
-                print(f"文件数: {file_count}")
+                print(f"  总大小: {total_size / 1024 / 1024:.2f} MB ({total_size / 1024 / 1024 / 1024:.2f} GB)")
+                print(f"  文件数: {file_count}")
 
                 if detailed and file_sizes:
-                    print("\n文件明细:")
+                    print("\n  文件明细:")
                     file_sizes.sort(key=lambda x: x[1], reverse=True)
                     for fname, fsize in file_sizes[:10]:
-                        print(f"  {fname:40s} {fsize / 1024 / 1024:>8.2f} MB")
+                        print(f"    {fname:40s} {fsize / 1024 / 1024:>8.2f} MB")
                     if len(file_sizes) > 10:
-                        print(f"  ... 还有 {len(file_sizes) - 10} 个文件")
+                        print(f"    ... 还有 {len(file_sizes) - 10} 个文件")
 
         # 计算数据大小
         if data_path:
