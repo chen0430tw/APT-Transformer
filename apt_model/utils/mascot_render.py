@@ -82,8 +82,8 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 根据图片宽高比计算合适的终端字符数
         aspect_ratio = image.height / image.width  # 图片高/宽比
         config.width = cols
-        # 增大系数以显示完整图片（不裁切）
-        config.height = int(cols * aspect_ratio * 1.5)
+        # 使用适中的系数平衡完整显示和比例
+        config.height = int(cols * aspect_ratio * 0.5)
 
         # 使用符号模式避免渲染黑块
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
