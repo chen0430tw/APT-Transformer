@@ -111,12 +111,25 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 创建画布并绘制
         canvas = Canvas(config)
         from chafa import PixelType
+
+        # 【调试信息】像素数据详情
+        rowstride = pil_image.width * 3
+        print_func(f"[DEBUG] 像素数据长度: {len(pixel_data)} bytes")
+        print_func(f"[DEBUG] 预期长度: {pil_image.width * pil_image.height * 3} bytes")
+        print_func(f"[DEBUG] 传给 chafa 的参数:")
+        print_func(f"  - pixel_type: RGB8")
+        print_func(f"  - width: {pil_image.width}")
+        print_func(f"  - height: {pil_image.height}")
+        print_func(f"  - rowstride: {rowstride}")
+        print_func(f"  - canvas: {config.width}x{config.height}")
+        print_func(f"[DEBUG] 尺寸比例: 图片{pil_image.width}x{pil_image.height} -> Canvas{config.width}x{config.height}")
+
         canvas.draw_all_pixels(
             PixelType.CHAFA_PIXEL_RGB8,
             pixel_data,
             pil_image.width,
             pil_image.height,
-            pil_image.width * 3  # rowstride for RGB
+            rowstride
         )
 
         # 获取并打印输出
