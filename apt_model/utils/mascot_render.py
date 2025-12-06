@@ -86,6 +86,12 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         config.height = int(cols * aspect_ratio)
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
+        # 【调试信息】
+        print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
+        print_func(f"[DEBUG] Canvas: {config.width}x{config.height}")
+        print_func(f"[DEBUG] 像素类型: {image.pixel_type}")
+        print_func(f"[DEBUG] Rowstride: {image.rowstride}")
+
         # 创建画布并绘制
         canvas = Canvas(config)
 
@@ -104,6 +110,11 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         decoded_output = output.decode()
         # 在每一行末尾添加颜色重置，防止背景色溢出
         lines = decoded_output.split('\n')
+
+        # 【调试信息】打印输出统计
+        print_func(f"[DEBUG] 输出行数: {len(lines)}")
+        print_func(f"[DEBUG] 非空行数: {len([l for l in lines if l.strip()])}")
+        print_func("=" * 70)
 
         # 逐行打印，避免单次 print 输出过长导致截断
         for line in lines:
