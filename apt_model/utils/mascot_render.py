@@ -65,8 +65,9 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
             print_func("  (找不到吉祥物图片)")
             return
 
-        # 检查系统是否有 chafa 命令
-        chafa_cmd = shutil.which("chafa")
+        # 检查系统是否有 chafa 命令（Windows 需要 .exe）
+        chafa_cmd = shutil.which("chafa") or shutil.which("chafa.exe")
+        print_func(f"[DEBUG] 查找系统 chafa: {chafa_cmd}")
         if chafa_cmd:
             if show_banner:
                 print_func("\n" + "="*70)
