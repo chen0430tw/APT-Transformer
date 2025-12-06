@@ -82,8 +82,8 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         # 根据图片宽高比计算合适的终端字符数
         aspect_ratio = image.height / image.width  # 图片高/宽比
         config.width = cols
-        # 终端字符高度约为宽度的2倍，所以除以2来补偿
-        config.height = int(cols * aspect_ratio / 2)
+        # Windows PowerShell 字符宽高比约为 1.2:1，使用较小的除数
+        config.height = int(cols * aspect_ratio * 0.8)
 
         # 使用符号模式避免渲染黑块
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
