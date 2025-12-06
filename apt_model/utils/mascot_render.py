@@ -82,6 +82,9 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
         config.width = cols
         config.height = cols  # 先设置一个初始值，后面会自动计算
 
+        # 设置像素模式为更清晰的符号模式
+        config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
+
         # 加载图片
         image = Loader(mascot_path)
 
