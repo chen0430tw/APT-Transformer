@@ -77,13 +77,20 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         # Loader 会正确处理图片并提供与 draw_all_pixels 兼容的像素数据
         image = Loader(mascot_path)
 
-        # 计算画布尺寸
-        aspect_ratio = image.height / image.width
+        # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
+        FONT_RATIO = 0.5  # width/height
 
         # 创建 chafa 配置
         config = CanvasConfig()
         config.width = cols
-        config.height = int(cols * aspect_ratio)
+
+        # 使用 chafa 自动计算合适的高度（考虑字符纵横比）
+        config.calc_canvas_geometry(
+            image.width,
+            image.height,
+            FONT_RATIO
+        )
+
         config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 【调试信息】
