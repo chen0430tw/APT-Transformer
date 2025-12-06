@@ -116,6 +116,7 @@
     "test_terminator_logic.py": "file"
   },
   "README.md": "file",
+  "command_verification_report.md": "file",
   "requirements-dev.txt": "file",
   ".gitignore": "file",
   "setup.py": "file",
