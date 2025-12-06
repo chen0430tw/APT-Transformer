@@ -33,7 +33,8 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
         print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
         use_sixel: 是否使用 Sixel 图形模式（默认 False，使用字符艺术）
-                   Sixel 模式可显示完美像素，但需要终端支持（WezTerm, mintty, Konsole等）
+                   Sixel 模式可显示完美像素图片（高清像素渲染）
+                   支持终端：Windows Terminal (v1.22+), WezTerm, mintty, Konsole, iTerm2等
 
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
@@ -159,11 +160,11 @@ if __name__ == "__main__":
 
     if use_sixel:
         print("使用 Sixel 模式（完美像素图片）")
-        print("提示：需要终端支持 Sixel（如 WezTerm, mintty, Konsole）\n")
+        print("支持终端：Windows Terminal v1.22+, WezTerm, mintty, Konsole, iTerm2\n")
         # Sixel 模式：使用像素宽度而不是字符宽度
         print_apt_mascot(cols=200, show_banner=True, color_mode=True, use_sixel=True)
     else:
         print("使用字符艺术模式")
-        print("提示：添加 --sixel 参数可切换到 Sixel 像素模式\n")
+        print("提示：添加 --sixel 参数可切换到 Sixel 高清像素模式\n")
         # 字符模式：35 字符宽，适合终端显示
         print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=False)
