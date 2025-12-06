@@ -92,14 +92,6 @@ def print_apt_mascot(cols: int = 20, show_banner: bool = True, color_mode: bool 
             FONT_RATIO
         )
 
-        # 如果启用彩色模式
-        if color_mode:
-            # 使用全彩色模式
-            config.set_color_space(2)  # CHAFA_COLOR_SPACE_RGB
-        else:
-            # 使用单色模式
-            config.set_color_space(0)  # CHAFA_COLOR_SPACE_NONE
-
         # 创建画布
         canvas = Canvas(config)
 
