@@ -23,21 +23,23 @@ except (ImportError, FileNotFoundError, OSError, Exception):
     HAS_CHAFA = False
 
 
-def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None):
+def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None, use_sixel: bool = False):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
     参数:
-        cols: 显示宽度（字符数，默认35字符宽，适合终端显示）
+        cols: 显示宽度（字符数或像素列数，默认35）
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
         print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
+        use_sixel: 是否使用 Sixel 图形模式（默认 False，使用字符艺术）
+                   Sixel 模式可显示完美像素，但需要终端支持（WezTerm, mintty, Konsole等）
 
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
         - 使用 chafa.py 库实现高质量终端渲染
-        - 支持彩色和黑白两种模式
-        - chafa 自动计算高度以保持图片比例
+        - 支持字符模式（symbols）和像素模式（sixel）
+        - 自动计算高度以保持图片比例
     """
     # 默认使用 print，除非指定了自定义函数
     if print_func is None:
@@ -77,18 +79,27 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         # Loader 会正确处理图片并提供与 draw_all_pixels 兼容的像素数据
         image = Loader(mascot_path)
 
-        # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
-        FONT_RATIO = 0.5  # width/height
-
-        # 手动计算合适的高度（保持图片比例 × 字符纵横比）
-        # height = width * (图片高度/图片宽度) * (字符宽度/字符高度)
-        calculated_height = int(cols * (image.height / image.width) * FONT_RATIO)
-
         # 创建 chafa 配置
         config = CanvasConfig()
-        config.width = cols
-        config.height = calculated_height
-        config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
+
+        if use_sixel:
+            # Sixel 模式：显示完美像素图片
+            # Sixel 不需要手动计算高度，chafa 会自动处理
+            config.width = cols
+            config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SIXELS
+            print_func(f"[DEBUG] Sixel 模式: {cols}px 宽")
+        else:
+            # 字符艺术模式
+            # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
+            FONT_RATIO = 0.5  # width/height
+
+            # 手动计算合适的高度（保持图片比例 × 字符纵横比）
+            # height = width * (图片高度/图片宽度) * (字符宽度/字符高度)
+            calculated_height = int(cols * (image.height / image.width) * FONT_RATIO)
+
+            config.width = cols
+            config.height = calculated_height
+            config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 【调试信息】
         print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
@@ -141,5 +152,18 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
 
 
 if __name__ == "__main__":
-    # 测试渲染（35 字符宽，适合终端显示）
-    print_apt_mascot(cols=35, show_banner=True, color_mode=True)
+    import sys
+
+    # 检查命令行参数
+    use_sixel = "--sixel" in sys.argv
+
+    if use_sixel:
+        print("使用 Sixel 模式（完美像素图片）")
+        print("提示：需要终端支持 Sixel（如 WezTerm, mintty, Konsole）\n")
+        # Sixel 模式：使用像素宽度而不是字符宽度
+        print_apt_mascot(cols=200, show_banner=True, color_mode=True, use_sixel=True)
+    else:
+        print("使用字符艺术模式")
+        print("提示：添加 --sixel 参数可切换到 Sixel 像素模式\n")
+        # 字符模式：35 字符宽，适合终端显示
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=False)
