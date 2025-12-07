@@ -14,6 +14,11 @@ from typing import Optional
 try:
     from chafa import Canvas, CanvasConfig, PixelMode
     from chafa.loader import Loader
+    try:
+        from chafa import TermDb, TermInfo
+        HAS_TERMDB = True
+    except ImportError:
+        HAS_TERMDB = False
     HAS_CHAFA = True
 except (ImportError, FileNotFoundError, OSError, Exception):
     # ImportError: chafa.py 未安装
@@ -21,27 +26,95 @@ except (ImportError, FileNotFoundError, OSError, Exception):
     # OSError: 其他系统级错误
     # Exception: 其他未预期的错误
     HAS_CHAFA = False
+    HAS_TERMDB = False
 
 
-def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None):
+def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None, use_sixel: bool = False):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
     参数:
-        cols: 显示宽度（字符数，默认35字符宽，适合终端显示）
+        cols: 显示宽度（字符数或像素列数，默认35）
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
         print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
+        use_sixel: 是否使用 Sixel 图形模式（默认 False，使用字符艺术）
+                   Sixel 模式可显示完美像素图片（高清像素渲染）
+                   支持终端：Windows Terminal (v1.22+), WezTerm, mintty, Konsole, iTerm2等
 
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
         - 使用 chafa.py 库实现高质量终端渲染
-        - 支持彩色和黑白两种模式
-        - chafa 自动计算高度以保持图片比例
+        - 支持字符模式（symbols）和像素模式（sixel）
+        - 自动计算高度以保持图片比例
     """
     # 默认使用 print，除非指定了自定义函数
     if print_func is None:
         print_func = print
+
+    # Sixel 模式：使用系统 chafa 命令（更可靠）
+    if use_sixel:
+        import subprocess
+        import shutil
+
+        # 获取兔子图片路径
+        script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        mascot_path = os.path.join(script_dir, "docs", "assets", "兔兔伯爵.png")
+
+        if not os.path.exists(mascot_path):
+            print_func("  (找不到吉祥物图片)")
+            return
+
+        # 检查系统是否有 chafa 命令（Windows 需要 .exe）
+        chafa_cmd = shutil.which("chafa") or shutil.which("chafa.exe")
+
+        # 如果 PATH 中找不到，尝试常见的 winget 安装路径
+        if not chafa_cmd:
+            import glob
+            winget_base = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages")
+            winget_paths = [
+                # WinGet Links（符号链接目录）
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\chafa.exe"),
+                # WinGet Packages 目录（包含完整 Source 后缀 + 版本号子目录）
+                # 结构: hpjansson.Chafa_Microsoft.Winget.Source_xxx/chafa-x.x.x-x-xxx/bin/chafa.exe
+                os.path.join(winget_base, "hpjansson.Chafa*", "chafa-*", "bin", "chafa.exe"),
+                os.path.join(winget_base, "hpjansson.Chafa*", "chafa-*", "chafa.exe"),
+                os.path.join(winget_base, "hpjansson.Chafa*", "bin", "chafa.exe"),
+                os.path.join(winget_base, "hpjansson.Chafa*", "chafa.exe"),
+            ]
+            for path_pattern in winget_paths:
+                matches = glob.glob(path_pattern)
+                if matches:
+                    chafa_cmd = matches[0]
+                    break
+
+        print_func(f"[DEBUG] 查找系统 chafa: {chafa_cmd}")
+        if chafa_cmd:
+            if show_banner:
+                print_func("\n" + "="*70)
+                print_func("  APT - Autopoietic Transformer | 自生成变换器")
+                print_func("="*70)
+
+            try:
+                # 使用系统 chafa 命令渲染 Sixel
+                result = subprocess.run(
+                    [chafa_cmd, "-f", "sixels", "-s", f"{cols}x", mascot_path],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                print_func(result.stdout)
+            except subprocess.CalledProcessError as e:
+                print_func(f"  (Sixel 渲染失败: {e})")
+
+            if show_banner:
+                print_func("="*70)
+                print_func("  Training Session Starting... | 训练会话启动中...")
+                print_func("="*70 + "\n")
+            return
+        else:
+            print_func("  (未找到 chafa 命令，切换到字符模式)")
+            use_sixel = False  # 回退到字符模式
 
     # 显示横幅
     if show_banner:
@@ -77,14 +150,30 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         # Loader 会正确处理图片并提供与 draw_all_pixels 兼容的像素数据
         image = Loader(mascot_path)
 
-        # 计算画布尺寸
-        aspect_ratio = image.height / image.width
-
         # 创建 chafa 配置
         config = CanvasConfig()
-        config.width = cols
-        config.height = int(cols * aspect_ratio)
-        config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
+
+        if use_sixel:
+            # Sixel 模式：显示完美像素图片
+            # 根据图片比例计算高度（像素级）
+            calculated_height = int(cols * (image.height / image.width))
+
+            config.width = cols
+            config.height = calculated_height
+            config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SIXELS
+            print_func(f"[DEBUG] Sixel 模式: {cols}x{calculated_height} px")
+        else:
+            # 字符艺术模式
+            # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
+            FONT_RATIO = 0.5  # width/height
+
+            # 手动计算合适的高度（保持图片比例 × 字符纵横比）
+            # height = width * (图片高度/图片宽度) * (字符宽度/字符高度)
+            calculated_height = int(cols * (image.height / image.width) * FONT_RATIO)
+
+            config.width = cols
+            config.height = calculated_height
+            config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 【调试信息】
         print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
@@ -106,8 +195,28 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         )
 
         # 获取并打印输出
-        output = canvas.print()
+        # Sixel 模式需要 fallback 参数告诉 chafa 终端支持 Sixel
+        if use_sixel and HAS_TERMDB:
+            # 创建支持 Sixel 的终端信息
+            term_db = TermDb()
+            term_info = term_db.detect()
+            print_func(f"[DEBUG] 检测到终端: {term_info}")
+            output = canvas.print(term_info=term_info)
+        elif use_sixel:
+            # 没有 TermDb，使用 fallback（假设终端支持 Sixel）
+            print_func("[DEBUG] 使用 fallback 模式（假设终端支持 Sixel）")
+            # 直接输出，假设终端支持
+            output = canvas.print()
+        else:
+            output = canvas.print()
+
+        # 【调试信息】原始输出
+        print_func(f"[DEBUG] 原始输出长度: {len(output)} bytes")
+        print_func(f"[DEBUG] 原始输出前100字节: {output[:100]}")
+
         decoded_output = output.decode()
+        print_func(f"[DEBUG] 解码后长度: {len(decoded_output)} chars")
+
         # 在每一行末尾添加颜色重置，防止背景色溢出
         lines = decoded_output.split('\n')
 
@@ -137,5 +246,18 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
 
 
 if __name__ == "__main__":
-    # 测试渲染（35 字符宽，适合终端显示）
-    print_apt_mascot(cols=35, show_banner=True, color_mode=True)
+    import sys
+
+    # 检查命令行参数
+    use_sixel = "--sixel" in sys.argv
+
+    if use_sixel:
+        print("使用 Sixel 模式（完美像素图片）")
+        print("支持终端：Windows Terminal v1.22+, WezTerm, mintty, Konsole, iTerm2\n")
+        # Sixel 模式：35 字符宽度等效，适合终端显示
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=True)
+    else:
+        print("使用字符艺术模式")
+        print("提示：添加 --sixel 参数可切换到 Sixel 高清像素模式\n")
+        # 字符模式：35 字符宽，适合终端显示
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=False)
