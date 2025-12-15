@@ -3,12 +3,33 @@
 """
 APT Mascot Renderer (APT 吉祥物渲染器)
 
-使用 chafa.py 在终端渲染兔子吉祥物
+使用多种渲染引擎在终端渲染兔子吉祥物
 灵感来自 Linux Tux 企鹅启动画面
+
+支持的渲染模式：
+- PTPF: 高质量半块彩色渲染（推荐，所有终端）
+- Sixel: 完美像素图形（需终端支持）
+- 字符艺术: 经典字符画（最大兼容性）
 """
 
 import os
+import sys
 from typing import Optional
+
+# 检查是否安装了 PTPF Lite
+try:
+    # 尝试从项目根目录导入PTPF模块
+    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    from ptpf_lite_v65_hpq_sosa_simplified_cached_retina_v2 import (
+        ptpf_render_ansi_hpq_sosa,
+        PTPFConfig
+    )
+    from PIL import Image
+    HAS_PTPF = True
+except (ImportError, Exception):
+    HAS_PTPF = False
 
 # 检查是否安装了 chafa.py
 try:
@@ -29,7 +50,8 @@ except (ImportError, FileNotFoundError, OSError, Exception):
     HAS_TERMDB = False
 
 
-def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None, use_sixel: bool = False):
+def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None,
+                     use_sixel: bool = False, use_ptpf: bool = False):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
@@ -38,32 +60,88 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
         print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
-        use_sixel: 是否使用 Sixel 图形模式（默认 False，使用字符艺术）
+        use_ptpf: 是否使用 PTPF Lite 高质量半块渲染（推荐，默认 False）
+                  PTPF 模式使用 HPQ + SOSA 算法，半块字符（█ ▀ ▄）提供2x垂直分辨率
+                  支持所有终端，自动结构感知，高质量彩色输出
+        use_sixel: 是否使用 Sixel 图形模式（默认 False）
                    Sixel 模式可显示完美像素图片（高清像素渲染）
                    支持终端：Windows Terminal (v1.22+), WezTerm, mintty, Konsole, iTerm2等
 
+    渲染模式优先级：
+        1. use_ptpf=True  → PTPF Lite 半块渲染（推荐）
+        2. use_sixel=True → Sixel 像素渲染
+        3. 默认 → 字符艺术模式
+
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
-        - 使用 chafa.py 库实现高质量终端渲染
-        - 支持字符模式（symbols）和像素模式（sixel）
+        - 多种渲染引擎适应不同终端环境
         - 自动计算高度以保持图片比例
     """
     # 默认使用 print，除非指定了自定义函数
     if print_func is None:
         print_func = print
 
+    # 获取兔子图片路径（所有模式都需要）
+    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    mascot_path = os.path.join(script_dir, "docs", "assets", "兔兔伯爵.png")
+
+    if not os.path.exists(mascot_path):
+        print_func("  (找不到吉祥物图片)")
+        if show_banner:
+            print_func("="*70)
+            print_func("  Training Session Starting... | 训练会话启动中...")
+            print_func("="*70 + "\n")
+        return
+
+    # PTPF 模式：高质量半块彩色渲染（优先级最高）
+    if use_ptpf:
+        if not HAS_PTPF:
+            print_func("  (PTPF 模块未找到，切换到字符艺术模式)")
+            use_ptpf = False
+        else:
+            if show_banner:
+                print_func("\n" + "="*70)
+                print_func("  APT - Autopoietic Transformer | 自生成变换器")
+                print_func("="*70)
+
+            try:
+                # 加载图片
+                image = Image.open(mascot_path).convert("RGB")
+
+                # 使用 PTPF Lite 渲染
+                # 创建自定义配置：更小的cols以适应终端
+                cfg = PTPFConfig(
+                    cols=cols,
+                    char_aspect=2.0,
+                    blur_k=3,
+                    unsharp_amount=0.5,
+                    sat_k=1.25,
+                    gray_mix=0.15,
+                    sosa_edge_gain=1.0,
+                    sosa_thresh=0.42,
+                    hole_amp_A=0.018,
+                    hole_amp_B=0.030,
+                )
+
+                # 渲染ANSI输出
+                ansi_output = ptpf_render_ansi_hpq_sosa(image, cols=cols, mode="auto", cfg=cfg)
+
+                # 打印输出
+                print_func(ansi_output)
+
+            except Exception as e:
+                print_func(f"  (PTPF 渲染失败: {e})")
+
+            if show_banner:
+                print_func("="*70)
+                print_func("  Training Session Starting... | 训练会话启动中...")
+                print_func("="*70 + "\n")
+            return
+
     # Sixel 模式：使用系统 chafa 命令（更可靠）
     if use_sixel:
         import subprocess
         import shutil
-
-        # 获取兔子图片路径
-        script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        mascot_path = os.path.join(script_dir, "docs", "assets", "兔兔伯爵.png")
-
-        if not os.path.exists(mascot_path):
-            print_func("  (找不到吉祥物图片)")
-            return
 
         # 检查系统是否有 chafa 命令（Windows 需要 .exe）
         chafa_cmd = shutil.which("chafa") or shutil.which("chafa.exe")
@@ -249,15 +327,24 @@ if __name__ == "__main__":
     import sys
 
     # 检查命令行参数
+    use_ptpf = "--ptpf" in sys.argv
     use_sixel = "--sixel" in sys.argv
 
-    if use_sixel:
+    if use_ptpf:
+        print("使用 PTPF Lite 模式（高质量半块彩色渲染）")
+        print("特性：HPQ预处理 + SOSA结构感知 + S-FSO抖动 + 半块字符（2x分辨率）")
+        print("支持所有终端，自动优化边缘和填充区域\n")
+        # PTPF 模式：35 字符宽度，半块渲染提供70像素高度
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_ptpf=True)
+    elif use_sixel:
         print("使用 Sixel 模式（完美像素图片）")
         print("支持终端：Windows Terminal v1.22+, WezTerm, mintty, Konsole, iTerm2\n")
         # Sixel 模式：35 字符宽度等效，适合终端显示
         print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=True)
     else:
         print("使用字符艺术模式")
-        print("提示：添加 --sixel 参数可切换到 Sixel 高清像素模式\n")
+        print("提示：")
+        print("  --ptpf  : PTPF Lite 高质量半块渲染（推荐，所有终端）")
+        print("  --sixel : Sixel 高清像素模式（需终端支持）\n")
         # 字符模式：35 字符宽，适合终端显示
-        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=False)
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=False, use_ptpf=False)
