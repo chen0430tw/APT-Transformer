@@ -52,7 +52,7 @@ except (ImportError, FileNotFoundError, OSError, Exception):
 
 
 def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None,
-                     use_sixel: bool = False, use_ptpf: bool = False):
+                     use_sixel: bool = False, use_ptpf: bool = None, use_ascii: bool = False):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
@@ -61,22 +61,27 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
         print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
-        use_ptpf: 是否使用 PTPF Lite 高质量半块渲染（推荐，默认 False）
-                  PTPF 模式使用 HPQ + SOSA 算法，半块字符（█ ▀ ▄）提供2x垂直分辨率
-                  支持所有终端，自动结构感知，高质量彩色输出
-        use_sixel: 是否使用 Sixel 图形模式（默认 False）
+        use_sixel: 强制使用 Sixel 图形模式（默认 False）
                    Sixel 模式可显示完美像素图片（高清像素渲染）
                    支持终端：Windows Terminal (v1.22+), WezTerm, mintty, Konsole, iTerm2等
+        use_ptpf: 强制使用 PTPF Lite 高质量半块渲染（默认 None=自动）
+                  PTPF 模式使用 HPQ + SOSA 算法，半块字符（█ ▀ ▄）提供2x垂直分辨率
+                  支持所有终端，自动结构感知，高质量彩色输出
+        use_ascii: 强制使用传统字符艺术模式（默认 False）
 
-    渲染模式优先级：
-        1. use_ptpf=True  → PTPF Lite 半块渲染（推荐）
-        2. use_sixel=True → Sixel 像素渲染
-        3. 默认 → 字符艺术模式
+    自动模式（默认）：
+        优先级: PTPF（如果可用）→ 字符艺术 → 显示安装建议
+        这样默认就能看到PTPF的高质量渲染，无需手动指定参数
+
+    强制模式：
+        use_sixel=True  → 强制 Sixel（失败则降级到字符艺术）
+        use_ptpf=True   → 强制 PTPF（失败则降级到字符艺术）
+        use_ascii=True  → 强制字符艺术
 
     设计理念:
         - 小巧简洁的 Logo，类似 Linux Tux 企鹅
-        - 多种渲染引擎适应不同终端环境
-        - 自动计算高度以保持图片比例
+        - 智能选择最佳渲染引擎，展示最佳效果
+        - 优雅降级，确保任何环境都能正常显示
     """
     # 默认使用 print，除非指定了自定义函数
     if print_func is None:
@@ -93,6 +98,10 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
             print_func("  Training Session Starting... | 训练会话启动中...")
             print_func("="*70 + "\n")
         return
+
+    # 自动模式：如果没有明确指定模式，默认尝试PTPF
+    if use_ptpf is None and not use_sixel and not use_ascii:
+        use_ptpf = HAS_PTPF  # 如果PTPF可用就用，否则降级到ASCII
 
     # PTPF 模式：高质量半块彩色渲染（优先级最高）
     if use_ptpf:
@@ -328,24 +337,37 @@ if __name__ == "__main__":
     import sys
 
     # 检查命令行参数
-    use_ptpf = "--ptpf" in sys.argv
-    use_sixel = "--sixel" in sys.argv
+    force_ptpf = "--ptpf" in sys.argv
+    force_sixel = "--sixel" in sys.argv
+    force_ascii = "--ascii" in sys.argv
 
-    if use_ptpf:
-        print("使用 PTPF Lite 模式（高质量半块彩色渲染）")
+    if force_sixel:
+        print("强制使用 Sixel 模式（完美像素图片）")
+        print("支持终端：Windows Terminal v1.22+, WezTerm, mintty, Konsole, iTerm2\n")
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=True)
+    elif force_ptpf:
+        print("强制使用 PTPF Lite 模式（高质量半块彩色渲染）")
         print("特性：HPQ预处理 + SOSA结构感知 + S-FSO抖动 + 半块字符（2x分辨率）")
         print("支持所有终端，自动优化边缘和填充区域\n")
-        # PTPF 模式：35 字符宽度，半块渲染提供70像素高度
         print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_ptpf=True)
-    elif use_sixel:
-        print("使用 Sixel 模式（完美像素图片）")
-        print("支持终端：Windows Terminal v1.22+, WezTerm, mintty, Konsole, iTerm2\n")
-        # Sixel 模式：35 字符宽度等效，适合终端显示
-        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=True)
+    elif force_ascii:
+        print("强制使用字符艺术模式（传统chafa字符画）")
+        print("最大兼容性，支持所有终端\n")
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_ascii=True)
     else:
-        print("使用字符艺术模式")
+        # 自动模式：优先PTPF，降级到ASCII
+        print("自动选择最佳渲染模式...")
+        if HAS_PTPF:
+            print("✓ 使用 PTPF Lite（高质量半块渲染 + 2x分辨率）\n")
+        elif HAS_CHAFA:
+            print("✓ 使用字符艺术模式（PTPF不可用，需要: pip install numpy pillow）\n")
+        else:
+            print("! 未安装渲染库\n")
+
         print("提示：")
-        print("  --ptpf  : PTPF Lite 高质量半块渲染（推荐，所有终端）")
-        print("  --sixel : Sixel 高清像素模式（需终端支持）\n")
-        # 字符模式：35 字符宽，适合终端显示
-        print_apt_mascot(cols=35, show_banner=True, color_mode=True, use_sixel=False, use_ptpf=False)
+        print("  --sixel : 强制 Sixel 高清像素模式（需终端支持）")
+        print("  --ptpf  : 强制 PTPF Lite 高质量半块渲染")
+        print("  --ascii : 强制传统字符艺术模式\n")
+
+        # 自动模式：use_ptpf=None会自动选择最佳可用模式
+        print_apt_mascot(cols=35, show_banner=True, color_mode=True)
