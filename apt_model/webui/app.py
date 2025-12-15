@@ -974,6 +974,7 @@ def create_training_launcher_tab(webui_state):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding='utf-8',  # 明确指定UTF-8编码，避免Windows cp950编码问题
                     bufsize=1
                 )
 
