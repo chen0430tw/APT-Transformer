@@ -702,12 +702,17 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
     avg_trained = sum(trained_scores) / len(trained_scores)
     improvement = avg_trained - avg_untrained
 
-    debug_print(f"\n整体评估:")
-    debug_print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
-    debug_print(f"训练后模型平均质量: {avg_trained:.2f}/100")
-    debug_print(f"质量提升: {improvement:.2f} 分")
+    info_print(f"\n整体评估:")
+    info_print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
+    info_print(f"训练后模型平均质量: {avg_trained:.2f}/100")
+    info_print(f"质量提升: {improvement:.2f} 分")
 
-    if avg_trained < 50:
-        debug_print("\n安柏：训练...还不够...")
+    # 【修复逻辑】增加对"退步"的判断
+    if improvement < -5:
+        info_print("\n安柏：奇怪……怎么感觉它变笨了？（质量下降，建议检查超参数）")
+    elif improvement < 0:
+        info_print("\n安柏：看起来效果差不多，也许还需要更多训练数据？")
+    elif avg_trained < 50:
+        info_print("\n安柏：虽然有进步，但还远远不够哦！继续加油！")
     else:
-        debug_print("\n安柏：训练完成得不错！")
+        info_print("\n安柏：训练完成得不错！侦察骑士为你点赞！")
