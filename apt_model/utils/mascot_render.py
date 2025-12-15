@@ -18,11 +18,12 @@ from typing import Optional
 
 # 检查是否安装了 PTPF Lite
 try:
-    # 尝试从项目根目录导入PTPF模块
+    # 尝试从scripts目录导入PTPF模块
     script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if script_dir not in sys.path:
-        sys.path.insert(0, script_dir)
-    from ptpf_lite_v65_hpq_sosa_simplified_cached_retina_v2 import (
+    scripts_dir = os.path.join(script_dir, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from ptpf_lite import (
         ptpf_render_ansi_hpq_sosa,
         PTPFConfig
     )
