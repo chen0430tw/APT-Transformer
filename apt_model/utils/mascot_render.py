@@ -135,13 +135,13 @@ except (ImportError, FileNotFoundError, OSError, Exception):
     HAS_TERMDB = False
 
 
-def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool = True, print_func=None,
+def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool = True, print_func=None,
                      use_sixel: bool = False, use_ptpf: bool = None, use_ascii: bool = False):
     """
     打印 APT 兔子吉祥物（类似 Linux Tux 小巧 Logo）
 
     参数:
-        cols: 显示宽度（字符数或像素列数，默认35）
+        cols: 显示宽度（字符数或像素列数，默认50，推荐范围45-70）
         show_banner: 是否显示横幅文字
         color_mode: 是否使用彩色模式（默认 True，chafa支持很好的彩色）
         print_func: 自定义输出函数（默认使用print，在logger环境中可传入info_print）
@@ -210,22 +210,24 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
                 cfg = PTPFConfig(
                     cols=ptpf_cols,
                     char_aspect=2.0,
-                    blur_k=2,  # 减少模糊，保留细节
-                    unsharp_amount=0.7,  # 增加锐化
-                    sat_k=1.4,  # 增加饱和度
-                    gray_mix=0.10,  # 减少灰度混合，色彩更鲜艳
-                    sosa_edge_gain=1.2,  # 增强边缘
-                    sosa_thresh=0.42,
-                    hole_amp_A=0.015,  # 减少抖动噪声
-                    hole_amp_B=0.025,
+                    blur_k=1,  # 进一步减少模糊，保留更多细节
+                    unsharp_amount=1.0,  # 增强锐化，让边缘更清晰
+                    sat_k=1.5,  # 进一步增加饱和度，色彩更鲜艳
+                    gray_mix=0.05,  # 进一步减少灰度混合，提升色彩纯度
+                    sosa_edge_gain=1.4,  # 进一步增强边缘检测
+                    sosa_thresh=0.40,  # 略微降低阈值，保留更多细节
+                    hole_amp_A=0.010,  # 减少抖动噪声
+                    hole_amp_B=0.020,
                 )
 
                 # 渲染ANSI输出
-                # - cols <= 55: use low-cols fusion (detail-preserving, non-scary)
-                # - else: use PTPF (your approved HPQ+SOSA look)
-                if cols <= 55:
-                    ansi_output = _render_halfblock_fused_ansi(image, cols=cols, frames=4, samples=5, prefilter=True)
+                # - cols <= 45: use low-cols fusion with enhanced quality (more samples)
+                # - else: use PTPF (HPQ+SOSA high-quality look)
+                if cols <= 45:
+                    # 低分辨率：使用增强的 fusion 渲染（更多采样点以保持清晰度）
+                    ansi_output = _render_halfblock_fused_ansi(image, cols=cols, frames=6, samples=8, prefilter=True)
                 else:
+                    # 中高分辨率：使用 PTPF 高质量渲染
                     ansi_output = ptpf_render_ansi_hpq_sosa(image, cols=ptpf_cols, mode="auto", cfg=cfg)
 
                 # 打印输出
