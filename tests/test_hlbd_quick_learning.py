@@ -601,7 +601,7 @@ def main():
     # 【新增验证代码：检查实际样本数】
     actual_pairs = len(dataset)
     print(f"--- 长度验证 ---")
-    print(f"模型实际看到的训练对数量: {actual_pairs} (应为 80 或更多)")
+    print(f"模型实际看到的训练对数量: {actual_pairs} (每个概念4个层级映射)")
     print(f"----------------")
 
     # 5. 创建模型
@@ -628,14 +628,14 @@ def main():
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 30  # 快速训练测试（数据集小，30轮足够）
+    num_epochs = 50  # 400个训练对（100概念×4层级），50轮较充分
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
         print(f"Epoch {epoch+1}/{num_epochs} - Loss: {loss:.4f}")
 
-        # 每3个epoch测试一次
-        if (epoch + 1) % 3 == 0 or epoch == num_epochs - 1:
+        # 每5个epoch测试一次
+        if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
             test_cases = [
                 ("🌧️", "下雨"),
                 ("❤️", "我爱你"),
