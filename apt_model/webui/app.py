@@ -923,15 +923,22 @@ def create_training_launcher_tab(webui_state):
 
                 gr.Markdown("### 💻 训练日志（实时）")
 
+                # 日志滚动控制
+                with gr.Row():
+                    autoscroll_checkbox = gr.Checkbox(
+                        label="自动滚动到底部",
+                        value=False,  # 默认关闭自动滚动，避免干扰用户查看
+                        scale=1
+                    )
+                    clear_logs_btn = gr.Button("🗑️ 清空日志", size="sm", scale=1)
+
                 log_output = gr.Textbox(
                     label="终端输出",
                     lines=20,
                     interactive=False,
                     max_lines=1000,
-                    autoscroll=True
+                    autoscroll=False  # 改为默认不自动滚动
                 )
-
-                clear_logs_btn = gr.Button("🗑️ 清空日志", size="sm")
 
         # ============ 事件处理函数 ============
 
