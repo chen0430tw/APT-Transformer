@@ -333,66 +333,79 @@ def generate_with_vocab_mask(model, input_ids, valid_token_ids, max_length,
     return generated
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4): # <--- 【关键修改 1】接收 accumulation_steps
-    """训练一个epoch (使用梯度累积)"""
+def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4):
+    """训练一个epoch（使用梯度累积 + 混合精度训练）"""
+    from torch.cuda.amp import autocast, GradScaler
+
     model.train()
     total_loss = 0
     total_steps = 0
-    
-    ACCUMULATION_STEPS = accumulation_steps # 【关键修正】在函数体内定义 ACCUMULATION_STEPS
-    
+
+    ACCUMULATION_STEPS = accumulation_steps
+
+    # 创建梯度缩放器（用于混合精度训练）
+    scaler = GradScaler(enabled=(device.type == 'cuda'))
+
     progress_bar = tqdm(
-        dataloader, 
-        desc="Training", 
-        leave=False, 
-        mininterval=0.1, 
+        dataloader,
+        desc="Training",
+        leave=False,
+        mininterval=0.1,
         ascii=True
     )
 
-    # 【关键修改 2】使用 enumerate 来获取批次索引 i
-    for i, (src_ids, tgt_ids) in enumerate(progress_bar): 
-        
-        src_ids = src_ids.to(device)
-        tgt_ids = tgt_ids.to(device)
+    for i, (src_ids, tgt_ids) in enumerate(progress_bar):
 
-        # 前向传播
-        output = model(src_ids, tgt_ids[:, :-1])
+        # 异步数据传输（加速CPU→GPU）
+        src_ids = src_ids.to(device, non_blocking=True)
+        tgt_ids = tgt_ids.to(device, non_blocking=True)
 
-        # 计算损失
-        loss = criterion(
-            output.reshape(-1, output.size(-1)),
-            tgt_ids[:, 1:].reshape(-1)
-        )
+        # 🚀 混合精度：使用autocast进行前向传播
+        with autocast(enabled=(device.type == 'cuda')):
+            # 前向传播
+            output = model(src_ids, tgt_ids[:, :-1])
 
-        # 损失归一化 (Loss Scaling)
-        loss = loss / ACCUMULATION_STEPS 
+            # 计算损失
+            loss = criterion(
+                output.reshape(-1, output.size(-1)),
+                tgt_ids[:, 1:].reshape(-1)
+            )
 
-        # 反向传播 (不清除梯度)
-        loss.backward()
+            # 损失归一化
+            loss = loss / ACCUMULATION_STEPS
 
-        # 条件优化和清零 (每 N 步执行一次)
+        # 🚀 混合精度：使用scaler进行反向传播
+        scaler.scale(loss).backward()
+
+        # 条件优化和清零（每N步执行一次）
         if (i + 1) % ACCUMULATION_STEPS == 0:
-            # 权重更新 (即使 DBC 激活，保留裁剪也无害)
+            # 🚀 混合精度：unscale梯度后再clip
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            optimizer.zero_grad() # 清除累积的梯度
-            
-        total_loss += loss.item() * ACCUMULATION_STEPS # 恢复实际 Loss
+
+            # 🚀 混合精度：使用scaler更新权重
+            scaler.step(optimizer)
+            scaler.update()
+
+            optimizer.zero_grad(set_to_none=True)  # 更快的梯度清零
+
+        total_loss += loss.item() * ACCUMULATION_STEPS
         total_steps += 1
-        
-        # 实时更新进度条上的 Loss
+
+        # 实时更新进度条上的Loss
         progress_bar.set_postfix({'loss': f'{loss.item() * ACCUMULATION_STEPS:.4f}'})
-        
-    # 【最后一步清理】处理剩余的累积梯度 (i 需要在循环外可用)
-    # Note: 确保 i 在循环外能访问到，尽管这不是标准 Python 做法
+
+    # 【最后一步清理】处理剩余的累积梯度
     try:
         if (i + 1) % ACCUMULATION_STEPS != 0:
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            optimizer.zero_grad()
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
     except NameError:
-         # 如果 i 没定义 (比如 dataloader 是空的)，则忽略清理
-         pass 
+         # 如果i没定义（比如dataloader是空的），则忽略清理
+         pass
 
     return (total_loss / total_steps) if total_steps > 0 else 0
 
@@ -577,7 +590,7 @@ def main():
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
     print(f"PyTorch版本: {torch.__version__}")
 
-    ACCUMULATION_STEPS = 8  # 模拟 4 * 8 = 32 的有效批次大小
+    ACCUMULATION_STEPS = 2  # 优化：batch_size=16, 16 * 2 = 32 的有效批次大小（从8减少到2）
 
     # 自动检测：有显卡就用显卡，没有才用 CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -609,7 +622,15 @@ def main():
     # 4. 创建数据集
     print(f"\n📊 创建数据集...")
     dataset = SimpleDialogueDataset(training_pairs, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+    # 优化：增大batch_size + 多线程加载
+    dataloader = DataLoader(
+        dataset,
+        batch_size=16,  # 从4增加到16（4倍）
+        shuffle=True,
+        num_workers=4,  # 使用4个工作进程并行加载
+        pin_memory=True,  # 固定内存，加速CPU→GPU传输
+        persistent_workers=True  # 保持worker存活，避免重复创建
+    )
     print(f"   训练批次数: {len(dataloader)}")
 
     # 【新增验证代码：检查实际样本数】
