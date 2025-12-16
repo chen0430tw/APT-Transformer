@@ -119,22 +119,25 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
                 image = Image.open(mascot_path).convert("RGB")
 
                 # 使用 PTPF Lite 渲染
-                # 创建自定义配置：更小的cols以适应终端
+                # PTPF使用半块字符，需要更高的cols以保持细节
+                # 建议80-120列以获得良好效果
+                ptpf_cols = min(cols * 3, 120)  # 放大3倍或最大120列，提升细节
+
                 cfg = PTPFConfig(
-                    cols=cols,
+                    cols=ptpf_cols,
                     char_aspect=2.0,
-                    blur_k=3,
-                    unsharp_amount=0.5,
-                    sat_k=1.25,
-                    gray_mix=0.15,
-                    sosa_edge_gain=1.0,
+                    blur_k=2,  # 减少模糊，保留细节
+                    unsharp_amount=0.7,  # 增加锐化
+                    sat_k=1.4,  # 增加饱和度
+                    gray_mix=0.10,  # 减少灰度混合，色彩更鲜艳
+                    sosa_edge_gain=1.2,  # 增强边缘
                     sosa_thresh=0.42,
-                    hole_amp_A=0.018,
-                    hole_amp_B=0.030,
+                    hole_amp_A=0.015,  # 减少抖动噪声
+                    hole_amp_B=0.025,
                 )
 
-                # 渲染ANSI输出
-                ansi_output = ptpf_render_ansi_hpq_sosa(image, cols=cols, mode="auto", cfg=cfg)
+                # 渲染ANSI输出（使用放大后的cols）
+                ansi_output = ptpf_render_ansi_hpq_sosa(image, cols=ptpf_cols, mode="auto", cfg=cfg)
 
                 # 打印输出
                 print_func(ansi_output)
