@@ -184,6 +184,20 @@ def create_training_pairs(samples):
             if pinyin and chinese:
                 pairs.append((pinyin, chinese))
 
+        # 5. 日文 -> 中文
+        if 'level_7' in sample and 'level_6' in sample:
+            japanese = sample['level_7'].get('日文', '')
+            chinese = sample['level_6'].get('中文', '')
+            if japanese and chinese:
+                pairs.append((japanese, chinese))
+
+        # 6. 韩文 -> 中文
+        if 'level_8' in sample and 'level_6' in sample:
+            korean = sample['level_8'].get('韩文', '')
+            chinese = sample['level_6'].get('中文', '')
+            if korean and chinese:
+                pairs.append((korean, chinese))
+
     print(f"   创建了 {len(pairs)} 个训练对")
     return pairs
 
@@ -601,7 +615,8 @@ def main():
     # 【新增验证代码：检查实际样本数】
     actual_pairs = len(dataset)
     print(f"--- 长度验证 ---")
-    print(f"模型实际看到的训练对数量: {actual_pairs} (每个概念4个层级映射)")
+    print(f"模型实际看到的训练对数量: {actual_pairs} (每个概念6个层级映射)")
+    print(f"   emoji/短语/英文/拼音/日文/韩文 → 中文")
     print(f"----------------")
 
     # 5. 创建模型
@@ -628,7 +643,7 @@ def main():
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 50  # 400个训练对（100概念×4层级），50轮较充分
+    num_epochs = 50  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
@@ -640,7 +655,8 @@ def main():
                 ("🌧️", "下雨"),
                 ("❤️", "我爱你"),
                 ("I love you", "我爱你"),
-                ("下雨", "天气"),
+                ("愛してる", "我爱你"),  # 日文测试
+                ("사랑해", "我爱你"),  # 韩文测试
             ]
             test_generation(model, tokenizer, test_cases, device)
 
@@ -657,6 +673,10 @@ def main():
         ("I love you", "我爱你"),
         ("It's raining", "下雨"),
         ("wǒ ài nǐ", "我爱你"),
+        ("愛してる", "我爱你"),  # 日文
+        ("雨が降っています", "下雨"),  # 日文
+        ("사랑해", "我爱你"),  # 韩文
+        ("비가 오고 있어요", "下雨"),  # 韩文
     ]
 
     test_generation(model, tokenizer, final_test_cases, device)
