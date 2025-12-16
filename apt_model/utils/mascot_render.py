@@ -119,13 +119,13 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
                 image = Image.open(mascot_path).convert("RGB")
 
                 # 使用 PTPF Lite 渲染
-                # PTPF使用半块字符，需要更高的cols以保持细节
-                # 建议80-120列以获得良好效果
-                ptpf_cols = min(cols * 3, 120)  # 放大3倍或最大120列，提升细节
+                # PTPF使用半块字符，适度提升分辨率保持细节但不过大
+                # 建议50-70列以获得良好效果
+                ptpf_cols = min(int(cols * 1.8), 65)  # 适度放大1.8倍或最大65列
 
                 cfg = PTPFConfig(
                     cols=ptpf_cols,
-                    char_aspect=2.0,
+                    char_aspect=1.0,  # PTPF半块渲染不需要字符纵横比调整，在像素域等距缩放
                     blur_k=2,  # 减少模糊，保留细节
                     unsharp_amount=0.7,  # 增加锐化
                     sat_k=1.4,  # 增加饱和度
