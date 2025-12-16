@@ -628,7 +628,7 @@ def main():
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 500  # 只训练10个epoch
+    num_epochs = 30  # 快速训练测试（数据集小，30轮足够）
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
