@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import json
-from transformers import BertTokenizer
+# from transformers import BertTokenizer  # 已替换为 SimpleCharTokenizer_BACKUP（支持 emoji）
 
 # 添加路径（动态计算项目根目录）
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -310,39 +310,43 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
 
 def generate_text(model, tokenizer, input_text, device, max_length=50, repetition_penalty=1.5):
     """
-    生成文本 (已修复为调用模型内置的 generate 方法，激活所有高级参数)
+    生成文本（修复：支持 emoji，去除输入复读）
     """
     model.eval()
 
     # 1. 获取 BOS/PAD ID
-    bos_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else tokenizer.cls_token_id
+    bos_id = tokenizer.bos_token_id
     pad_id = tokenizer.pad_token_id
-    
-    # 2. 编码输入文本 (作为 Prompt)
-    # 编码时，不加特殊 tokens，只编码原始文本
-    input_encoding = tokenizer.encode(input_text, return_tensors='pt', add_special_tokens=False).to(device)
-    
+
+    # 2. 编码输入文本（使用 __call__ 方法，不添加特殊 token）
+    # SimpleCharTokenizer_BACKUP 的 __call__ 不添加 BOS/EOS
+    input_result = tokenizer(input_text, max_length=64, padding=False,
+                            truncation=True, return_tensors='pt')
+    input_ids = input_result['input_ids'].to(device)  # shape: [1, seq_len]
+
+    # 去除 padding（如果有）
+    # 找到第一个非 pad token 的位置
+    input_ids = input_ids[input_ids != pad_id].unsqueeze(0) if pad_id in input_ids else input_ids
+
     # 3. 准备模型输入 input_ids = [BOS] + Prompt Tokens
     bos_tensor = torch.tensor([[bos_id]], device=device)
-    # 将 BOS 标记和 Prompt 拼接成完整的输入序列
-    initial_ids = torch.cat([bos_tensor, input_encoding], dim=1)
-    
-    # 4. 调用 APTModel 自身的 generate 方法 (核心替换)
+    initial_ids = torch.cat([bos_tensor, input_ids], dim=1)
+
+    # 4. 调用 APTModel 自身的 generate 方法
     generated_ids = model.generate(
         input_ids=initial_ids,
-        # max_length 必须加上初始 sequence 的长度
-        max_length=max_length + initial_ids.size(1), 
+        max_length=max_length + initial_ids.size(1),
         repetition_penalty=repetition_penalty,
-        do_sample=True, # 启用采样 (Top-K/Top-P)
-        num_beams=1, # 保持 beam search 数量 (注意，模型内部会忽略 num_beams > 1)
-        pad_token_id=pad_id 
-        # 完整的 Top-K/Top-P/Temperature 参数应该在 model.generate 内部配置
+        do_sample=True,
+        num_beams=1,
+        pad_token_id=pad_id
     )
-    
-    # 5. 解码
-    # generated_ids[0] 是第一个 batch 的输出序列
-    generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-    
+
+    # 5. 【修复】只解码新生成的部分，去掉输入
+    input_length = initial_ids.size(1)
+    generated_only = generated_ids[0][input_length:]  # 去掉输入部分
+    generated_text = tokenizer.decode(generated_only, skip_special_tokens=True)
+
     return generated_text
 
 
@@ -379,9 +383,6 @@ def main():
     data_path = os.path.join(project_root, 'apt_model', '分层语言启蒙数据集.txt')
     samples = load_hlbd_samples(data_path, max_samples=None)
 
-    # 顺便把下面那个 BERT 的路径也一起修了，不然等会还会报错
-    bert_path = os.path.join(project_root, 'bert', 'bert-base-chinese')
-
     # 显示几个样本
     print(f"\n📝 样本示例:")
     for i, sample in enumerate(samples[:3]):
@@ -394,12 +395,8 @@ def main():
 
     # 3. 准备分词器
     print(f"\n🔧 准备分词器...")
-    # 使用本地的bert-base-chinese tokenizer
-    tokenizer = BertTokenizer.from_pretrained(
-        bert_path,
-        local_files_only=True,  # <-- 强制使用本地文件，禁止联网
-        vocab_file=os.path.join(bert_path, 'vocab.txt') # <-- 显式指定词表位置
-    ) # 使用上面计算好的路径
+    # 使用 SimpleCharTokenizer_BACKUP（支持 emoji 动态添加）
+    tokenizer = SimpleCharTokenizer_BACKUP()
     print(f"   使用的分词器: {type(tokenizer).__name__}")
     print(f"   词汇表大小: {tokenizer.vocab_size}")
 
