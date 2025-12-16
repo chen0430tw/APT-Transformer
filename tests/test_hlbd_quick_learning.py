@@ -366,6 +366,118 @@ def test_generation(model, tokenizer, test_cases, device):
         print(f"生成: {generated}")
 
 
+def save_model_and_tokenizer(model, tokenizer, config, save_dir, num_epochs, final_loss):
+    """
+    保存训练好的模型和 tokenizer
+
+    Args:
+        model: 训练好的 APT 模型
+        tokenizer: SimpleCharTokenizer_BACKUP 实例
+        config: APTModelConfiguration 实例
+        save_dir: 保存目录
+        num_epochs: 训练的总 epoch 数
+        final_loss: 最终的损失值
+    """
+    import datetime
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 生成带时间戳的文件名
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_filename = f'hlbd_model_{timestamp}.pt'
+    model_path = os.path.join(save_dir, model_filename)
+
+    # 保存模型、tokenizer 和配置
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'tokenizer_char_to_id': tokenizer.char_to_id,
+        'tokenizer_id_to_char': tokenizer.id_to_char,
+        'tokenizer_next_id': tokenizer.next_id,
+        'tokenizer_vocab_size': tokenizer.vocab_size,
+        'config': {
+            'vocab_size': config.vocab_size,
+            'd_model': config.d_model,
+            'max_seq_len': config.max_seq_len,
+            'num_encoder_layers': config.num_encoder_layers,
+            'num_decoder_layers': config.num_decoder_layers,
+            'num_heads': config.num_heads,
+            'd_ff': config.d_ff,
+            'dropout': config.dropout,
+            'use_autopoietic': config.use_autopoietic,
+            'use_dbc_dac': config.use_dbc_dac,
+        },
+        'training_info': {
+            'num_epochs': num_epochs,
+            'final_loss': final_loss,
+            'timestamp': timestamp,
+        }
+    }
+
+    torch.save(checkpoint, model_path)
+
+    print(f"\n💾 模型已保存:")
+    print(f"   路径: {os.path.abspath(model_path)}")
+    print(f"   大小: {os.path.getsize(model_path) / 1024 / 1024:.2f} MB")
+
+    return model_path
+
+
+def load_model_and_tokenizer(model_path, device):
+    """
+    加载已保存的模型和 tokenizer
+
+    Args:
+        model_path: 模型文件路径
+        device: 设备（cuda 或 cpu）
+
+    Returns:
+        model: 加载的 APT 模型
+        tokenizer: 加载的 SimpleCharTokenizer_BACKUP
+        training_info: 训练信息字典
+    """
+    print(f"\n📂 加载模型: {model_path}")
+
+    # 加载 checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # 重建配置
+    config_dict = checkpoint['config']
+    config = APTModelConfiguration(
+        vocab_size=config_dict['vocab_size'],
+        d_model=config_dict['d_model'],
+        max_seq_len=config_dict['max_seq_len'],
+        num_encoder_layers=config_dict['num_encoder_layers'],
+        num_decoder_layers=config_dict['num_decoder_layers'],
+        num_heads=config_dict['num_heads'],
+        d_ff=config_dict['d_ff'],
+        dropout=config_dict['dropout'],
+        use_autopoietic=config_dict['use_autopoietic'],
+        use_dbc_dac=config_dict['use_dbc_dac'],
+    )
+
+    # 重建模型
+    model = APTModel(config).to(device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+
+    # 重建 tokenizer
+    tokenizer = SimpleCharTokenizer_BACKUP()
+    tokenizer.char_to_id = checkpoint['tokenizer_char_to_id']
+    tokenizer.id_to_char = checkpoint['tokenizer_id_to_char']
+    tokenizer.next_id = checkpoint['tokenizer_next_id']
+    tokenizer.vocab_size = checkpoint['tokenizer_vocab_size']
+
+    # 获取训练信息
+    training_info = checkpoint.get('training_info', {})
+
+    print(f"✅ 模型加载成功!")
+    print(f"   训练 epoch: {training_info.get('num_epochs', 'N/A')}")
+    print(f"   最终损失: {training_info.get('final_loss', 'N/A'):.4f}")
+    print(f"   保存时间: {training_info.get('timestamp', 'N/A')}")
+    print(f"   词汇表大小: {len(tokenizer.char_to_id)}")
+
+    return model, tokenizer, training_info
+
+
 def main():
     """主函数"""
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
@@ -483,8 +595,38 @@ def main():
     print(f"   - 分层语言学习帮助快速掌握概念")
     print(f"   - 从emoji/拼音/英文到中文的多层映射")
 
-    return model, tokenizer
+    # 11. 保存模型
+    save_dir = os.path.join(project_root, 'tests', 'saved_models')
+    model_path = save_model_and_tokenizer(
+        model=model,
+        tokenizer=tokenizer,
+        config=config,
+        save_dir=save_dir,
+        num_epochs=num_epochs,
+        final_loss=loss
+    )
+
+    return model, tokenizer, model_path
 
 
 if __name__ == "__main__":
-    model, tokenizer = main()
+    model, tokenizer, model_path = main()
+
+    # 可选：测试加载功能
+    print("\n" + "="*60)
+    print("🔄 测试模型加载功能")
+    print("="*60)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    loaded_model, loaded_tokenizer, training_info = load_model_and_tokenizer(model_path, device)
+
+    # 验证加载的模型
+    test_cases = [
+        ("🌧️", "下雨"),
+        ("❤️", "我爱你"),
+    ]
+
+    print("\n使用加载的模型生成:")
+    test_generation(loaded_model, loaded_tokenizer, test_cases, device)
+
+    print("\n✅ 模型保存和加载功能正常！")

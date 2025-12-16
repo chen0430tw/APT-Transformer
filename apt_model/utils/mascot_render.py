@@ -14,6 +14,7 @@ APT Mascot Renderer (APT 吉祥物渲染器)
 
 import os
 import sys
+import shutil
 from typing import Optional
 
 # 检查是否安装了 PTPF Lite
@@ -31,6 +32,89 @@ try:
     HAS_PTPF = True
 except (ImportError, Exception):
     HAS_PTPF = False
+
+# Optional: numpy for low-cols fusion renderer
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except Exception:
+    HAS_NUMPY = False
+
+
+def _render_halfblock_fused_ansi(image, cols: int, frames: int = 4, samples: int = 5, prefilter: bool = True) -> str:
+    """Low-cols (e.g. 45) detail-preserving downsample using multi-jitter median fusion.
+
+    This is the 'LOVE crater' trick: when spatial bandwidth is too low, avoid mean-pooling.
+    We take several micro-sampled medians (frames) and *average* them into a stable fg/bg.
+    Output is a single static ANSI frame (no animation needed).
+    """
+    if not HAS_NUMPY:
+        raise RuntimeError("numpy not available")
+    from PIL import Image, ImageFilter
+
+    img = image.convert("RGBA")
+    bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    rgb = Image.alpha_composite(bg, img).convert("RGB")
+    if prefilter:
+        rgb = rgb.filter(ImageFilter.UnsharpMask(radius=1, percent=75, threshold=2))
+    rgb_u8 = np.array(rgb, dtype=np.uint8)
+    H, W, _ = rgb_u8.shape
+
+    # terminal char cells are ~2:1 tall (half-block doubles vertical detail)
+    char_aspect = 2.0
+    rows = max(1, int(round((H / W) * cols * (1.0 / char_aspect))))
+    xs = np.linspace(0, W, cols + 1).astype(int)
+    ys = np.linspace(0, H, rows + 1).astype(int)
+
+    def _hash2(i, j, k=0):
+        x = (i * 0x1F1F1F1F) ^ (j * 0x5BD1E995) ^ (k * 0x27D4EB2D)
+        x = (x ^ (x >> 15)) * 0x85EBCA6B
+        x = (x ^ (x >> 13)) * 0xC2B2AE35
+        x = x ^ (x >> 16)
+        return (x & 0xFFFFFFFF) / 2**32
+
+    def _pick_points(x0, x1, y0, y1, n, salt, i, j, k):
+        pts = []
+        w = max(1, (x1 - x0) - 1)
+        h = max(1, (y1 - y0) - 1)
+        for t in range(n):
+            r1 = _hash2(i * 131 + t * 17 + salt, j * 313 + t * 29 + salt, k)
+            r2 = _hash2(i * 911 + t * 23 + salt, j * 719 + t * 31 + salt, k + 7)
+            xx = x0 + int(r1 * w)
+            yy = y0 + int(r2 * h)
+            pts.append((yy, xx))
+        return pts
+
+    lines = []
+    for j in range(rows):
+        y0, y1 = ys[j], ys[j + 1]
+        ym = (y0 + y1) // 2
+        segs = []
+        for i in range(cols):
+            x0, x1 = xs[i], xs[i + 1]
+            if x1 <= x0 or y1 <= y0:
+                fg = bgc = (0, 0, 0)
+            else:
+                # fusion across 'frames'
+                fg_list = []
+                bg_list = []
+                for k in range(frames):
+                    up_pts = _pick_points(x0, x1, y0, ym, samples, 11, i, j, k)
+                    dn_pts = _pick_points(x0, x1, ym, y1, samples, 37, i, j, k)
+                    up = np.array([rgb_u8[yy, xx] for yy, xx in up_pts], dtype=np.uint8)
+                    dn = np.array([rgb_u8[yy, xx] for yy, xx in dn_pts], dtype=np.uint8)
+                    fg_list.append(np.median(up, axis=0))
+                    bg_list.append(np.median(dn, axis=0))
+                fg = tuple(np.clip(np.mean(fg_list, axis=0), 0, 255).astype(np.uint8).tolist())
+                bgc = tuple(np.clip(np.mean(bg_list, axis=0), 0, 255).astype(np.uint8).tolist())
+
+            segs.append(
+                f"\x1b[38;2;{fg[0]};{fg[1]};{fg[2]}m"
+                f"\x1b[48;2;{bgc[0]};{bgc[1]};{bgc[2]}m▀"
+            )
+        lines.append("".join(segs) + "\x1b[0m")
+
+    return "\n".join(lines)
 
 # 检查是否安装了 chafa.py
 try:
@@ -121,11 +205,11 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
                 # 使用 PTPF Lite 渲染
                 # PTPF使用半块字符，适度提升分辨率保持细节但不过大
                 # 建议50-70列以获得良好效果
-                ptpf_cols = min(int(cols * 1.8), 65)  # 适度放大1.8倍或最大65列
+                ptpf_cols = min(cols, 65)  # never exceed terminal width; cap at 65
 
                 cfg = PTPFConfig(
                     cols=ptpf_cols,
-                    char_aspect=1.0,  # PTPF半块渲染不需要字符纵横比调整，在像素域等距缩放
+                    char_aspect=2.0,
                     blur_k=2,  # 减少模糊，保留细节
                     unsharp_amount=0.7,  # 增加锐化
                     sat_k=1.4,  # 增加饱和度
@@ -136,8 +220,13 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
                     hole_amp_B=0.025,
                 )
 
-                # 渲染ANSI输出（使用放大后的cols）
-                ansi_output = ptpf_render_ansi_hpq_sosa(image, cols=ptpf_cols, mode="auto", cfg=cfg)
+                # 渲染ANSI输出
+                # - cols <= 55: use low-cols fusion (detail-preserving, non-scary)
+                # - else: use PTPF (your approved HPQ+SOSA look)
+                if cols <= 55:
+                    ansi_output = _render_halfblock_fused_ansi(image, cols=cols, frames=4, samples=5, prefilter=True)
+                else:
+                    ansi_output = ptpf_render_ansi_hpq_sosa(image, cols=ptpf_cols, mode="auto", cfg=cfg)
 
                 # 打印输出
                 print_func(ansi_output)
@@ -154,7 +243,6 @@ def print_apt_mascot(cols: int = 35, show_banner: bool = True, color_mode: bool 
     # Sixel 模式：使用系统 chafa 命令（更可靠）
     if use_sixel:
         import subprocess
-        import shutil
 
         # 检查系统是否有 chafa 命令（Windows 需要 .exe）
         chafa_cmd = shutil.which("chafa") or shutil.which("chafa.exe")
