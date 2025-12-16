@@ -27,16 +27,20 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.INFO) -> 
 
     # 检查是否设置了APT_NO_STDOUT_ENCODING环境变量
     no_encoding = os.environ.get("APT_NO_STDOUT_ENCODING", "0") == "1"
-    
+
     # 创建控制台处理器（根据环境变量决定是否指定UTF-8编码）
     if no_encoding:
         # 不指定编码，避免Windows中文编码问题
         console_handler = logging.StreamHandler(sys.stdout)
     else:
-        # 使用UTF-8编码
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+        # 使用UTF-8编码（在 Windows WebUI 环境中，fileno() 可能无效，需要 try-except）
+        try:
+            # 尝试重新打开 stdout 以支持 UTF-8
+            stdout_utf8 = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1, closefd=False)
+            console_handler = logging.StreamHandler(stdout_utf8)
+        except (OSError, AttributeError, ValueError):
+            # 如果失败（如 WebUI 环境），直接使用 sys.stdout
+            console_handler = logging.StreamHandler(sys.stdout)
     
     console_handler.setLevel(level)
     
@@ -108,16 +112,20 @@ def setup_colored_logging(log_file: Optional[str] = None, level: int = logging.I
 
     # 检查是否设置了APT_NO_STDOUT_ENCODING环境变量
     no_encoding = os.environ.get("APT_NO_STDOUT_ENCODING", "0") == "1"
-    
+
     # 创建控制台处理器（根据环境变量决定是否指定UTF-8编码）
     if no_encoding:
         # 不指定编码，避免Windows中文编码问题
         console_handler = logging.StreamHandler(sys.stdout)
     else:
-        # 使用UTF-8编码
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+        # 使用UTF-8编码（在 Windows WebUI 环境中，fileno() 可能无效，需要 try-except）
+        try:
+            # 尝试重新打开 stdout 以支持 UTF-8
+            stdout_utf8 = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1, closefd=False)
+            console_handler = logging.StreamHandler(stdout_utf8)
+        except (OSError, AttributeError, ValueError):
+            # 如果失败（如 WebUI 环境），直接使用 sys.stdout
+            console_handler = logging.StreamHandler(sys.stdout)
         
     console_handler.setLevel(level)
     
