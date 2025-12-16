@@ -935,9 +935,10 @@ def create_training_launcher_tab(webui_state):
                 log_output = gr.Textbox(
                     label="终端输出",
                     lines=20,
+                    max_lines=20,  # 🔧 修复：固定最大高度为20行，超出内容在框内滚动
                     interactive=False,
-                    max_lines=1000,
-                    autoscroll=False  # 改为默认不自动滚动
+                    autoscroll=False,  # 不自动滚动到底部
+                    show_copy_button=True  # 方便复制日志
                 )
 
         # ============ 事件处理函数 ============
