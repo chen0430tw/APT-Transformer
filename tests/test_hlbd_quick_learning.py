@@ -244,6 +244,81 @@ def create_small_hlbd_config(vocab_size):
 
 from tqdm import tqdm # 确保文件开头导入了 tqdm
 
+
+def generate_with_vocab_mask(model, input_ids, valid_token_ids, max_length,
+                             repetition_penalty, pad_token_id, device,
+                             temperature=1.0, top_p=0.9):
+    """
+    使用 vocab mask 限制生成范围的自定义生成函数
+
+    Args:
+        model: APT 模型
+        input_ids: 输入 token IDs
+        valid_token_ids: 允许的 token ID 集合
+        max_length: 最大长度
+        repetition_penalty: 重复惩罚
+        pad_token_id: padding ID
+        device: 设备
+        temperature: 采样温度
+        top_p: nucleus 采样参数
+    """
+    model.eval()
+    generated = input_ids.clone()
+
+    # 创建 vocab mask（只允许生成已知的 token）
+    vocab_size = model.config.vocab_size
+    vocab_mask = torch.zeros(vocab_size, dtype=torch.bool, device=device)
+    for valid_id in valid_token_ids:
+        if 0 <= valid_id < vocab_size:
+            vocab_mask[valid_id] = True
+
+    with torch.no_grad():
+        for _ in range(max_length - input_ids.size(1)):
+            # 前向传播
+            outputs = model(generated, generated)
+            logits = outputs[:, -1, :]  # [batch_size, vocab_size]
+
+            # 🔧 应用 vocab mask - 只允许生成已知的 token
+            logits[:, ~vocab_mask] = -float('inf')
+
+            # 重复惩罚
+            if repetition_penalty != 1.0:
+                for token_id in set(generated[0].tolist()):
+                    if token_id in valid_token_ids:
+                        logits[0, token_id] /= repetition_penalty
+
+            # 温度调整
+            logits = logits / max(temperature, 1e-5)
+
+            # Top-p 采样
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+            cumsum_probs = torch.cumsum(sorted_probs, dim=-1)
+
+            # 找到累积概率超过 top_p 的位置
+            remove_mask = cumsum_probs > top_p
+            remove_mask[:, 1:] = remove_mask[:, :-1].clone()
+            remove_mask[:, 0] = False
+
+            # 移除低概率的 token
+            sorted_probs[remove_mask] = 0.0
+            probs_sum = sorted_probs.sum(dim=-1, keepdim=True)
+            if probs_sum > 0:
+                sorted_probs = sorted_probs / probs_sum
+
+            # 采样
+            try:
+                next_token_idx = torch.multinomial(sorted_probs, num_samples=1)
+                next_token = sorted_indices.gather(-1, next_token_idx)
+            except:
+                # 如果采样失败，使用贪心解码
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+
+            generated = torch.cat([generated, next_token], dim=1)
+
+    return generated
+
+
 def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4): # <--- 【关键修改 1】接收 accumulation_steps
     """训练一个epoch (使用梯度累积)"""
     model.train()
@@ -310,7 +385,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
 
 def generate_text(model, tokenizer, input_text, device, max_length=50, repetition_penalty=1.5):
     """
-    生成文本（修复：支持 emoji，去除输入复读）
+    生成文本（修复：支持 emoji，去除输入复读，限制 vocab 范围）
     """
     model.eval()
 
@@ -332,14 +407,19 @@ def generate_text(model, tokenizer, input_text, device, max_length=50, repetitio
     bos_tensor = torch.tensor([[bos_id]], device=device)
     initial_ids = torch.cat([bos_tensor, input_ids], dim=1)
 
-    # 4. 调用 APTModel 自身的 generate 方法
-    generated_ids = model.generate(
+    # 4. 🔧 【修复】使用自定义生成，限制 vocab 范围
+    # 只允许生成 tokenizer 已知的 token IDs
+    valid_ids = set(tokenizer.id_to_char.keys())
+    max_valid_id = max(valid_ids)
+
+    generated_ids = generate_with_vocab_mask(
+        model=model,
         input_ids=initial_ids,
+        valid_token_ids=valid_ids,
         max_length=max_length + initial_ids.size(1),
         repetition_penalty=repetition_penalty,
-        do_sample=True,
-        num_beams=1,
-        pad_token_id=pad_id
+        pad_token_id=pad_id,
+        device=device
     )
 
     # 5. 【修复】只解码新生成的部分，去掉输入
