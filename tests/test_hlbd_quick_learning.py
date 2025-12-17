@@ -590,7 +590,7 @@ def main():
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
     print(f"PyTorch版本: {torch.__version__}")
 
-    ACCUMULATION_STEPS = 2  # 优化：batch_size=16, 16 * 2 = 32 的有效批次大小（从8减少到2）
+    ACCUMULATION_STEPS = 4  # 优化：batch_size=8, 8 * 4 = 32 的有效批次大小
 
     # 自动检测：有显卡就用显卡，没有才用 CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -622,10 +622,10 @@ def main():
     # 4. 创建数据集
     print(f"\n📊 创建数据集...")
     dataset = SimpleDialogueDataset(training_pairs, tokenizer)
-    # 优化：增大batch_size + 多线程加载
+    # 优化：适度增大batch_size + 多线程加载
     dataloader = DataLoader(
         dataset,
-        batch_size=16,  # 从4增加到16（4倍）
+        batch_size=8,  # 从4增加到8（2倍，平衡速度和稳定性）
         shuffle=True,
         num_workers=4,  # 使用4个工作进程并行加载
         pin_memory=True,  # 固定内存，加速CPU→GPU传输
@@ -650,7 +650,8 @@ def main():
     print(f"   配置: d_model={config.d_model}, layers={config.num_encoder_layers}")
 
     # 6. 创建优化器
-    optimizer = optim.Adam(model.parameters(), lr=5e-5)
+    # 优化：学习率根据batch_size调整（batch从4→8，lr也从5e-5→1e-4）
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
     # 7. 注册DBC hooks
