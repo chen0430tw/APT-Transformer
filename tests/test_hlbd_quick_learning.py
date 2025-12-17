@@ -334,17 +334,12 @@ def generate_with_vocab_mask(model, input_ids, valid_token_ids, max_length,
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4):
-    """训练一个epoch（使用梯度累积 + 混合精度训练）"""
-    from torch.cuda.amp import autocast, GradScaler
-
+    """训练一个epoch（使用梯度累积）"""
     model.train()
     total_loss = 0
     total_steps = 0
 
     ACCUMULATION_STEPS = accumulation_steps
-
-    # 创建梯度缩放器（用于混合精度训练）
-    scaler = GradScaler(enabled=(device.type == 'cuda'))
 
     progress_bar = tqdm(
         dataloader,
@@ -356,38 +351,30 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
 
     for i, (src_ids, tgt_ids) in enumerate(progress_bar):
 
-        # 异步数据传输（加速CPU→GPU）
-        src_ids = src_ids.to(device, non_blocking=True)
-        tgt_ids = tgt_ids.to(device, non_blocking=True)
+        # 数据传输到设备
+        src_ids = src_ids.to(device)
+        tgt_ids = tgt_ids.to(device)
 
-        # 🚀 混合精度：使用autocast进行前向传播
-        with autocast(enabled=(device.type == 'cuda')):
-            # 前向传播
-            output = model(src_ids, tgt_ids[:, :-1])
+        # 前向传播
+        output = model(src_ids, tgt_ids[:, :-1])
 
-            # 计算损失
-            loss = criterion(
-                output.reshape(-1, output.size(-1)),
-                tgt_ids[:, 1:].reshape(-1)
-            )
+        # 计算损失
+        loss = criterion(
+            output.reshape(-1, output.size(-1)),
+            tgt_ids[:, 1:].reshape(-1)
+        )
 
-            # 损失归一化
-            loss = loss / ACCUMULATION_STEPS
+        # 损失归一化
+        loss = loss / ACCUMULATION_STEPS
 
-        # 🚀 混合精度：使用scaler进行反向传播
-        scaler.scale(loss).backward()
+        # 反向传播
+        loss.backward()
 
         # 条件优化和清零（每N步执行一次）
         if (i + 1) % ACCUMULATION_STEPS == 0:
-            # 🚀 混合精度：unscale梯度后再clip
-            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-            # 🚀 混合精度：使用scaler更新权重
-            scaler.step(optimizer)
-            scaler.update()
-
-            optimizer.zero_grad(set_to_none=True)  # 更快的梯度清零
+            optimizer.step()
+            optimizer.zero_grad()
 
         total_loss += loss.item() * ACCUMULATION_STEPS
         total_steps += 1
@@ -398,11 +385,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
     # 【最后一步清理】处理剩余的累积梯度
     try:
         if (i + 1) % ACCUMULATION_STEPS != 0:
-            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
+            optimizer.step()
+            optimizer.zero_grad()
     except NameError:
          # 如果i没定义（比如dataloader是空的），则忽略清理
          pass
@@ -650,7 +635,7 @@ def main():
     print(f"   配置: d_model={config.d_model}, layers={config.num_encoder_layers}")
 
     # 6. 创建优化器
-    # 优化：学习率根据batch_size调整（batch从4→8，lr也从5e-5→1e-4）
+    # 使用适中的学习率（batch=8时的平衡值）
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
