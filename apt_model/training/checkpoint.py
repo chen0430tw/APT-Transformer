@@ -99,8 +99,7 @@ def _load_directory_checkpoint(path, device):
 
 def _load_single_file_checkpoint(path, device):
     """加载单文件 checkpoint (HLBD 格式)"""
-    from apt_model.config.apt_config import APTConfig
-    from apt_model.modeling.apt_model import APTModel
+    from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
 
     # 加载 checkpoint
     checkpoint = torch.load(path, map_location=device)
@@ -176,7 +175,7 @@ def _load_single_file_checkpoint(path, device):
 
     # 重建配置
     config_dict = checkpoint['config']
-    config = APTConfig(
+    config = APTModelConfiguration(
         vocab_size=config_dict['vocab_size'],
         d_model=config_dict['d_model'],
         max_seq_len=config_dict['max_seq_len'],
