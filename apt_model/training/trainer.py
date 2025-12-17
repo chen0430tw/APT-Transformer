@@ -636,28 +636,6 @@ def _test_generation_after_epoch(model, tokenizer, logger=None, language="en"):
 
 def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="en"):
     """比较训练前后的模型输出"""
-    # 添加诊断打印
-    #print("\n===== 开始诊断 _compare_model_outputs =====")
-    #print(f"未训练模型类型: {type(untrained_model)}")
-    #print(f"已训练模型类型: {type(trained_model)}")
-    #print("未训练模型是否有generate方法:", hasattr(untrained_model, 'generate'))
-    #print("已训练模型是否有generate方法:", hasattr(trained_model, 'generate'))
-    
-    # 检查generate_natural_text函数
-    #import inspect
-    #if 'generate_natural_text' in globals():
-        #print("generate_natural_text函数签名:", inspect.signature(generate_natural_text))
-    #else:
-        #print("generate_natural_text函数不存在于全局空间")
-    #print("===== 诊断结束 =====\n")
-    if not settings.get_debug_enabled():
-        # 非Debug模式下不显示详细对比
-        return
-
-    debug_print("\n====================")
-    debug_print("训练前后效果对比")
-    debug_print("====================")
-
     # 根据语言选择测试提示
     if language == "zh":
         test_prompts = [
@@ -681,33 +659,48 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
     untrained_scores = []
     trained_scores = []
 
+    # Debug模式下显示详细对比
+    show_details = settings.get_debug_enabled()
+
+    if show_details:
+        debug_print("\n====================")
+        debug_print("训练前后效果对比")
+        debug_print("====================")
+
     for prompt in test_prompts:
-        debug_print(f"\n提示: '{prompt}'")
+        if show_details:
+            debug_print(f"\n提示: '{prompt}'")
+
         with torch.no_grad():
             untrained_text, _, _, _ = generate_natural_text(untrained_model, tokenizer, prompt, max_steps=20)
             untrained_score, untrained_feedback = evaluate_text_quality(untrained_text)
             untrained_scores.append(untrained_score)
-        debug_print(f"未训练模型: '{untrained_text}'")
-        debug_print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
+
+        if show_details:
+            debug_print(f"未训练模型: '{untrained_text}'")
+            debug_print(f"质量评分: {untrained_score}/100 - {untrained_feedback}")
 
         with torch.no_grad():
             trained_text, _, _, _ = generate_natural_text(trained_model, tokenizer, prompt, max_steps=20)
             trained_score, trained_feedback = evaluate_text_quality(trained_text)
             trained_scores.append(trained_score)
-        debug_print(f"训练后模型: '{trained_text}'")
-        debug_print(f"质量评分: {trained_score}/100 - {trained_feedback}")
-        debug_print("-" * 50)
+
+        if show_details:
+            debug_print(f"训练后模型: '{trained_text}'")
+            debug_print(f"质量评分: {trained_score}/100 - {trained_feedback}")
+            debug_print("-" * 50)
 
     avg_untrained = sum(untrained_scores) / len(untrained_scores)
     avg_trained = sum(trained_scores) / len(trained_scores)
     improvement = avg_trained - avg_untrained
 
+    # 【始终显示】最终评估和安柏评分
     info_print(f"\n整体评估:")
     info_print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
     info_print(f"训练后模型平均质量: {avg_trained:.2f}/100")
     info_print(f"质量提升: {improvement:.2f} 分")
 
-    # 【修复逻辑】增加对"退步"的判断
+    # 安柏的最终评价（始终显示）
     if improvement < -5:
         info_print("\n安柏：奇怪……怎么感觉它变笨了？（质量下降，建议检查超参数）")
     elif improvement < 0:
