@@ -668,12 +668,21 @@ def main():
     # 4. 创建数据集
     print(f"\n📊 创建数据集...")
     dataset = SimpleDialogueDataset(training_pairs, tokenizer)
+
+    # 【关键修复】预填充词汇表，避免多进程陷阱
+    # 在多进程 DataLoader 启动前，让主进程的 tokenizer 学习所有字符
+    print(f"\n📝 预填充词汇表（避免多进程陷阱）...")
+    for src, tgt in training_pairs:
+        _ = tokenizer.encode(src)
+        _ = tokenizer.encode(tgt)
+    print(f"   词汇表预填充完成: {len(tokenizer.char_to_id)} 个token")
+
     # 优化：保持原始batch_size，只添加多线程加载
     dataloader = DataLoader(
         dataset,
         batch_size=4,  # 保持原始batch_size=4（稳定性优先）
         shuffle=True,
-        num_workers=4,  # 使用4个工作进程并行加载
+        num_workers=4,  # 使用4个工作进程并行加载（现在安全了）
         pin_memory=True,  # 固定内存，加速CPU→GPU传输
         persistent_workers=True  # 保持worker存活，避免重复创建
     )
