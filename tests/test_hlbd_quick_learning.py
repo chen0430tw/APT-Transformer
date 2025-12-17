@@ -23,6 +23,8 @@ from apt_model.modeling.apt_model import (
     DBCDAC_Optimizer,
     create_gradient_stabilizer_hook
 )
+from apt_model.generation.generator import generate_natural_text
+from apt_model.generation.evaluator import evaluate_text_quality
 
 
 class SimpleCharTokenizer_BACKUP:
@@ -570,6 +572,62 @@ def load_model_and_tokenizer(model_path, device):
     return model, tokenizer, training_info
 
 
+def evaluate_hlbd_model(untrained_model, trained_model, tokenizer, device):
+    """评估HLBD训练前后的模型质量"""
+    # 测试提示（中文为主）
+    test_prompts = [
+        "🌧️",  # emoji测试
+        "❤️",  # emoji测试
+        "It's raining",  # 英文测试
+        "wǒ ài nǐ",  # 拼音测试
+        "愛してる",  # 日文测试
+        "사랑해",  # 韩文测试
+    ]
+
+    untrained_model.eval()
+    trained_model.eval()
+    untrained_scores = []
+    trained_scores = []
+
+    print(f"\n" + "="*60)
+    print("安柏の評価 | Amber's Evaluation")
+    print("="*60)
+
+    for prompt in test_prompts:
+        with torch.no_grad():
+            # 未训练模型
+            untrained_text, _, _, _ = generate_natural_text(untrained_model, tokenizer, prompt, max_steps=15)
+            untrained_score, untrained_feedback = evaluate_text_quality(untrained_text)
+            untrained_scores.append(untrained_score)
+
+            # 训练后模型
+            trained_text, _, _, _ = generate_natural_text(trained_model, tokenizer, prompt, max_steps=15)
+            trained_score, trained_feedback = evaluate_text_quality(trained_text)
+            trained_scores.append(trained_score)
+
+    avg_untrained = sum(untrained_scores) / len(untrained_scores) if untrained_scores else 0
+    avg_trained = sum(trained_scores) / len(trained_scores) if trained_scores else 0
+    improvement = avg_trained - avg_untrained
+
+    # 最终评估
+    print(f"\n整体评估:")
+    print(f"未训练模型平均质量: {avg_untrained:.2f}/100")
+    print(f"训练后模型平均质量: {avg_trained:.2f}/100")
+    print(f"质量提升: {improvement:.2f} 分")
+
+    # 安柏的最终评价
+    if improvement < -5:
+        print("\n安柏：奇怪……怎么感觉它变笨了？（质量下降，建议检查超参数）")
+    elif improvement < 0:
+        print("\n安柏：看起来效果差不多，也许还需要更多训练数据？")
+    elif avg_trained < 50:
+        print("\n安柏：虽然有进步，但还远远不够哦！继续加油！")
+    else:
+        print("\n安柏：训练完成得不错！侦察骑士为你点赞！")
+
+    print("="*60)
+
+
 def main():
     """主函数"""
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
@@ -634,6 +692,11 @@ def main():
     print(f"   模型参数: {total_params:,}")
     print(f"   配置: d_model={config.d_model}, layers={config.num_encoder_layers}")
 
+    # 保存未训练模型的副本用于评估对比
+    untrained_model = APTModel(config).to(device)
+    untrained_model.load_state_dict(model.state_dict())
+    untrained_model.eval()
+
     # 6. 创建优化器
     # 使用原始学习率（稳定性优先）
     optimizer = optim.Adam(model.parameters(), lr=5e-5)
@@ -687,6 +750,12 @@ def main():
     ]
 
     test_generation(model, tokenizer, final_test_cases, device)
+
+    # 9.5 安柏评估
+    try:
+        evaluate_hlbd_model(untrained_model, model, tokenizer, device)
+    except Exception as e:
+        print(f"\n⚠️ 安柏评估出错: {e}")
 
     # 10. 总结
     print(f"\n" + "="*60)

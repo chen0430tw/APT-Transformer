@@ -17,6 +17,13 @@ import sys
 import shutil
 from typing import Optional
 
+# 导入设置管理器用于debug模式控制
+try:
+    from apt_model.config.settings_manager import settings
+    HAS_SETTINGS = True
+except ImportError:
+    HAS_SETTINGS = False
+
 # 检查是否安装了 PTPF Lite
 try:
     # 尝试从scripts目录导入PTPF模块
@@ -39,6 +46,13 @@ try:
     HAS_NUMPY = True
 except Exception:
     HAS_NUMPY = False
+
+
+def _is_debug_enabled():
+    """检查是否启用debug模式"""
+    if HAS_SETTINGS:
+        return settings.get_debug_enabled()
+    return False
 
 
 def _render_halfblock_fused_ansi(image, cols: int, frames: int = 4, samples: int = 5, prefilter: bool = True) -> str:
@@ -269,7 +283,8 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
                     chafa_cmd = matches[0]
                     break
 
-        print_func(f"[DEBUG] 查找系统 chafa: {chafa_cmd}")
+        if _is_debug_enabled():
+            print_func(f"[DEBUG] 查找系统 chafa: {chafa_cmd}")
         if chafa_cmd:
             if show_banner:
                 print_func("\n" + "="*70)
@@ -342,7 +357,8 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
             config.width = cols
             config.height = calculated_height
             config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SIXELS
-            print_func(f"[DEBUG] Sixel 模式: {cols}x{calculated_height} px")
+            if _is_debug_enabled():
+                print_func(f"[DEBUG] Sixel 模式: {cols}x{calculated_height} px")
         else:
             # 字符艺术模式
             # 终端字符的纵横比（字符宽度/高度），通常字符高度是宽度的2倍
@@ -357,10 +373,11 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
             config.pixel_mode = PixelMode.CHAFA_PIXEL_MODE_SYMBOLS
 
         # 【调试信息】
-        print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
-        print_func(f"[DEBUG] Canvas: {config.width}x{config.height}")
-        print_func(f"[DEBUG] 像素类型: {image.pixel_type}")
-        print_func(f"[DEBUG] Rowstride: {image.rowstride}")
+        if _is_debug_enabled():
+            print_func(f"[DEBUG] 原图尺寸: {image.width}x{image.height}")
+            print_func(f"[DEBUG] Canvas: {config.width}x{config.height}")
+            print_func(f"[DEBUG] 像素类型: {image.pixel_type}")
+            print_func(f"[DEBUG] Rowstride: {image.rowstride}")
 
         # 创建画布并绘制
         canvas = Canvas(config)
@@ -381,30 +398,36 @@ def print_apt_mascot(cols: int = 50, show_banner: bool = True, color_mode: bool 
             # 创建支持 Sixel 的终端信息
             term_db = TermDb()
             term_info = term_db.detect()
-            print_func(f"[DEBUG] 检测到终端: {term_info}")
+            if _is_debug_enabled():
+                print_func(f"[DEBUG] 检测到终端: {term_info}")
             output = canvas.print(term_info=term_info)
         elif use_sixel:
             # 没有 TermDb，使用 fallback（假设终端支持 Sixel）
-            print_func("[DEBUG] 使用 fallback 模式（假设终端支持 Sixel）")
+            if _is_debug_enabled():
+                print_func("[DEBUG] 使用 fallback 模式（假设终端支持 Sixel）")
             # 直接输出，假设终端支持
             output = canvas.print()
         else:
             output = canvas.print()
 
         # 【调试信息】原始输出
-        print_func(f"[DEBUG] 原始输出长度: {len(output)} bytes")
-        print_func(f"[DEBUG] 原始输出前100字节: {output[:100]}")
+        if _is_debug_enabled():
+            print_func(f"[DEBUG] 原始输出长度: {len(output)} bytes")
+            print_func(f"[DEBUG] 原始输出前100字节: {output[:100]}")
 
         decoded_output = output.decode()
-        print_func(f"[DEBUG] 解码后长度: {len(decoded_output)} chars")
+
+        if _is_debug_enabled():
+            print_func(f"[DEBUG] 解码后长度: {len(decoded_output)} chars")
 
         # 在每一行末尾添加颜色重置，防止背景色溢出
         lines = decoded_output.split('\n')
 
         # 【调试信息】打印输出统计
-        print_func(f"[DEBUG] 输出行数: {len(lines)}")
-        print_func(f"[DEBUG] 非空行数: {len([l for l in lines if l.strip()])}")
-        print_func("=" * 70)
+        if _is_debug_enabled():
+            print_func(f"[DEBUG] 输出行数: {len(lines)}")
+            print_func(f"[DEBUG] 非空行数: {len([l for l in lines if l.strip()])}")
+            print_func("=" * 70)
 
         # 逐行打印，避免单次 print 输出过长导致截断
         for line in lines:
