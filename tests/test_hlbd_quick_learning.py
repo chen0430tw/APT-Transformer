@@ -197,7 +197,7 @@ def create_training_pairs(samples):
 
         # 6. 韩文 -> 中文
         if 'level_8' in sample and 'level_6' in sample:
-            korean = sample['level_8'].get('韩文', '')
+            korean = sample['level_8'].get('韩문', sample['level_8'].get('韩文', ''))  # 兼容两种键名
             chinese = sample['level_6'].get('中文', '')
             if korean and chinese:
                 pairs.append((f"[KR] {korean}", chinese))
