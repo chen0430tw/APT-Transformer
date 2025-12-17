@@ -31,8 +31,10 @@ class SimpleCharTokenizer_BACKUP:
     """简单的字符级分词器"""
     def __init__(self):
         # 创建一个基础字符表（包括中文、英文、emoji等）
+        # 添加语言标签用于区分不同输入类型
         self.vocab = {
             '[PAD]': 0, '[UNK]': 1, '[BOS]': 2, '[EOS]': 3,
+            '[EMOJI]': 4, '[PHRASE]': 5, '[EN]': 6, '[PY]': 7, '[JP]': 8, '[KR]': 9,
         }
         self.pad_token_id = 0
         self.unk_token_id = 1
@@ -43,7 +45,7 @@ class SimpleCharTokenizer_BACKUP:
         # 添加常用字符
         self.char_to_id = self.vocab.copy()
         self.id_to_char = {v: k for k, v in self.vocab.items()}
-        self.next_id = 4
+        self.next_id = 10  # 从10开始，因为0-9已被特殊token占用
 
     def _get_or_add_char(self, char):
         """获取字符ID，如果不存在则添加"""
@@ -163,44 +165,44 @@ def create_training_pairs(samples):
             emoji = sample['level_1'].get('emoji', '')
             chinese = sample['level_6'].get('中文', '')
             if emoji and chinese:
-                pairs.append((emoji, chinese))
+                pairs.append((f"[EMOJI] {emoji}", chinese))
 
         # 2. 短语 -> 中文
         if 'level_2' in sample and 'level_6' in sample:
             phrase = sample['level_2'].get('短语', '')
             chinese = sample['level_6'].get('中文', '')
             if phrase and chinese:
-                pairs.append((phrase, chinese))
+                pairs.append((f"[PHRASE] {phrase}", chinese))
 
         # 3. 英文 -> 中文
         if 'level_5' in sample and 'level_6' in sample:
             english = sample['level_5'].get('英文', '')
             chinese = sample['level_6'].get('中文', '')
             if english and chinese:
-                pairs.append((english, chinese))
+                pairs.append((f"[EN] {english}", chinese))
 
         # 4. 拼音 -> 中文
         if 'level_4' in sample and 'level_6' in sample:
             pinyin = sample['level_4'].get('拼音', '')
             chinese = sample['level_6'].get('中文', '')
             if pinyin and chinese:
-                pairs.append((pinyin, chinese))
+                pairs.append((f"[PY] {pinyin}", chinese))
 
         # 5. 日文 -> 中文
         if 'level_7' in sample and 'level_6' in sample:
             japanese = sample['level_7'].get('日文', '')
             chinese = sample['level_6'].get('中文', '')
             if japanese and chinese:
-                pairs.append((japanese, chinese))
+                pairs.append((f"[JP] {japanese}", chinese))
 
         # 6. 韩文 -> 中文
         if 'level_8' in sample and 'level_6' in sample:
             korean = sample['level_8'].get('韩文', '')
             chinese = sample['level_6'].get('中文', '')
             if korean and chinese:
-                pairs.append((korean, chinese))
+                pairs.append((f"[KR] {korean}", chinese))
 
-    print(f"   创建了 {len(pairs)} 个训练对")
+    print(f"   创建了 {len(pairs)} 个训练对（带语言标签）")
     return pairs
 
 
@@ -574,14 +576,14 @@ def load_model_and_tokenizer(model_path, device):
 
 def evaluate_hlbd_model(untrained_model, trained_model, tokenizer, device):
     """评估HLBD训练前后的模型质量"""
-    # 测试提示（中文为主）
+    # 测试提示（带语言标签）
     test_prompts = [
-        "🌧️",  # emoji测试
-        "❤️",  # emoji测试
-        "It's raining",  # 英文测试
-        "wǒ ài nǐ",  # 拼音测试
-        "愛してる",  # 日文测试
-        "사랑해",  # 韩文测试
+        "[EMOJI] 🌧️",  # emoji测试
+        "[EMOJI] ❤️",  # emoji测试
+        "[EN] It's raining",  # 英文测试
+        "[PY] wǒ ài nǐ",  # 拼音测试
+        "[JP] 愛してる",  # 日文测试
+        "[KR] 사랑해",  # 韩文测试
     ]
 
     untrained_model.eval()
@@ -722,11 +724,11 @@ def main():
         # 每5个epoch测试一次
         if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
             test_cases = [
-                ("🌧️", "下雨"),
-                ("❤️", "我爱你"),
-                ("I love you", "我爱你"),
-                ("愛してる", "我爱你"),  # 日文测试
-                ("사랑해", "我爱你"),  # 韩文测试
+                ("[EMOJI] 🌧️", "下雨"),
+                ("[EMOJI] ❤️", "我爱你"),
+                ("[EN] I love you", "我爱你"),
+                ("[JP] 愛してる", "我爱你"),  # 日文测试
+                ("[KR] 사랑해", "我爱你"),  # 韩文测试
             ]
             test_generation(model, tokenizer, test_cases, device)
 
@@ -736,17 +738,17 @@ def main():
     print("="*60)
 
     final_test_cases = [
-        ("🌧️", "下雨"),
-        ("❤️", "我爱你"),
-        ("🍽️", "吃饭"),
-        ("📖", "看书"),
-        ("I love you", "我爱你"),
-        ("It's raining", "下雨"),
-        ("wǒ ài nǐ", "我爱你"),
-        ("愛してる", "我爱你"),  # 日文
-        ("雨が降っています", "下雨"),  # 日文
-        ("사랑해", "我爱你"),  # 韩文
-        ("비가 오고 있어요", "下雨"),  # 韩文
+        ("[EMOJI] 🌧️", "下雨"),
+        ("[EMOJI] ❤️", "我爱你"),
+        ("[EMOJI] 🍽️", "吃饭"),
+        ("[EMOJI] 📖", "看书"),
+        ("[EN] I love you", "我爱你"),
+        ("[EN] It's raining", "下雨"),
+        ("[PY] wǒ ài nǐ", "我爱你"),
+        ("[JP] 愛してる", "我爱你"),  # 日文
+        ("[JP] 雨が降っています", "下雨"),  # 日文
+        ("[KR] 사랑해", "我爱你"),  # 韩文
+        ("[KR] 비가 오고 있어요", "下雨"),  # 韩文
     ]
 
     test_generation(model, tokenizer, final_test_cases, device)
@@ -798,8 +800,8 @@ if __name__ == "__main__":
 
     # 验证加载的模型
     test_cases = [
-        ("🌧️", "下雨"),
-        ("❤️", "我爱你"),
+        ("[EMOJI] 🌧️", "下雨"),
+        ("[EMOJI] ❤️", "我爱你"),
     ]
 
     print("\n使用加载的模型生成:")
