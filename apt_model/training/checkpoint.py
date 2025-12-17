@@ -35,11 +35,15 @@ def save_model(model, tokenizer, path, config=None):
 def load_model(path, device=None):
     """
     加载模型、分词器和配置
-    
+
+    支持两种格式:
+    1. 目录格式: 包含 config.json, model.pt, tokenizer/ 等文件
+    2. 单文件格式: .pt checkpoint 文件 (HLBD 格式)
+
     参数:
-        path: 模型路径
+        path: 模型路径（目录或 .pt 文件）
         device: 计算设备
-        
+
     返回:
         tuple: (model, tokenizer, config)
     """
@@ -47,32 +51,149 @@ def load_model(path, device=None):
     from apt_model.config.apt_config import APTConfig
     from apt_model.modeling.apt_model import APTLargeModel
     from apt_model.utils import get_device
-    
+
     if device is None:
         device = get_device()
-    
+
+    # 检测路径类型
+    if os.path.isfile(path) and path.endswith('.pt'):
+        # 单文件格式 (HLBD checkpoint)
+        return _load_single_file_checkpoint(path, device)
+    elif os.path.isdir(path):
+        # 目录格式
+        return _load_directory_checkpoint(path, device)
+    else:
+        raise ValueError(f"不支持的模型路径格式: {path}")
+
+
+def _load_directory_checkpoint(path, device):
+    """加载目录格式的模型"""
+    from transformers import GPT2Tokenizer
+    from apt_model.config.apt_config import APTConfig
+    from apt_model.modeling.apt_model import APTLargeModel
+
     # 加载配置
     config_path = os.path.join(path, "config.json")
     with open(config_path, 'r') as f:
         config_dict = json.load(f)
-    
+
     config = APTConfig.from_dict(config_dict)
-    
+
     # 创建模型
     model = APTLargeModel(config)
-    
+
     # 加载模型权重
     model_path = os.path.join(path, "model.pt")
     model.load_state_dict(torch.load(model_path, map_location=device))
     model = model.to(device)
-    
+
     # 加载分词器
     tokenizer_path = os.path.join(path, "tokenizer")
     tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_path)
-    
+
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-    
+
+    return model, tokenizer, config
+
+
+def _load_single_file_checkpoint(path, device):
+    """加载单文件 checkpoint (HLBD 格式)"""
+    from apt_model.config.apt_config import APTConfig
+    from apt_model.modeling.apt_model import APTModel
+
+    # 加载 checkpoint
+    checkpoint = torch.load(path, map_location=device)
+
+    # 重建 tokenizer (SimpleCharTokenizer_BACKUP)
+    class SimpleCharTokenizer:
+        """简单的字符级分词器 (兼容 HLBD)"""
+        def __init__(self, char_to_id, id_to_char, next_id, vocab_size):
+            self.char_to_id = char_to_id
+            self.id_to_char = id_to_char
+            self.next_id = next_id
+            self.vocab_size = vocab_size
+            self.pad_token_id = 0
+            self.unk_token_id = 1
+            self.bos_token_id = 2
+            self.eos_token_id = 3
+
+        def encode(self, text, return_tensors=None):
+            """编码文本"""
+            ids = [self.bos_token_id]
+            for char in text:
+                ids.append(self.char_to_id.get(char, self.unk_token_id))
+            ids.append(self.eos_token_id)
+
+            if return_tensors == 'pt':
+                return torch.tensor([ids])
+            return ids
+
+        def decode(self, ids, skip_special_tokens=True):
+            """解码ID序列"""
+            if isinstance(ids, torch.Tensor):
+                ids = ids.tolist()
+
+            # 移除批次维度
+            if isinstance(ids[0], list):
+                ids = ids[0]
+
+            chars = []
+            for id in ids:
+                if skip_special_tokens and id in [0, 1, 2, 3]:
+                    continue
+                char = self.id_to_char.get(id, '')
+                if char and not char.startswith('['):
+                    chars.append(char)
+
+            return ''.join(chars)
+
+        def __call__(self, text, max_length=64, padding='max_length', truncation=True, return_tensors='pt'):
+            """分词接口"""
+            ids = []
+            for char in text:
+                ids.append(self.char_to_id.get(char, self.unk_token_id))
+
+            if truncation and len(ids) > max_length - 2:
+                ids = ids[:max_length - 2]
+
+            ids = [self.bos_token_id] + ids + [self.eos_token_id]
+
+            if padding == 'max_length':
+                while len(ids) < max_length:
+                    ids.append(self.pad_token_id)
+
+            if return_tensors == 'pt':
+                return {'input_ids': torch.tensor([ids])}
+            return {'input_ids': ids}
+
+    tokenizer = SimpleCharTokenizer(
+        char_to_id=checkpoint['tokenizer_char_to_id'],
+        id_to_char=checkpoint['tokenizer_id_to_char'],
+        next_id=checkpoint['tokenizer_next_id'],
+        vocab_size=checkpoint['tokenizer_vocab_size']
+    )
+
+    # 重建配置
+    config_dict = checkpoint['config']
+    config = APTConfig(
+        vocab_size=config_dict['vocab_size'],
+        d_model=config_dict['d_model'],
+        max_seq_len=config_dict['max_seq_len'],
+        num_encoder_layers=config_dict['num_encoder_layers'],
+        num_decoder_layers=config_dict['num_decoder_layers'],
+        num_heads=config_dict['num_heads'],
+        d_ff=config_dict['d_ff'],
+        dropout=config_dict['dropout'],
+        use_autopoietic=config_dict.get('use_autopoietic', True),
+        use_dbc_dac=config_dict.get('use_dbc_dac', False),
+    )
+
+    # 创建模型并加载权重
+    model = APTModel(config)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model = model.to(device)
+
     return model, tokenizer, config
 
 class CheckpointManager:
