@@ -662,7 +662,8 @@ def main():
     # 使用 SimpleCharTokenizer_BACKUP（支持 emoji 动态添加）
     tokenizer = SimpleCharTokenizer_BACKUP()
     print(f"   使用的分词器: {type(tokenizer).__name__}")
-    print(f"   词汇表大小: {tokenizer.vocab_size}")
+    print(f"   初始词汇表: {len(tokenizer.char_to_id)} 个token (预留空间: {tokenizer.vocab_size})")
+    print(f"   初始token: {list(tokenizer.char_to_id.keys())}")
 
     # 4. 创建数据集
     print(f"\n📊 创建数据集...")
@@ -684,6 +685,17 @@ def main():
     print(f"模型实际看到的训练对数量: {actual_pairs} (每个概念6个层级映射)")
     print(f"   emoji/短语/英文/拼音/日文/韩文 → 中文")
     print(f"----------------")
+
+    # 【词汇表增长验证】
+    print(f"\n📊 词汇表动态增长情况:")
+    print(f"   处理数据后的词汇表大小: {len(tokenizer.char_to_id)} 个token")
+    print(f"   新增token数量: {len(tokenizer.char_to_id) - 10}")
+    print(f"   下一个ID: {tokenizer.next_id}")
+    print(f"   预留空间利用率: {len(tokenizer.char_to_id)}/{tokenizer.vocab_size} ({100*len(tokenizer.char_to_id)/tokenizer.vocab_size:.1f}%)")
+
+    # 显示前20个动态添加的字符（跳过特殊token）
+    dynamic_chars = [char for char, idx in sorted(tokenizer.char_to_id.items(), key=lambda x: x[1]) if idx >= 10][:20]
+    print(f"   前20个动态添加的字符: {dynamic_chars}")
 
     # 5. 创建模型
     print(f"\n🏗️ 创建APT模型...")
