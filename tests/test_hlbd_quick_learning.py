@@ -4,6 +4,7 @@
 
 import sys
 import os
+import re
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -47,6 +48,28 @@ class SimpleCharTokenizer_BACKUP:
         self.id_to_char = {v: k for k, v in self.vocab.items()}
         self.next_id = 10  # 从10开始，因为0-9已被特殊token占用
 
+        # ⭐ 新增：预编译正则表达式，匹配 [TAG]
+        self.tag_pattern = re.compile(r'(\[EMOJI\]|\[PHRASE\]|\[EN\]|\[PY\]|\[JP\]|\[KR\])')
+    
+    def _tokenize_text(self, text):
+        """⭐ 核心修复：先切分标签，再切分字符"""
+        tokens = []
+        # 按标签切分
+        parts = self.tag_pattern.split(text)
+        for part in parts:
+            if part in self.vocab:
+                # 如果是标签，直接添加ID
+                tokens.append(self.vocab[part])
+            else:
+                # 如果是普通文本，逐字处理
+                for char in part:
+                    # 跳过空白字符（可选，看你需求）
+                    if char.strip():
+                        tokens.append(self._get_or_add_char(char))
+                    elif char == ' ': # 保留空格
+                        tokens.append(self._get_or_add_char(char))
+        return tokens
+
     def _get_or_add_char(self, char):
         """获取字符ID，如果不存在则添加"""
         if char not in self.char_to_id:
@@ -61,8 +84,7 @@ class SimpleCharTokenizer_BACKUP:
     def encode(self, text, return_tensors=None):
         """编码文本为ID序列"""
         ids = [self.bos_token_id]
-        for char in text:
-            ids.append(self._get_or_add_char(char))
+        ids.extend(self._tokenize_text(text))
         ids.append(self.eos_token_id)
 
         if return_tensors == 'pt':
@@ -71,10 +93,17 @@ class SimpleCharTokenizer_BACKUP:
 
     def __call__(self, text, max_length=64, padding='max_length',
                  truncation=True, return_tensors='pt'):
+        
         """分词接口（兼容transformers）"""
-        ids = []
-        for char in text:
-            ids.append(self._get_or_add_char(char))
+        # 1. 初始化 ids
+        ids = [self.bos_token_id]
+
+        # 2. ⭐ 使用新的切分逻辑 (支持 [EMOJI])
+        token_ids = self._tokenize_text(text)
+        ids.extend(token_ids)
+        
+        # 3. 加 EOS
+        ids.append(self.eos_token_id)
 
         # 截断
         if truncation and len(ids) > max_length:
@@ -405,45 +434,54 @@ def generate_text(model, tokenizer, input_text, device, max_length=50, repetitio
     """
     model.eval()
 
-    # 1. 获取 BOS/PAD ID
-    bos_id = tokenizer.bos_token_id
-    pad_id = tokenizer.pad_token_id
+    # 1. 准备 Encoder 输入 (Prompt)
+    # 注意：这里的 input_text 应该包含标签，如 "[EMOJI] 🌧️"
+    input_encoded = tokenizer(input_text, max_length=64, padding=False, return_tensors='pt')
+    src_ids = input_encoded['input_ids'].to(device) # [1, src_len]
 
-    # 2. 编码输入文本（使用 __call__ 方法，不添加特殊 token）
-    # SimpleCharTokenizer_BACKUP 的 __call__ 不添加 BOS/EOS
-    input_result = tokenizer(input_text, max_length=64, padding=False,
-                            truncation=True, return_tensors='pt')
-    input_ids = input_result['input_ids'].to(device)  # shape: [1, seq_len]
+    # 2. 准备 Decoder 输入 (Start Token)
+    # Decoder 从 [BOS] 开始，而不是从 Prompt 开始！
+    decoder_input = torch.tensor([[tokenizer.bos_token_id]], device=device) # [1, 1]
+    
+    generated_ids = []
 
-    # 去除 padding（如果有）
-    # 找到第一个非 pad token 的位置
-    input_ids = input_ids[input_ids != pad_id].unsqueeze(0) if pad_id in input_ids else input_ids
+    with torch.no_grad():
+        for _ in range(max_length):
+            # 3. 准备模型输入 input_ids = [BOS] + Prompt Tokens
+            # 注意：APTModel 的 forward 接受 src_tokens 和 tgt_tokens
+            outputs = model(src_tokens=src_ids, tgt_tokens=decoder_input)
 
-    # 3. 准备模型输入 input_ids = [BOS] + Prompt Tokens
-    bos_tensor = torch.tensor([[bos_id]], device=device)
-    initial_ids = torch.cat([bos_tensor, input_ids], dim=1)
+            # 取最后一个 token 的 logits
+            logits = outputs[:, -1, :] # [batch, vocab]
 
-    # 4. 🔧 【修复】使用自定义生成，限制 vocab 范围
-    # 只允许生成 tokenizer 已知的 token IDs
-    valid_ids = set(tokenizer.id_to_char.keys())
-    max_valid_id = max(valid_ids)
+            # --- 强制禁止复读的关键代码 ---
+            if repetition_penalty != 1.0:
+                # 遍历已经生成过的所有 token
+                for token_id in set(generated_ids):
+                    # 如果 logit 是正数，除以惩罚系数（变小）
+                    if logits[0, token_id] > 0:
+                        logits[0, token_id] /= repetition_penalty
+                    # 如果 logit 是负数，乘以惩罚系数（变得更负，更不可能被选中）
+                    else:
+                        logits[0, token_id] *= repetition_penalty
 
-    generated_ids = generate_with_vocab_mask(
-        model=model,
-        input_ids=initial_ids,
-        valid_token_ids=valid_ids,
-        max_length=max_length + initial_ids.size(1),
-        repetition_penalty=repetition_penalty,
-        pad_token_id=pad_id,
-        device=device
-    )
+            # 4. 限制生成范围 (Vocab Mask) & 重复惩罚
+            # ... (简化的采样逻辑) ...
+            logits[:, tokenizer.pad_token_id] = -float('inf') # 别生成 PAD
+            logits[:, tokenizer.unk_token_id] = -float('inf') # 别生成 UNK
 
-    # 5. 【修复】只解码新生成的部分，去掉输入
-    input_length = initial_ids.size(1)
-    generated_only = generated_ids[0][input_length:]  # 去掉输入部分
-    generated_text = tokenizer.decode(generated_only, skip_special_tokens=True)
+            # 简单贪婪解码 (为了测试稳定性，先用贪婪)
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
-    return generated_text
+            # 5. 停止条件
+            if next_token.item() == tokenizer.eos_token_id:
+                break
+
+            # 6. 把新字加到 Decoder 输入里，准备下一轮
+            generated_ids.append(next_token.item())
+            decoder_input = torch.cat([decoder_input, next_token], dim=1)
+
+    return tokenizer.decode(generated_ids)
 
 
 def test_generation(model, tokenizer, test_cases, device):
@@ -457,6 +495,13 @@ def test_generation(model, tokenizer, test_cases, device):
 
     for input_text, expected_concept in test_cases:
         generated = generate_text(model, tokenizer, input_text, device, repetition_penalty=REPETITION_FACTOR)
+        input_ids = tokenizer.encode(input_text)
+
+        ids_display = str(input_ids)
+        if len(input_ids) > 8:
+            ids_display = f"[{input_ids[0]}, {input_ids[1]}, ..., {input_ids[-1]}]"
+        
+        print(f"🕵️ Debug: Len={len(input_ids)} | IDs={ids_display}")
         print(f"\n输入: {input_text}")
         print(f"期望概念: {expected_concept}")
         print(f"生成: {generated}")
@@ -736,7 +781,7 @@ def main():
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 50  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
+    num_epochs = 150  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
