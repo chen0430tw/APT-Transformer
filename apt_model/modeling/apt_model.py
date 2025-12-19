@@ -89,17 +89,14 @@ class DBCDAC_Optimizer:
             A_norm = torch.norm(A, 'fro')
             energy_threshold = 0.95  # 保留95%能量
 
-            # 🚀 优化2: 快速稀疏随机投影 (比密集投影快3-5倍)
-            # 使用稀疏随机矩阵: 每列只有sqrt(r)个非零元素
+            # 🚀 优化2: 快速密集随机投影 (GPU 优化)
+            # GPU 讨厌稀疏内存访问，密集矩阵反而更快
             if m >= n:
                 # 行数多，投影到列空间
-                # 稀疏随机投影矩阵
-                sparse_density = min(0.1, max(0.01, 1.0 / (r_init ** 0.5)))
-                Q = torch.randn(n, r_init, device=A.device, dtype=A.dtype) * (1.0 / sparse_density ** 0.5)
-                mask = torch.rand(n, r_init, device=A.device) > (1 - sparse_density)
-                Q = Q * mask  # 稀疏化
+                # 直接生成密集高斯随机矩阵
+                Q = torch.randn(n, r_init, device=A.device, dtype=A.dtype)
 
-                # 快速正交化 (Modified Gram-Schmidt)
+                # 快速正交化 (QR 分解)
                 Q, _ = torch.linalg.qr(Q)
                 Y = A @ Q  # 投影，利用稀疏性
 
@@ -139,10 +136,8 @@ class DBCDAC_Optimizer:
 
             else:
                 # 列数多，投影到行空间 (对称处理)
-                sparse_density = min(0.1, max(0.01, 1.0 / (r_init ** 0.5)))
-                Q = torch.randn(m, r_init, device=A.device, dtype=A.dtype) * (1.0 / sparse_density ** 0.5)
-                mask = torch.rand(m, r_init, device=A.device) > (1 - sparse_density)
-                Q = Q * mask
+                # 直接生成密集高斯随机矩阵
+                Q = torch.randn(m, r_init, device=A.device, dtype=A.dtype)
 
                 Q, _ = torch.linalg.qr(Q)
                 Y = A.T @ Q
@@ -275,69 +270,99 @@ class DBCDAC_Optimizer:
         
         # 恢复原始数据类型
         W_stabilized = W_stabilized.to(original_dtype)
-        
+
         return W_stabilized
-    
+
+    def stabilize_matrix_fast(self, W):
+        """
+        简化版矩阵稳定：减少迭代，移除冗余计算
+
+        参数:
+            W: torch.Tensor, 输入矩阵
+
+        返回:
+            W_stabilized: torch.Tensor, 稳定化后的矩阵
+        """
+        # 类型转换
+        original_dtype = W.dtype
+        if W.dtype in [torch.float16, torch.bfloat16]:
+            W = W.to(torch.float32)
+
+        # 维度平衡 (DBC)
+        # 🚀 优化3: 移除阈值判断中的 item() 调用
+        # 直接运算，不通过 Python if 检查
+        row_sums = W.sum(dim=1, keepdim=True)
+        # 避免除零的软阈值处理
+        D_vec = torch.sign(row_sums) * torch.maximum(
+            row_sums.abs(),
+            torch.tensor(self.threshold, device=W.device, dtype=W.dtype)
+        )
+        W_norm = W / D_vec
+
+        # 低秩近似 (DAC)
+        # 🚀 优化4: 仅做一次投影 (One-pass)，不做残差迭代
+        # 残差迭代(iterations>0)会让计算量翻倍，但在梯度平滑任务中收益递减
+        W_proj, _ = self.low_rank_approx(W_norm, self.rank_ratio_proj)
+
+        # 恢复
+        W_stabilized = W_proj * D_vec
+        return W_stabilized.to(original_dtype)
+
     def stabilize_gradients(self, grad):
         """
-        稳定梯度以防止梯度爆炸
-        
+        极速版梯度稳定：去同步、过滤小参数
+
         参数:
             grad: torch.Tensor, 原始梯度
-            
+
         返回:
             stabilized_grad: torch.Tensor, 稳定后的梯度
         """
         if not isinstance(grad, torch.Tensor) or grad is None:
             return grad
-        
-        # 检查是否有NaN或Inf
-        if torch.isnan(grad).any() or torch.isinf(grad).any():
-            return torch.zeros_like(grad)
-        
-        # 仅处理2D及以上的参数
-        if len(grad.shape) < 2:
+
+        # 🚀 优化1: 过滤小参数 (关键!)
+        # 只有参数量大于阈值(如 256*256=65536)时才启用DBC
+        # 这会跳过 bias, layer_norm, embedding 等小/稀疏参数
+        if grad.numel() < 65536:
+            return torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        # 🚀 优化2: 彻底移除 CPU-GPU 同步阻塞
+        # 不使用 if torch.isnan(grad).any()
+        grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        # 仅处理2D及以上的参数 (通常是 Linear层的 weight)
+        if grad.ndim < 2:
             return grad
-        
-        # 对大梯度进行稳定处理
-        grad_norm = torch.norm(grad)
-        if grad_norm > 1.0:  # 只对大梯度进行处理
-            original_shape = grad.shape
-            
-            # 对矩阵进行DBC-DAC稳定
-            if len(original_shape) == 2:
-                stabilized_grad = self.stabilize_matrix(grad)
-            else:
-                # 处理高维张量 - 重塑为2D矩阵
-                reshaped_grad = grad.reshape(original_shape[0], -1)
-                stabilized_grad = self.stabilize_matrix(reshaped_grad)
-                stabilized_grad = stabilized_grad.reshape(original_shape)
-            
-            # 保持梯度范数
-            stabilized_norm = torch.norm(stabilized_grad)
-            if stabilized_norm > 0:
-                scale_factor = min(grad_norm / stabilized_norm, 1.0)
-                stabilized_grad = stabilized_grad * scale_factor
-            
-            return stabilized_grad
+
+        # 对大矩阵进行稳定处理
+        original_shape = grad.shape
+
+        # 对矩阵进行DBC-DAC稳定
+        if len(original_shape) == 2:
+            stabilized_grad = self.stabilize_matrix_fast(grad)
         else:
-            return grad
+            # 处理高维张量 - 重塑为2D矩阵
+            reshaped_grad = grad.reshape(original_shape[0], -1)
+            stabilized_grad = self.stabilize_matrix_fast(reshaped_grad)
+            stabilized_grad = stabilized_grad.reshape(original_shape)
+
+        return stabilized_grad
 
 
 def create_gradient_stabilizer_hook(dbc_dac_optimizer):
-    """创建用于稳定梯度的钩子函数"""
+    """创建用于稳定梯度的钩子函数（已优化：无同步）"""
     def hook(grad):
         if grad is None:
             return None
-        
-        # 检测到NaN或Inf梯度
-        if torch.isnan(grad).any() or torch.isinf(grad).any():
-            # 完全替换为零梯度
-            return torch.zeros_like(grad)
-        
+
+        # 🚀 优化: 移除 CPU-GPU 同步检查
+        # NaN/Inf 处理已经在 stabilize_gradients 中完成
+        # 不再使用 if torch.isnan(grad).any()
+
         # 使用DBC-DAC优化器稳定梯度
         return dbc_dac_optimizer.stabilize_gradients(grad)
-    
+
     return hook
 
 
