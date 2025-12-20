@@ -292,8 +292,11 @@ class DBCDAC_Optimizer:
         # 🚀 优化3: 移除阈值判断中的 item() 调用
         # 直接运算，不通过 Python if 检查
         row_sums = W.sum(dim=1, keepdim=True)
+        # 🚀 修复: 处理零梯度的符号问题，防止 sign(0)=0 导致除零
+        rs_sign = torch.sign(row_sums)
+        rs_sign[rs_sign == 0] = 1.0  # 强制让 0 的符号为 1，避免乘积为 0
         # 避免除零的软阈值处理
-        D_vec = torch.sign(row_sums) * torch.maximum(
+        D_vec = rs_sign * torch.maximum(
             row_sums.abs(),
             torch.tensor(self.threshold, device=W.device, dtype=W.dtype)
         )
@@ -310,45 +313,38 @@ class DBCDAC_Optimizer:
 
     def stabilize_gradients(self, grad):
         """
-        极速版梯度稳定：去同步、过滤小参数
-
-        参数:
-            grad: torch.Tensor, 原始梯度
-
-        返回:
-            stabilized_grad: torch.Tensor, 稳定后的梯度
+        极速版梯度稳定：随机触发 + 过滤小参数 + 基础清洗
         """
         if not isinstance(grad, torch.Tensor) or grad is None:
             return grad
 
-        # 🚀 优化1: 过滤小参数 (关键!)
-        # 只有参数量大于阈值(如 256*256=65536)时才启用DBC
-        # 这会跳过 bias, layer_norm, embedding 等小/稀疏参数
+        # 1. 小参数快速通道 (极快)
         if grad.numel() < 65536:
-            return torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
-
-        # 🚀 优化2: 彻底移除 CPU-GPU 同步阻塞
-        # 不使用 if torch.isnan(grad).any()
+             return torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        # 2. 大参数基础清洗
         grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
 
-        # 仅处理2D及以上的参数 (通常是 Linear层的 weight)
+        # 3. 维度过滤
         if grad.ndim < 2:
             return grad
 
-        # 对大矩阵进行稳定处理
+        # 🚀 优化3: 随机DBC
+        import random
+        if random.random() > 0.25: 
+            return grad
+
+        # --- 以下是昂贵的 DBC 计算 ---
         original_shape = grad.shape
 
-        # 对矩阵进行DBC-DAC稳定
         if len(original_shape) == 2:
             stabilized_grad = self.stabilize_matrix_fast(grad)
         else:
-            # 处理高维张量 - 重塑为2D矩阵
             reshaped_grad = grad.reshape(original_shape[0], -1)
             stabilized_grad = self.stabilize_matrix_fast(reshaped_grad)
             stabilized_grad = stabilized_grad.reshape(original_shape)
 
         return stabilized_grad
-
 
 def create_gradient_stabilizer_hook(dbc_dac_optimizer):
     """创建用于稳定梯度的钩子函数（已优化：无同步）"""
@@ -446,6 +442,7 @@ class AutopoieticAttention(nn.Module):
         batch_first: bool = True,
         # DBC-DAC相关参数（此处仅保留接口，不影响本类核心实现）
         use_dbc_dac: bool = True,
+        debug_mode: bool = False,
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
@@ -486,6 +483,8 @@ class AutopoieticAttention(nn.Module):
         self._reset_parameters()
         self.res_scale = 1.0
 
+        self.debug_mode = debug_mode # 保存状态
+
     def _reset_parameters(self):
         nn.init.xavier_uniform_(self.q_proj.weight)
         nn.init.xavier_uniform_(self.k_proj.weight)
@@ -501,36 +500,54 @@ class AutopoieticAttention(nn.Module):
         nn.init.constant_(self.sr_conv2.bias, 0.)
 
     def log_debug(self, message: str):
-        """
-        将调试信息写入单独的日志文件，避免与本地其他日志混淆。
-        """
-        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(message + "\n")
+            # 【修改点】如果不开启 debug 模式，直接跳过，绝不执行 IO
+            if not getattr(self, 'debug_mode', False):
+                return
+            
+            # 只有开启了才写文件
+            try:
+                with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(message + "\n")
+            except Exception:
+                pass
 
     def autopoietic_transform(
         self, 
         attention_scores: torch.Tensor,
         attn_mask: torch.Tensor = None
     ) -> torch.Tensor:
+        
+        # 1. 给统计代码加上“阀门”
+        if self.debug_mode:
+            debug_lines = []
+            debug_lines.append("...")
+            min_val = attention_scores.min().item() # 只有开启debug才执行同步
+
         """
         自生成变换过程：对输入的注意力分数进行一系列变换。
         这里添加详细的统计信息打印，并写入DEBUG_LOG_FILE。
         """
         # 第一步：打印输入attention_scores统计
-        debug_lines = []
-        debug_lines.append("\n[autopoietic_transform] >>>>>>>>> ENTER FUNCTION <<<<<<<<")
-        min_val = attention_scores.min().item()
-        max_val = attention_scores.max().item()
-        mean_val = attention_scores.mean().item()
-        std_val = attention_scores.std().item()
-        has_nan = torch.isnan(attention_scores).any().item()
-        has_inf = torch.isinf(attention_scores).any().item()
+        debug_lines = []  # 初始化变量防止下面报错
+        
+        # 加上阀门！
+        if getattr(self, 'debug_mode', False):
+            # 第一步：打印输入attention_scores统计
+            debug_lines.append("\n[autopoietic_transform] >>>>>>>>> ENTER FUNCTION <<<<<<<<")
+            
+            # 【重点】把下面这些会卡顿的代码统统缩进进来！
+            min_val = attention_scores.min().item()
+            max_val = attention_scores.max().item()
+            mean_val = attention_scores.mean().item()
+            std_val = attention_scores.std().item()
+            has_nan = torch.isnan(attention_scores).any().item()
+            has_inf = torch.isinf(attention_scores).any().item()
 
-        debug_lines.append(
-            f"[Input Stats] shape={list(attention_scores.shape)} "
-            f"min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}, std={std_val:.4f}, "
-            f"NaN={has_nan}, Inf={has_inf}"
-        )
+            debug_lines.append(
+                f"[Input Stats] shape={list(attention_scores.shape)} "
+                f"min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}, std={std_val:.4f}, "
+                f"NaN={has_nan}, Inf={has_inf}"
+            )
 
         # 如果不使用自生成机制，直接返回
         if not self.use_autopoietic:
@@ -598,8 +615,6 @@ class AutopoieticAttention(nn.Module):
                     autopoietic_attn = torch.tanh(scaled_attention * 0.5) * 2.0
 
             # 检查 NaN/Inf
-            if torch.isnan(autopoietic_attn).any() or torch.isinf(autopoietic_attn).any():
-                debug_lines.append(f"[Batch {b}] autopoietic_attn has NaN/Inf, applying nan_to_num/clamp.")
                 autopoietic_attn = torch.nan_to_num(autopoietic_attn, nan=0.0, posinf=2.0, neginf=-2.0)
                 autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
 
@@ -868,6 +883,9 @@ class APTEncoderLayer(nn.Module):
         # 配置
         self.batch_first = batch_first
         self.res_scale = 1.0
+
+        # 【新增这行】默认关闭 debug，防止拖慢速度
+        self.debug_mode = getattr(config, 'debug_mode', False) if 'config' in locals() else False
     
     def forward(
         self,
@@ -1441,7 +1459,7 @@ class APTModel(nn.Module):
         pad_token_id=None,
     ):
         """
-        ⭐ 修复后的文本生成方法
+        ⭐ 修复后的文本生成方法 (Encoder-Decoder 逻辑修正版)
 
         Args:
             input_ids: 输入token IDs [batch_size, seq_len]
@@ -1466,105 +1484,120 @@ class APTModel(nn.Module):
         device = input_ids.device
         batch_size = input_ids.size(0)
 
-        if max_length <= input_ids.size(1):
-            return input_ids[:, :max_length]
-
+        # 1. 准备特殊 Token
+        bos_token_id = getattr(self.config, "bos_token_id", 2)
         if eos_token_id is None:
-            eos_token_id = getattr(self.config, "eos_token_id", 2)
+            eos_token_id = getattr(self.config, "eos_token_id", 3)
         if pad_token_id is None:
             pad_token_id = getattr(self.config, "pad_token_id", 0)
         unk_token_id = getattr(self.config, "unk_token_id", None)
 
-        generated = input_ids.clone()
+        # ------------------------------------------------------------------
+        # 🚀 核心逻辑修复：从 GPT 模式切换回 Encoder-Decoder 模式
+        # ------------------------------------------------------------------
+        
+        # 2. 编码阶段 (Encoder)
+        # 一次性读懂 Prompt，获取记忆
+        memory = self.encode(
+            src_tokens=input_ids,
+            src_key_padding_mask=(input_ids == pad_token_id)
+        )
+
+        # 3. 解码准备 (Decoder)
+        # 给解码器一张白纸，只写一个 [BOS] 开头
+        # 绝对不能把 input_ids 喂给解码器，否则它看到 EOS 就会停止！
+        decoder_input = torch.full((batch_size, 1), bos_token_id, device=device, dtype=torch.long)
+        
+        # 用于保存生成结果 (不包含 BOS)
+        generated_ids = torch.empty((batch_size, 0), device=device, dtype=torch.long)
 
         was_training = self.training
         self.eval()
 
         try:
             with torch.no_grad():
-                total_steps = max_length - input_ids.size(1)
-                for _ in range(total_steps):
-                    try:
-                        outputs = self.forward(
-                            src_tokens=generated,
-                            tgt_tokens=generated,
-                            src_key_padding_mask=(generated == pad_token_id),
-                            src_mask=None,
-                        )
-                        logits = outputs[:, -1, :]
-                    except Exception as forward_err:
-                        print(f"⚠️ 生成时前向传播错误: {forward_err}")
-                        outputs = self.forward(generated, generated)
-                        logits = outputs[:, -1, :]
+                # 循环生成 Response
+                for step in range(max_length):
+                    # 前向解码：传入 memory 和 当前已生成的 decoder_input
+                    # 注意：我们使用 decode() 方法而不是 forward()
+                    decoder_output = self.decode(
+                        tgt_tokens=decoder_input,
+                        memory=memory,
+                        tgt_mask=None, # 内部会自动生成因果掩码
+                        memory_mask=None,
+                        tgt_key_padding_mask=None,
+                        memory_key_padding_mask=(input_ids == pad_token_id)
+                    )
+                    
+                    # 映射到词表
+                    logits = self.output_projection(decoder_output)
+                    next_token_logits = logits[:, -1, :] # 取最后一个时间步
 
+                    # --- 重复惩罚逻辑 ---
                     if repetition_penalty != 1.0:
                         for i in range(batch_size):
-                            history = set(generated[i].tolist())
+                            # 注意：我们检查的是已经生成的 generated_ids (不含 prompt)
+                            history = set(generated_ids[i].tolist())
                             if not history:
                                 continue
-                            logits[i, list(history)] /= repetition_penalty
+                            
+                            # 将 tensor 转为 list 以便索引，或者直接使用 scatter/gather 优化
+                            # 这里为了兼容性保持循环写法，但加入了 logits 正负值的正确处理
+                            for token_id in history:
+                                if next_token_logits[i, token_id] > 0:
+                                    next_token_logits[i, token_id] /= repetition_penalty
+                                else:
+                                    next_token_logits[i, token_id] *= repetition_penalty
 
+                    # 温度调节
                     temperature = max(float(temperature), 1e-5)
-                    logits = logits / temperature
+                    next_token_logits = next_token_logits / temperature
 
-                    banned_ids = [pad_token_id, unk_token_id]
-                    vocab_size = logits.size(-1)
-                    for banned_id in banned_ids:
-                        if banned_id is None:
-                            continue
-                        if 0 <= banned_id < vocab_size:
-                            logits[:, banned_id] = -float("inf")
+                    # 屏蔽特殊符号 (PAD, UNK)
+                    if pad_token_id is not None and 0 <= pad_token_id < next_token_logits.size(-1):
+                        next_token_logits[:, pad_token_id] = -float('inf')
+                    if unk_token_id is not None and 0 <= unk_token_id < next_token_logits.size(-1):
+                        next_token_logits[:, unk_token_id] = -float('inf')
 
-                    next_token = None
+                    # 采样
                     if do_sample:
+                        # Top-K
                         if top_k > 0:
-                            k = min(int(top_k), vocab_size)
-                            values, _ = torch.topk(logits, k)
-                            min_values = values[..., -1, None]
-                            mask = logits < min_values
-                            logits = logits.masked_fill(mask, float("-inf"))
-
+                            v, _ = torch.topk(next_token_logits, min(top_k, next_token_logits.size(-1)))
+                            next_token_logits[next_token_logits < v[:, [-1]]] = -float('inf')
+                        
+                        # Top-P
                         if 0 < top_p < 1.0:
-                            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                            sorted_probs = torch.nn.functional.softmax(sorted_logits, dim=-1)
+                            sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                            sorted_probs = F.softmax(sorted_logits, dim=-1)
                             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-
                             sorted_indices_to_remove = cumulative_probs > top_p
                             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                             sorted_indices_to_remove[..., 0] = 0
-
                             for i in range(batch_size):
-                                remove_indices = sorted_indices[i][sorted_indices_to_remove[i]]
-                                logits[i, remove_indices] = float("-inf")
+                                indices_to_remove = sorted_indices[i][sorted_indices_to_remove[i]]
+                                next_token_logits[i, indices_to_remove] = -float('inf')
 
-                        probs = torch.nn.functional.softmax(logits, dim=-1)
-                        probs = torch.nan_to_num(probs, nan=0.0)
-
-                        prob_sums = probs.sum(dim=-1, keepdim=True)
-                        zero_mask = prob_sums.squeeze(-1) == 0
-                        if zero_mask.any():
-                            fallback = torch.argmax(logits, dim=-1, keepdim=True)
-                            if (~zero_mask).any():
-                                normalized = probs[~zero_mask] / prob_sums[~zero_mask]
-                                sampled = torch.multinomial(normalized, num_samples=1)
-                                fallback[~zero_mask] = sampled
-                            next_token = fallback
-                        else:
-                            probs = probs / prob_sums
-                            next_token = torch.multinomial(probs, num_samples=1)
+                        probs = F.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, num_samples=1)
                     else:
-                        next_token = torch.argmax(logits, dim=-1, keepdim=True)
+                        # 贪婪搜索
+                        next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
-                    generated = torch.cat([generated, next_token], dim=1)
+                    # 拼接到结果中
+                    generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                    decoder_input = torch.cat([decoder_input, next_token], dim=1)
 
+                    # 检查 EOS
                     if (next_token == eos_token_id).all():
                         break
+                        
         finally:
             if was_training:
                 self.train()
 
-        return generated
-
+        # 返回生成结果 (只返回生成的回复部分)
+        return generated_ids
 
 
 class APTLargeModel(APTModel):
