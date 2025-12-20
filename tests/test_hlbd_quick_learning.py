@@ -5,6 +5,7 @@
 import sys
 import os
 import re
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -367,7 +368,7 @@ def generate_with_vocab_mask(model, input_ids, valid_token_ids, max_length,
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4):
-    """训练一个epoch（使用梯度累积）"""
+    """训练一个epoch（带性能诊断版）"""
     model.train()
     total_loss = 0
     total_steps = 0
@@ -382,38 +383,95 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
         ascii=True
     )
 
-    for i, (src_ids, tgt_ids) in enumerate(progress_bar):
+    # ⏱️ [诊断初始化]
+    t_start = time.time()
+    times = {"data": 0, "forward": 0, "backward": 0, "step": 0}
 
-        # 数据传输到设备
-        src_ids = src_ids.to(device)
-        tgt_ids = tgt_ids.to(device)
+    # 注意：如果你的 dataloader 返回的是字典（如 HLBD 脚本），这里可能需要改成 for i, batch in enumerate...
+    # 下面保留你提供的解包格式，请根据实际情况调整
+    for i, batch_data in enumerate(progress_bar):
+        
+        # ⏱️ [1. 记录数据加载耗时] (从上轮循环结束到这里的时间)
+        t_data_end = time.time()
+        times["data"] = t_data_end - t_start
 
+        # 兼容处理：检查是元组还是字典
+        if isinstance(batch_data, dict):
+            src_ids = batch_data['input_ids'].to(device)
+            # 假设 HLBD 任务中 target 就是 input
+            tgt_ids = src_ids.clone() 
+        else:
+            src_ids, tgt_ids = batch_data
+            src_ids = src_ids.to(device)
+            tgt_ids = tgt_ids.to(device)
+
+        # ⏱️ [2. 记录前向传播耗时]
+        t_fw_start = time.time()
+        
         # 前向传播
-        output = model(src_ids, tgt_ids[:, :-1])
+        if hasattr(model.config, 'pad_token_id'): # 简单的 input/label 处理
+             # 自回归任务通常输入是 src，目标也是 src（错位）
+             output = model(src_ids, tgt_ids[:, :-1])
+        else:
+             output = model(src_ids, tgt_ids[:, :-1])
 
         # 计算损失
         loss = criterion(
             output.reshape(-1, output.size(-1)),
             tgt_ids[:, 1:].reshape(-1)
         )
-
+        
         # 损失归一化
         loss = loss / ACCUMULATION_STEPS
+        
+        torch.cuda.synchronize() if device.type == 'cuda' else None
+        t_fw_end = time.time()
+        times["forward"] = t_fw_end - t_fw_start
 
-        # 反向传播
+        # ⏱️ [3. 记录反向传播耗时] (这里是DBC钩子起作用的地方!)
+        t_bw_start = time.time()
+        
         loss.backward()
+        
+        torch.cuda.synchronize() if device.type == 'cuda' else None
+        t_bw_end = time.time()
+        times["backward"] = t_bw_end - t_bw_start
 
         # 条件优化和清零（每N步执行一次）
+        step_time = 0
         if (i + 1) % ACCUMULATION_STEPS == 0:
+            # ⏱️ [4. 记录参数更新耗时]
+            t_step_start = time.time()
+            
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             optimizer.zero_grad()
+            
+            torch.cuda.synchronize() if device.type == 'cuda' else None
+            t_step_end = time.time()
+            step_time = t_step_end - t_step_start
+            times["step"] = step_time
 
         total_loss += loss.item() * ACCUMULATION_STEPS
         total_steps += 1
 
-        # 实时更新进度条上的Loss
-        progress_bar.set_postfix({'loss': f'{loss.item() * ACCUMULATION_STEPS:.4f}'})
+        # 实时更新进度条上的Loss和关键耗时
+        progress_bar.set_postfix({
+            'loss': f'{loss.item() * ACCUMULATION_STEPS:.4f}',
+            'fw': f"{times['forward']*1000:.1f}ms",
+            'bw': f"{times['backward']*1000:.1f}ms"
+        })
+
+        # 🛑 [诊断打印] 每10个Batch打印一次详细报告
+        # if i % 10 == 0:
+            # print(f"\n[诊断 Batch {i}] "
+                  # f"数据加载: {times['data']*1000:.1f}ms | "
+                  # f"前向(APT): {times['forward']*1000:.1f}ms | "
+                  # f"反向(DBC): {times['backward']*1000:.1f}ms | "
+                  # f"更新: {times['step']*1000:.1f}ms")
+
+        # 重置下一轮计时起点
+        t_start = time.time()
 
     # 【最后一步清理】处理剩余的累积梯度
     try:
@@ -422,67 +480,33 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
             optimizer.step()
             optimizer.zero_grad()
     except NameError:
-         # 如果i没定义（比如dataloader是空的），则忽略清理
          pass
 
     return (total_loss / total_steps) if total_steps > 0 else 0
 
-
 def generate_text(model, tokenizer, input_text, device, max_length=50, repetition_penalty=1.5):
     """
-    生成文本（修复：支持 emoji，去除输入复读，限制 vocab 范围）
+    生成文本（修改版：直接调用模型内部修好的 generate 方法）
     """
-    model.eval()
-
-    # 1. 准备 Encoder 输入 (Prompt)
-    # 注意：这里的 input_text 应该包含标签，如 "[EMOJI] 🌧️"
+    # 1. 编码 Encoder 输入 (Prompt)
+    # 这一步必须做，把字符串变成 Tensor
     input_encoded = tokenizer(input_text, max_length=64, padding=False, return_tensors='pt')
-    src_ids = input_encoded['input_ids'].to(device) # [1, src_len]
+    input_ids = input_encoded['input_ids'].to(device)
 
-    # 2. 准备 Decoder 输入 (Start Token)
-    # Decoder 从 [BOS] 开始，而不是从 Prompt 开始！
-    decoder_input = torch.tensor([[tokenizer.bos_token_id]], device=device) # [1, 1]
-    
-    generated_ids = []
+    # 2. 【关键修改】直接调用模型内部方法 (正规军)
+    # 我们刚刚在 apt_model.py 里修好了 generate，现在这里直接用它！
+    # 它内部已经包含了：Encoder-Decoder逻辑、EOS切除、强力去重
+    output_ids = model.generate(
+        input_ids=input_ids,
+        max_length=max_length,
+        repetition_penalty=repetition_penalty,  # 传递惩罚系数，治愈复读机
+        temperature=1.0,      # 可以微调，1.0 比较标准
+        do_sample=True        # 建议 True，让回答稍微灵活点；如果要死板准确就 False
+    )
 
-    with torch.no_grad():
-        for _ in range(max_length):
-            # 3. 准备模型输入 input_ids = [BOS] + Prompt Tokens
-            # 注意：APTModel 的 forward 接受 src_tokens 和 tgt_tokens
-            outputs = model(src_tokens=src_ids, tgt_tokens=decoder_input)
-
-            # 取最后一个 token 的 logits
-            logits = outputs[:, -1, :] # [batch, vocab]
-
-            # --- 强制禁止复读的关键代码 ---
-            if repetition_penalty != 1.0:
-                # 遍历已经生成过的所有 token
-                for token_id in set(generated_ids):
-                    # 如果 logit 是正数，除以惩罚系数（变小）
-                    if logits[0, token_id] > 0:
-                        logits[0, token_id] /= repetition_penalty
-                    # 如果 logit 是负数，乘以惩罚系数（变得更负，更不可能被选中）
-                    else:
-                        logits[0, token_id] *= repetition_penalty
-
-            # 4. 限制生成范围 (Vocab Mask) & 重复惩罚
-            # ... (简化的采样逻辑) ...
-            logits[:, tokenizer.pad_token_id] = -float('inf') # 别生成 PAD
-            logits[:, tokenizer.unk_token_id] = -float('inf') # 别生成 UNK
-
-            # 简单贪婪解码 (为了测试稳定性，先用贪婪)
-            next_token = torch.argmax(logits, dim=-1, keepdim=True)
-
-            # 5. 停止条件
-            if next_token.item() == tokenizer.eos_token_id:
-                break
-
-            # 6. 把新字加到 Decoder 输入里，准备下一轮
-            generated_ids.append(next_token.item())
-            decoder_input = torch.cat([decoder_input, next_token], dim=1)
-
-    return tokenizer.decode(generated_ids)
-
+    # 3. 解码
+    # model.generate 返回的是 [batch, seq_len]，我们取第一个样本 [0]
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
 def test_generation(model, tokenizer, test_cases, device):
     """测试生成能力"""
@@ -727,9 +751,9 @@ def main():
         dataset,
         batch_size=4,  # 保持原始batch_size=4（稳定性优先）
         shuffle=True,
-        num_workers=4,  # 使用4个工作进程并行加载（现在安全了）
+        num_workers=0,  # 使用4个工作进程并行加载（现在安全了）
         pin_memory=True,  # 固定内存，加速CPU→GPU传输
-        persistent_workers=True  # 保持worker存活，避免重复创建
+        persistent_workers=False  # 保持worker存活，避免重复创建
     )
     print(f"   训练批次数: {len(dataloader)}")
 
@@ -773,8 +797,8 @@ def main():
     # 7. 注册DBC hooks
     print(f"\n⚡ 注册DBC-DAC加速...")
     #hooks = register_dbc_hooks(model)
-    hooks = [] # 保持 hooks 变量存在，防止后面报错
-    #print(f"   注册了 {len(hooks)} 个梯度稳定钩子")
+    hooks = getattr(model, 'gradient_hooks', [])  # 如果模型内部已经注册过hooks，就直接使用
+    print(f"   注册了 {len(hooks)} 个梯度稳定钩子")
 
     # 8. 训练模型
     print(f"\n" + "="*60)
