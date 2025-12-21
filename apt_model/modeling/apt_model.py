@@ -318,8 +318,9 @@ class DBCDAC_Optimizer:
         if not isinstance(grad, torch.Tensor) or grad is None:
             return grad
 
-        # 1. 小参数快速通道 (极快)
-        if grad.numel() < 65536:
+        # 1. 🚀 修改点A：提高门槛到 150000
+        # 只有非常大的矩阵才值得做分解，中等矩阵直接放行
+        if grad.numel() < 150000:
              return torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
         
         # 2. 大参数基础清洗
@@ -329,12 +330,13 @@ class DBCDAC_Optimizer:
         if grad.ndim < 2:
             return grad
 
-        # 🚀 优化3: 随机DBC
+        # 🚀 修改点B：把 0.25 改为 0.05
+        # 意思：只有 5% 的概率往下走，95% 的概率直接 return (跳过)
         import random
-        if random.random() > 0.25: 
+        if random.random() > 0.05: 
             return grad
 
-        # --- 以下是昂贵的 DBC 计算 ---
+        # --- 以下是昂贵的 DBC 计算 (现在很少触发了) ---
         original_shape = grad.shape
 
         if len(original_shape) == 2:
