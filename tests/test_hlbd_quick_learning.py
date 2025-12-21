@@ -501,6 +501,7 @@ def generate_text(model, tokenizer, input_text, device, max_length=50, repetitio
         max_length=max_length,
         repetition_penalty=repetition_penalty,  # 传递惩罚系数，治愈复读机
         temperature=1.0,      # 可以微调，1.0 比较标准
+        top_p=0.5,              # ➕ 新增这行！只看前 50% 可信的词，过滤掉胡言乱语
         do_sample=True        # 建议 True，让回答稍微灵活点；如果要死板准确就 False
     )
 
@@ -704,7 +705,7 @@ def main():
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
     print(f"PyTorch版本: {torch.__version__}")
 
-    ACCUMULATION_STEPS = 8  # 保持原始配置：batch_size=4, 4 * 8 = 32 的有效批次大小
+    ACCUMULATION_STEPS = 2  # 保持原始配置：batch_size=4, 4 * 8 = 32 的有效批次大小
 
     # 自动检测：有显卡就用显卡，没有才用 CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -726,74 +727,74 @@ def main():
     # 2. 创建训练对
     training_pairs = create_training_pairs(samples)
 
-    # 3. 准备分词器
-    print(f"\n🔧 准备分词器...")
-    # 使用 SimpleCharTokenizer_BACKUP（支持 emoji 动态添加）
-    tokenizer = SimpleCharTokenizer_BACKUP()
-    print(f"   使用的分词器: {type(tokenizer).__name__}")
-    print(f"   初始词汇表: {len(tokenizer.char_to_id)} 个token (预留空间: {tokenizer.vocab_size})")
-    print(f"   初始token: {list(tokenizer.char_to_id.keys())}")
+    # 3. 准备读档或新建模型
+    # 🚨【关键设置】在这里填入您的存档文件名！
+    # 如果填空字符串 ""，则代表【从头开始新训练】
+    resume_checkpoint = "hlbd_model_20251221_051053.pt"   # <--- 请修改这里的文件名！
+    resume_path = os.path.join(project_root, 'tests', 'saved_models', resume_checkpoint)
 
-    # 4. 创建数据集
+    model = None
+    tokenizer = None
+    config = None
+
+    # [逻辑分支] 决定是“读档”还是“新建”
+    if resume_checkpoint and os.path.exists(resume_path):
+        print(f"\n🔄 发现存档，正在恢复训练: {resume_path}")
+        # A. 读档模式：加载旧的分词器和模型 (恢复记忆)
+        model, tokenizer, info = load_model_and_tokenizer(resume_path, device)
+        config = model.config
+        print(f"   已继承之前的词汇表 (Size: {len(tokenizer.char_to_id)})")
+    else:
+        print(f"\n🆕 未找到存档或未指定，开始【从头训练】...")
+        # B. 新建模式：创建新的空白分词器
+        print(f"🔧 准备分词器...")
+        tokenizer = SimpleCharTokenizer_BACKUP()
+
+    # 4. 创建数据集 
+    # (无论读档还是新建，都要跑这一步。如果是读档，tokenizer 会自动沿用旧ID，不会乱码)
     print(f"\n📊 创建数据集...")
     dataset = SimpleDialogueDataset(training_pairs, tokenizer)
 
-    # 【关键修复】预填充词汇表，避免多进程陷阱
-    # 在多进程 DataLoader 启动前，让主进程的 tokenizer 学习所有字符
-    print(f"\n📝 预填充词汇表（避免多进程陷阱）...")
+    # 预填充/更新词汇表
+    print(f"\n📝 检查词汇表覆盖率...")
     for src, tgt in training_pairs:
-        _ = tokenizer.encode(src)
-        _ = tokenizer.encode(tgt)
-    print(f"   词汇表预填充完成: {len(tokenizer.char_to_id)} 个token")
+        tokenizer.encode(src)
+        tokenizer.encode(tgt)
+    print(f"   当前词汇表大小: {len(tokenizer.char_to_id)} (预留空间: {tokenizer.vocab_size})")
 
-    # 优化：保持原始batch_size，只添加多线程加载
     dataloader = DataLoader(
         dataset,
-        batch_size=4,  # 保持原始batch_size=4（稳定性优先）
+        batch_size=16, 
         shuffle=True,
-        num_workers=0,  # 使用4个工作进程并行加载（现在安全了）
-        pin_memory=True,  # 固定内存，加速CPU→GPU传输
-        persistent_workers=False  # 保持worker存活，避免重复创建
+        num_workers=0,
+        pin_memory=True,
+        persistent_workers=False
     )
     print(f"   训练批次数: {len(dataloader)}")
 
-    # 【新增验证代码：检查实际样本数】
-    actual_pairs = len(dataset)
-    print(f"--- 长度验证 ---")
-    print(f"模型实际看到的训练对数量: {actual_pairs} (每个概念6个层级映射)")
-    print(f"   emoji/短语/英文/拼音/日文/韩文 → 中文")
-    print(f"----------------")
-
-    # 【词汇表增长验证】
-    print(f"\n📊 词汇表动态增长情况:")
-    print(f"   处理数据后的词汇表大小: {len(tokenizer.char_to_id)} 个token")
-    print(f"   新增token数量: {len(tokenizer.char_to_id) - 10}")
-    print(f"   下一个ID: {tokenizer.next_id}")
-    print(f"   预留空间利用率: {len(tokenizer.char_to_id)}/{tokenizer.vocab_size} ({100*len(tokenizer.char_to_id)/tokenizer.vocab_size:.1f}%)")
-
-    # 显示前20个动态添加的字符（跳过特殊token）
-    dynamic_chars = [char for char, idx in sorted(tokenizer.char_to_id.items(), key=lambda x: x[1]) if idx >= 10][:20]
-    print(f"   前20个动态添加的字符: {dynamic_chars}")
-
-    # 5. 创建模型
-    print(f"\n🏗️ 创建APT模型...")
-    config = create_small_hlbd_config(tokenizer.vocab_size)
-    model = APTModel(config).to(device)
+    # 5. 确保模型已创建 
+    # (如果是新建模式，现在才创建模型；如果是读档，上面已经有了)
+    if model is None:
+        print(f"\n🏗️ 创建APT模型 (Fresh Start)...")
+        config = create_small_hlbd_config(tokenizer.vocab_size)
+        model = APTModel(config).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"   模型参数: {total_params:,}")
-    print(f"   配置: d_model={config.d_model}, layers={config.num_encoder_layers}")
 
-    # 保存未训练模型的副本用于评估对比
+    # 创建一个副本用于对比 (防止报错，随便建一个)
     untrained_model = APTModel(config).to(device)
-    untrained_model.load_state_dict(model.state_dict())
+    if not resume_checkpoint:
+        untrained_model.load_state_dict(model.state_dict())
     untrained_model.eval()
 
     # 6. 创建优化器
-    # 使用原始学习率（稳定性优先）
-    optimizer = optim.Adam(model.parameters(), lr=5e-5)
+    # 💡 智能调整：读档模式用小火慢炖 (1e-5)，新练模式用大火爆炒 (5e-5)
+    current_lr = 2e-4 if resume_checkpoint else 5e-5
+    optimizer = optim.Adam(model.parameters(), lr=current_lr)
+    print(f"🔧 优化器学习率: {current_lr}")
+    
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
-
     # 7. 注册DBC hooks
     print(f"\n⚡ 注册DBC-DAC加速...")
     #hooks = register_dbc_hooks(model)
@@ -805,7 +806,7 @@ def main():
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 150  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
+    num_epochs = 50  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
@@ -821,6 +822,22 @@ def main():
                 ("[KR] 사랑해", "我爱你"),  # 韩文测试
             ]
             test_generation(model, tokenizer, test_cases, device)
+
+            # 👇👇👇 【这里插入自动存档代码】 👇👇👇
+            print(f"💾 正在自动存档 (Epoch {epoch+1})...")
+            save_dir = os.path.join(project_root, 'tests', 'saved_models')
+            
+            # 这里调用保存函数
+            # 注意：num_epochs 参数传入当前的 epoch+1，这样你知道这个档是跑了多少轮的
+            save_model_and_tokenizer(
+                model=model,
+                tokenizer=tokenizer,
+                config=model.config,  # 确保传入配置
+                save_dir=save_dir,
+                num_epochs=epoch+1,   # 记录当前进度
+                final_loss=loss
+            )
+            print("------------------------------------------------")
 
     # 9. 最终测试
     print(f"\n" + "="*60)
