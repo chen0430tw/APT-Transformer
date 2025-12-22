@@ -114,23 +114,32 @@
 
 ## 🏗️ 架构与集成
 
-- **[模块集成方案](MODULE_INTEGRATION_PLAN.md)**
-  - 插件架构设计
-  - 零侵入集成
-  - 模块化配置
+- **[插件系统完整指南](PLUGIN_SYSTEM_GUIDE.md)** ⭐ 新增
+  - 插件系统架构与设计原理
+  - 26+ 生产级插件详解
+  - 自定义插件开发教程
+  - 事件驱动机制与优先级管理
+  - 故障排查与最佳实践
 
 - **[插件开发指南](../apt_model/cli/PLUGIN_GUIDE.md)**
-  - 插件系统架构
-  - 自定义插件开发
+  - CLI插件快速开发
+  - 命令注册与执行
 
----
+### ⚡ 性能优化
 
-## 📊 报告与分析
+- **[DBC-DAC优化完整指南](DBC_DAC_OPTIMIZATION_GUIDE.md)** ⭐ 新增
+  - DBC-DAC方法对比与误差分析
+  - 二次优化详解（20-500x加速）
+  - 训练加速方案与实战
+  - 智能化与自适应优化
 
-- **[自监督学习与RL能力检查](SELF_SUPERVISED_RL_CHECK_REPORT.md)**
-  - 现有能力分析
-  - 实现建议
-  - 代码示例
+### 🤖 GPT模型系列
+
+- **[GPT模型完整指南](GPT_MODELS_GUIDE.md)** ⭐ 新增
+  - GPT-4o / GPT-5 / GPTo3 架构分析
+  - 可训练性评估与代码审查
+  - 训练配置与高级功能
+  - 故障排除与最佳实践
 
 ---
 
@@ -162,12 +171,13 @@
 | 主题 | 文档 |
 |------|------|
 | **知识蒸馏** | [原理](DISTILLATION_PRINCIPLE.md), [Teacher API](TEACHER_API_GUIDE.md), [视觉蒸馏](VISUAL_DISTILLATION_GUIDE.md) |
-| **强化学习** | [RL完整指南](RL_PRETRAINING_GUIDE.md), [能力检查](SELF_SUPERVISED_RL_CHECK_REPORT.md) |
+| **强化学习** | [RL完整指南](RL_PRETRAINING_GUIDE.md) |
 | **知识图谱** | [KG指南](KNOWLEDGE_GRAPH_GUIDE.md), [GraphRAG文档](../apt_model/core/graph_rag/) |
-| **微调优化** | [微调指南](FINE_TUNING_GUIDE.md), [Optuna优化](OPTUNA_GUIDE.md) |
+| **微调优化** | [微调指南](FINE_TUNING_GUIDE.md), [Optuna优化](OPTUNA_GUIDE.md), [DBC-DAC优化](DBC_DAC_OPTIMIZATION_GUIDE.md) |
 | **训练监控** | [SOSA文档](../apt_model/core/training/README.md), [快速开始](../apt_model/core/training/QUICK_START.md) |
 | **工具与配置** | [API Provider](API_PROVIDERS_GUIDE.md), [启动器](LAUNCHER_README.md) |
-| **架构设计** | [模块集成](MODULE_INTEGRATION_PLAN.md), [插件指南](../apt_model/cli/PLUGIN_GUIDE.md) |
+| **架构设计** | [插件系统指南](PLUGIN_SYSTEM_GUIDE.md), [CLI插件指南](../apt_model/cli/PLUGIN_GUIDE.md) |
+| **GPT模型** | [GPT模型指南](GPT_MODELS_GUIDE.md) |
 
 ### 按难度分类
 
@@ -188,8 +198,9 @@
 1. [RL与预训练完整指南](RL_PRETRAINING_GUIDE.md)
 2. [视觉蒸馏指南](VISUAL_DISTILLATION_GUIDE.md)
 3. [GraphRAG集成指南](../apt_model/core/graph_rag/INTEGRATION.md)
-4. [模块集成方案](MODULE_INTEGRATION_PLAN.md)
-5. [插件开发指南](../apt_model/cli/PLUGIN_GUIDE.md)
+4. [插件系统完整指南](PLUGIN_SYSTEM_GUIDE.md)
+5. [DBC-DAC优化完整指南](DBC_DAC_OPTIMIZATION_GUIDE.md)
+6. [GPT模型完整指南](GPT_MODELS_GUIDE.md)
 
 ---
 
@@ -224,9 +235,40 @@
 1. 阅读 [Optuna指南](OPTUNA_GUIDE.md)
 2. 运行优化脚本: `run_optuna_optimization.sh`
 
+### 我想开发自定义插件
+1. 阅读 [插件系统完整指南](PLUGIN_SYSTEM_GUIDE.md)
+2. 参考26+生产级插件示例
+3. 查看 [CLI插件开发](../apt_model/cli/PLUGIN_GUIDE.md)
+
+### 我想加速训练性能
+1. 阅读 [DBC-DAC优化指南](DBC_DAC_OPTIMIZATION_GUIDE.md)
+2. 了解20-500x加速方案
+3. 应用智能化与自适应优化
+
+### 我想使用GPT模型
+1. 阅读 [GPT模型完整指南](GPT_MODELS_GUIDE.md)
+2. 选择模型: GPT-4o / GPT-5 / GPTo3
+3. 参考训练配置与最佳实践
+
 ---
 
 ## 📝 文档更新日志
+
+### 2024-12-22
+- ✅ **文档整理与合并** - 大幅简化文档结构
+  - 合并DBC-DAC相关文档 (4个→1个)
+  - 合并Plugin系统文档 (2个→1个)
+  - 合并GPT模型文档 (2个→1个)
+  - 归档历史报告和计划文档
+  - 减少35%文档文件数量
+- ✅ **新增合并文档**
+  - [插件系统完整指南](PLUGIN_SYSTEM_GUIDE.md) - 架构+使用+开发
+  - [DBC-DAC优化完整指南](DBC_DAC_OPTIMIZATION_GUIDE.md) - 原理+方案+加速
+  - [GPT模型完整指南](GPT_MODELS_GUIDE.md) - 分析+训练+实践
+- ✅ **文档中心优化**
+  - 更新所有文档导航链接
+  - 新增4个使用场景
+  - 重组文档分类结构
 
 ### 2025-12-02
 - ✅ 创建文档中心
