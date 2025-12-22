@@ -259,25 +259,25 @@ APT支持5种训练后端，满足从单卡到大规模云端训练的所有需�
 
 ```bash
 # 查看所有可用后端
-python train.py --list-backends
+python training/train.py --list-backends
 
 # Playground训练（推荐HLBD）
-python train.py --backend playground --epochs 100
+python training/train.py --backend playground --epochs 100
 
 # DeepSpeed分布式训练
-python train.py --backend deepspeed --num-gpus 4 --zero-stage 2
+python training/train.py --backend deepspeed --num-gpus 4 --zero-stage 2
 
 # Azure ML云端训练
-python train.py --backend azure \
+python training/train.py --backend azure \
   --azure-subscription-id <ID> \
   --azure-resource-group <RG> \
   --azure-workspace-name <WS>
 
 # HuggingFace + W&B
-python train.py --backend huggingface --wandb --epochs 100
+python training/train.py --backend huggingface --wandb --epochs 100
 ```
 
-**📖 完整文档**: [训练后端使用指南](TRAINING_BACKENDS.md)
+**📖 完整文档**: [训练后端使用指南](docs/docs/TRAINING_BACKENDS.md)
 
 **传统分布式训练**（单机多卡）：
 ```bash

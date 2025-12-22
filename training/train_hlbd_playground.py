@@ -363,7 +363,7 @@ class HLBDPlaygroundTrainer:
 def main():
     parser = argparse.ArgumentParser(description='HLBD Playground训练')
 
-    parser.add_argument('--dataset', type=str, default='HLBD_Hardcore_Full.json',
+    parser.add_argument('--dataset', type=str, default='../data/HLBD_Hardcore_Full.json',
                        help='HLBD数据集路径')
     parser.add_argument('--epochs', type=int, default=100,
                        help='训练轮数')

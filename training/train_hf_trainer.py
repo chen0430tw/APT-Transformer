@@ -318,7 +318,7 @@ def main():
     parser = argparse.ArgumentParser(description='APT + HuggingFace Trainer训练')
 
     # 数据参数
-    parser.add_argument('--dataset', type=str, default='HLBD_Hardcore_Full.json',
+    parser.add_argument('--dataset', type=str, default='../data/HLBD_Hardcore_Full.json',
                        help='HLBD数据集路径')
     parser.add_argument('--output-dir', type=str, default='hf_output',
                        help='输出目录')

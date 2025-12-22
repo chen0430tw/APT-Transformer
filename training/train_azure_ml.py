@@ -358,7 +358,7 @@ def main():
     parser = argparse.ArgumentParser(description='Azure ML APT训练脚本')
 
     # 数据参数
-    parser.add_argument('--dataset', type=str, default='HLBD_Hardcore_Full.json')
+    parser.add_argument('--dataset', type=str, default='../data/HLBD_Hardcore_Full.json')
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--save-interval', type=int, default=25)
@@ -545,7 +545,7 @@ def main():
                        help='训练环境名称')
 
     # 数据和训练参数
-    parser.add_argument('--dataset', type=str, default='HLBD_Hardcore_Full.json',
+    parser.add_argument('--dataset', type=str, default='../data/HLBD_Hardcore_Full.json',
                        help='数据集路径')
     parser.add_argument('--epochs', type=int, default=100,
                        help='训练轮数')
