@@ -30,6 +30,7 @@ import sys
 import json
 import time
 import re
+import random
 import argparse
 from pathlib import Path
 
@@ -168,7 +169,6 @@ class HLBDPlaygroundDataset(Dataset):
                 print(f"   ⚠️  数据集为空或加载失败")
 
         # 打散混合
-        import random
         random.shuffle(self.pairs)
 
         print(f"\n📊 数据集统计:")

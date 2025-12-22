@@ -81,9 +81,15 @@ def check_dependencies():
 
 def main():
     """主启动流程"""
+    # 确保在项目根目录运行
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent.parent
+    os.chdir(project_root)
+
     print("=" * 60)
     print("🔗 HLBD模块化训练启动器")
     print("=" * 60)
+    print(f"项目目录: {project_root}")
     print()
 
     # 检查数据集

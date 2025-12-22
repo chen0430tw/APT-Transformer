@@ -382,10 +382,12 @@ APT-Transformer/
 - **[SOSA训练监控](apt_model/core/training/)** - 实时监控和异常检测
 
 #### HLBD数据集训练
-- **[HLBD模块化训练指南](HLBD_MODULAR_TRAINING.md)** - 多数据集联合训练（10,000+样本）
-- **[数据集完成总结](DATASETS_COMPLETION_SUMMARY.md)** - HLBD Full & Hardcore数据集详解
-- **[HLBD Hardcore训练](HLBD_HARDCORE_TRAINING.md)** - 严格逻辑训练（5,042样本）
-- **[HLBD V2总结](HLBD_V2_SUMMARY.md)** - Hardcore V2完整报告
+- **[HLBD模块化训练指南](docs/hlbd/HLBD_MODULAR_TRAINING.md)** - 多数据集联合训练（10,000+样本）
+- **[快速开始指南](docs/hlbd/MODULAR_TRAINING_QUICKSTART.md)** - 30秒快速上手
+- **[数据集完成总结](docs/hlbd/DATASETS_COMPLETION_SUMMARY.md)** - HLBD Full & Hardcore数据集详解
+- **[HLBD Hardcore训练](docs/hlbd/HLBD_HARDCORE_TRAINING.md)** - 严格逻辑训练（5,042样本）
+- **[HLBD V2总结](docs/hlbd/HLBD_V2_SUMMARY.md)** - Hardcore V2完整报告
+- **[实现细节](docs/hlbd/MODULAR_TRAINING_IMPLEMENTATION.md)** - 技术实现说明
 
 #### 架构与集成
 - **[模块集成方案](docs/MODULE_INTEGRATION_PLAN.md)** - 插件架构和零侵入集成

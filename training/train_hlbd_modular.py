@@ -13,6 +13,7 @@ HLBD模块化训练脚本
 import os
 import sys
 import json
+import random
 import argparse
 from pathlib import Path
 from typing import List, Dict, Any
@@ -58,7 +59,6 @@ class ModularHLBDDataset:
             print()
 
         # 打散混合
-        import random
         random.shuffle(self.all_samples)
 
         print(f"📊 数据集统计:")
