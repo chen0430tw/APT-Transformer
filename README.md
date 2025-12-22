@@ -246,31 +246,45 @@ API文档自动生成：
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-### 分布式训练
+### 分布式训练 ⭐ 多后端支持
 
-单机多卡：
+APT支持5种训练后端，满足从单卡到大规模云端训练的所有需求：
+
+| 后端 | 特点 | 适用场景 |
+|------|------|---------|
+| **Playground** | Cosine重启学习率 | HLBD数据集训练 |
+| **DeepSpeed** | ZeRO-2/3优化 | 多GPU分布式训练 |
+| **Azure ML** | MLflow跟踪 | 云端大规模训练 |
+| **HuggingFace** | W&B集成 | 生态系统集成 |
+
+```bash
+# 查看所有可用后端
+python train.py --list-backends
+
+# Playground训练（推荐HLBD）
+python train.py --backend playground --epochs 100
+
+# DeepSpeed分布式训练
+python train.py --backend deepspeed --num-gpus 4 --zero-stage 2
+
+# Azure ML云端训练
+python train.py --backend azure \
+  --azure-subscription-id <ID> \
+  --azure-resource-group <RG> \
+  --azure-workspace-name <WS>
+
+# HuggingFace + W&B
+python train.py --backend huggingface --wandb --epochs 100
+```
+
+**📖 完整文档**: [训练后端使用指南](TRAINING_BACKENDS.md)
+
+**传统分布式训练**（单机多卡）：
 ```bash
 bash scripts/launch_distributed.sh \
   --num-gpus 4 \
   --batch-size 32 \
   --data-path ./data
-```
-
-多节点训练：
-```bash
-# 节点0 (master)
-bash scripts/launch_distributed.sh \
-  --num-gpus 4 \
-  --num-nodes 2 \
-  --node-rank 0 \
-  --master-addr 192.168.1.100
-
-# 节点1 (worker)
-bash scripts/launch_distributed.sh \
-  --num-gpus 4 \
-  --num-nodes 2 \
-  --node-rank 1 \
-  --master-addr 192.168.1.100
 ```
 
 ### 模型压缩
