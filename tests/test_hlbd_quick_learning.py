@@ -283,7 +283,7 @@ def create_small_hlbd_config(vocab_size):
         num_decoder_layers=3,     # 3层解码器
         num_heads=8,              # 8个注意力头
         d_ff=1024,                # 前馈网络
-        dropout=0.1,
+        dropout=0.1,             # 适度dropout
         use_autopoietic=True,     # 启用自生成机制
         use_dbc_dac=True,         # 启用DBC-DAC
     )
@@ -500,7 +500,7 @@ def generate_text(model, tokenizer, input_text, device, max_length=50, repetitio
         input_ids=input_ids,
         max_length=max_length,
         repetition_penalty=repetition_penalty,  # 传递惩罚系数，治愈复读机
-        temperature=1.0,      # 可以微调，1.0 比较标准
+        temperature=0.1,      # 可以微调，1.0 比较标准
         top_p=0.5,              # ➕ 新增这行！只看前 50% 可信的词，过滤掉胡言乱语
         do_sample=True        # 建议 True，让回答稍微灵活点；如果要死板准确就 False
     )
@@ -730,7 +730,7 @@ def main():
     # 3. 准备读档或新建模型
     # 🚨【关键设置】在这里填入您的存档文件名！
     # 如果填空字符串 ""，则代表【从头开始新训练】
-    resume_checkpoint = "hlbd_model_20251221_051053.pt"   # <--- 请修改这里的文件名！
+    resume_checkpoint = "hlbd_model_20251222_074140.pt"   # <--- 请修改这里的文件名！
     resume_path = os.path.join(project_root, 'tests', 'saved_models', resume_checkpoint)
 
     model = None
@@ -744,6 +744,49 @@ def main():
         model, tokenizer, info = load_model_and_tokenizer(resume_path, device)
         config = model.config
         print(f"   已继承之前的词汇表 (Size: {len(tokenizer.char_to_id)})")
+
+        # 👇👇👇 【这里是插入点！MATH 疫苗补丁】 👇👇👇
+        # 即使你现在只用旧数据，打上这个补丁也没有坏处，防止未来报错
+        if '[MATH]' not in tokenizer.char_to_id:
+            print(f"\n💉 检测到旧模型缺少 [MATH] 标签，正在动态补丁...")
+            
+            # 1. 分配新ID
+            new_id = tokenizer.next_id
+            tokenizer.char_to_id['[MATH]'] = new_id
+            tokenizer.id_to_char[new_id] = '[MATH]'
+            tokenizer.vocab['[MATH]'] = new_id  # 保持字典同步
+            tokenizer.next_id += 1
+            tokenizer.vocab_size += 1 # 词表大小+1
+            
+            # 2. 🚨 关键：更新正则！否则分词器看不见这个标签
+            # 必须把 [MATH] 加入到识别规则里
+            tokenizer.tag_pattern = re.compile(r'(\[EMOJI\]|\[PHRASE\]|\[EN\]|\[PY\]|\[JP\]|\[KR\]|\[MATH\])')
+            
+            print(f"   ✅ [MATH] 补丁应用成功 (ID: {new_id})")
+        else:
+            print(f"   ✅ 模型已包含 [MATH] 标签 (ID: {tokenizer.char_to_id['[MATH]']})")
+        # 👆👆👆 【补丁结束】 👆👆👆
+
+        # 👇👇👇 【这里插入：强制脑科手术】 👇👇👇
+        # 必须在这里手动把 Dropout 拉高，因为 torch.load 会恢复成旧的 0.0 或 0.1
+        print(f"\n💉 [手术中] 正在强制提升 Dropout (防止死记硬背)...")
+        print(f"   原 Dropout 配置: {model.config.dropout}")
+        
+        # 1. 修改配置参数 (为了保存时正确)
+        model.config.dropout = 0.1
+        
+        # 2. 🚨 关键：递归修改所有正在运行的层
+        # 光改 config 没用，必须深入到每一层神经网络里去改 p 值
+        modified_count = 0
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Dropout):
+                module.p = 0.1
+                modified_count += 1
+                
+        print(f"   ✅ 手术完成！已将 {modified_count} 个 Dropout 层的概率强制设为 {model.config.dropout}")
+        print(f"   当前 Dropout 配置: {model.config.dropout}")
+        # 👆👆👆 【手术结束】 👆👆👆
+
     else:
         print(f"\n🆕 未找到存档或未指定，开始【从头训练】...")
         # B. 新建模式：创建新的空白分词器
@@ -788,25 +831,55 @@ def main():
         untrained_model.load_state_dict(model.state_dict())
     untrained_model.eval()
 
+    # ============================================================
+    # 🎛️ 战术指挥中心 (只需要改这里！)
+    # ============================================================
+    # 模式选择:
+    # "BREAKOUT" (暴力破局) -> LR=1e-4, DBC=关 (用于把 Loss 炸高，跳出局部最优)
+    # "LANDING"  (平稳降落) -> LR=1e-5, DBC=开 (用于把高 Loss 收敛，精细学习)
+    
+    TACTICAL_MODE = "LANDING"  # 👈 当前任务：降落！(要把 Loss 1.8 降下来)
+
+    if TACTICAL_MODE == "BREAKOUT":
+        current_lr = 8e-5
+        use_dbc = False
+        mode_msg = "🔥 [暴力破局模式] 全力输出，允许梯度爆发"
+    else: # LANDING
+        current_lr = 1e-5
+        use_dbc = True
+        mode_msg = "❄️ [平稳降落模式] 开启辅助，精细收敛"
+
+    # ============================================================
+
     # 6. 创建优化器
-    # 💡 智能调整：读档模式用小火慢炖 (1e-5)，新练模式用大火爆炒 (5e-5)
-    current_lr = 2e-4 if resume_checkpoint else 5e-5
-    optimizer = optim.Adam(model.parameters(), lr=current_lr)
-    print(f"🔧 优化器学习率: {current_lr}")
+    # ------------------------------------------------------------
+    optimizer = optim.Adam(model.parameters(), lr=current_lr, weight_decay=1e-2)
+    print(f"🔧 优化器配置完成 | 模式: {TACTICAL_MODE} | LR: {current_lr} | Weight Decay: 1e-2")
     
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
-    # 7. 注册DBC hooks
-    print(f"\n⚡ 注册DBC-DAC加速...")
-    #hooks = register_dbc_hooks(model)
-    hooks = getattr(model, 'gradient_hooks', [])  # 如果模型内部已经注册过hooks，就直接使用
-    print(f"   注册了 {len(hooks)} 个梯度稳定钩子")
+
+    # 7. 注册DBC hooks (智能控制版)
+    # ------------------------------------------------------------
+    print(f"\n⚡ [步骤 7] DBC-DAC 状态: {mode_msg}")
+    
+    # 先清理旧钩子 (防止残留)
+    if hasattr(model, 'gradient_hooks'):
+        model.gradient_hooks = []
+    
+    if use_dbc:
+        # ✅ 开启模式：注册钩子
+        hooks = register_dbc_hooks(model)
+        print(f"   ✅ 已激活 {len(hooks)} 个梯度稳定钩子 (降落伞已打开)")
+    else:
+        # 🛑 禁用模式：确保裸奔
+        print(f"   🚫 梯度钩子已移除 (限制已解除)")
 
     # 8. 训练模型
     print(f"\n" + "="*60)
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 50  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
+    num_epochs = 30  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
