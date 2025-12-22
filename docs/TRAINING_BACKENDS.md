@@ -29,13 +29,13 @@
 
 ```bash
 # 方式1: 直接运行
-python train_hlbd_playground.py --dataset HLBD_Hardcore_Full.json --epochs 100
+python training/train_hlbd_playground.py --dataset HLBD_Hardcore_Full.json --epochs 100
 
 # 方式2: 统一启动器
-python train.py --backend playground --epochs 100
+python training/train.py --backend playground --epochs 100
 
 # 自定义参数
-python train_hlbd_playground.py \
+python training/train_hlbd_playground.py \
     --dataset HLBD_Hardcore_Full.json \
     --epochs 100 \
     --save-dir hlbd_playground \
@@ -99,7 +99,7 @@ deepspeed --num_gpus 2 train_deepspeed.py \
     --fp16
 
 # 方式2: 统一启动器
-python train.py --backend deepspeed \
+python training/train.py --backend deepspeed \
     --num-gpus 2 \
     --zero-stage 2 \
     --fp16 \
@@ -179,7 +179,7 @@ az login  # Azure登录
 
 ```bash
 # 方式1: 直接提交
-python train_azure_ml.py \
+python training/train_azure_ml.py \
     --subscription-id <YOUR_SUBSCRIPTION_ID> \
     --resource-group <YOUR_RESOURCE_GROUP> \
     --workspace-name <YOUR_WORKSPACE> \
@@ -189,14 +189,14 @@ python train_azure_ml.py \
     --vm-size Standard_NC6s_v3
 
 # 方式2: 统一启动器
-python train.py --backend azure \
+python training/train.py --backend azure \
     --azure-subscription-id <ID> \
     --azure-resource-group <RG> \
     --azure-workspace-name <WS> \
     --epochs 100
 
 # 超参数扫描
-python train_azure_ml.py \
+python training/train_azure_ml.py \
     --subscription-id <ID> \
     --resource-group <RG> \
     --workspace-name <WS> \
@@ -258,28 +258,28 @@ pip install transformers datasets accelerate wandb
 
 ```bash
 # 方式1: 基础训练
-python train_hf_trainer.py \
+python training/train_hf_trainer.py \
     --dataset HLBD_Hardcore_Full.json \
     --epochs 100 \
     --fp16
 
 # 方式2: 统一启动器
-python train.py --backend huggingface --epochs 100
+python training/train.py --backend huggingface --epochs 100
 
 # 启用Weights & Biases
-python train_hf_trainer.py \
+python training/train_hf_trainer.py \
     --wandb \
     --wandb-project apt-hlbd-training \
     --epochs 100
 
 # 启用早停
-python train_hf_trainer.py \
+python training/train_hf_trainer.py \
     --early-stopping \
     --early-stopping-patience 5 \
     --epochs 100
 
 # HuggingFace Trainer + DeepSpeed
-python train_hf_trainer.py \
+python training/train_hf_trainer.py \
     --deepspeed ds_config.json \
     --fp16 \
     --epochs 100
@@ -312,7 +312,7 @@ TrainingArguments(
 export HF_HUB_TOKEN=<YOUR_TOKEN>
 
 # 训练并上传
-python train_hf_trainer.py --epochs 100
+python training/train_hf_trainer.py --epochs 100
 # 模型会自动上传到 https://huggingface.co/apt-model-256d-6l
 ```
 
@@ -340,22 +340,22 @@ hf_output/
 
 ```bash
 # 查看所有可用后端
-python train.py --list-backends
+python training/train.py --list-backends
 
 # Playground训练
-python train.py --backend playground --epochs 100
+python training/train.py --backend playground --epochs 100
 
 # DeepSpeed训练
-python train.py --backend deepspeed --num-gpus 2 --zero-stage 2
+python training/train.py --backend deepspeed --num-gpus 2 --zero-stage 2
 
 # Azure ML训练
-python train.py --backend azure \
+python training/train.py --backend azure \
     --azure-subscription-id <ID> \
     --azure-resource-group <RG> \
     --azure-workspace-name <WS>
 
 # HuggingFace训练
-python train.py --backend huggingface --wandb --epochs 100
+python training/train.py --backend huggingface --wandb --epochs 100
 ```
 
 ---
@@ -392,32 +392,32 @@ python train.py --backend huggingface --wandb --epochs 100
 
 ```bash
 # Playground
-python train_hlbd_playground.py --resume checkpoint_epoch_50.pt
+python training/train_hlbd_playground.py --resume checkpoint_epoch_50.pt
 
 # DeepSpeed
 deepspeed train_deepspeed.py --load-checkpoint deepspeed_output/checkpoint_epoch_50
 
 # HuggingFace
-python train_hf_trainer.py --resume-from-checkpoint hf_output/checkpoint-500
+python training/train_hf_trainer.py --resume-from-checkpoint hf_output/checkpoint-500
 ```
 
 ### Q3: 如何验证HLBD模型？
 
 ```bash
-python verify_hlbd_model.py --model <模型路径> --dataset HLBD_Hardcore_Full.json
+python tools/verify_hlbd_model.py --model <模型路径> --dataset HLBD_Hardcore_Full.json
 ```
 
 ### Q4: 如何可视化训练？
 
 ```bash
 # 实时可视化
-python visualize_training.py --log-dir hlbd_playground --mode realtime
+python tools/visualize_training.py --log-dir hlbd_playground --mode realtime
 
 # 离线可视化
-python visualize_training.py --log-dir hlbd_playground --mode offline
+python tools/visualize_training.py --log-dir hlbd_playground --mode offline
 
 # 多训练监控
-python monitor_all_trainings.py
+python tools/monitor_all_trainings.py
 ```
 
 ### Q5: DeepSpeed OOM怎么办？
@@ -457,34 +457,34 @@ deepspeed train_deepspeed.py --train-batch-size 32
 python generate_hlbd_hardcore.py
 
 # 2. Playground训练
-python train.py --backend playground --epochs 100
+python training/train.py --backend playground --epochs 100
 
 # 3. 验证模型
-python verify_hlbd_model.py --model hlbd_playground/final_model.pt
+python tools/verify_hlbd_model.py --model hlbd_playground/final_model.pt
 
 # 4. 可视化结果
-python visualize_training.py --log-dir hlbd_playground --mode offline
+python tools/visualize_training.py --log-dir hlbd_playground --mode offline
 ```
 
 ### 进阶流程
 
 ```bash
 # 1. 多GPU DeepSpeed训练
-python train.py --backend deepspeed --num-gpus 4 --zero-stage 2 --epochs 100
+python training/train.py --backend deepspeed --num-gpus 4 --zero-stage 2 --epochs 100
 
 # 2. 实时监控
-python monitor_all_trainings.py &
+python tools/monitor_all_trainings.py &
 
 # 3. 验证和诊断
-python verify_hlbd_model.py --model deepspeed_output/checkpoint_epoch_100
-python diagnose_issues.py
+python tools/verify_hlbd_model.py --model deepspeed_output/checkpoint_epoch_100
+python tools/diagnose_issues.py
 ```
 
 ### 云端流程
 
 ```bash
 # 1. 提交Azure ML任务
-python train.py --backend azure \
+python training/train.py --backend azure \
     --azure-subscription-id <ID> \
     --azure-resource-group <RG> \
     --azure-workspace-name <WS> \

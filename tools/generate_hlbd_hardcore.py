@@ -241,7 +241,7 @@ def create_hardcore_dataset():
     return dataset
 
 
-def save_dataset(dataset, output_path="HLBD_Hardcore_Full.json"):
+def save_dataset(dataset, output_path="../data/HLBD_Hardcore_Full.json"):
     """保存数据集到JSON文件"""
     output_file = Path(output_path)
 

@@ -72,7 +72,7 @@
 
 ### 🚀 训练后端系统
 
-- **[训练后端使用指南](../TRAINING_BACKENDS.md)** ⭐ 新增
+- **[训练后端使用指南](TRAINING_BACKENDS.md)** ⭐ 新增
   - Playground训练（HLBD专用，Cosine重启学习率）
   - DeepSpeed分布式训练（ZeRO-2/3优化，支持超大模型）
   - Azure ML云端训练（MLflow跟踪，自动超参数调优）
@@ -81,7 +81,7 @@
 
 ### 📊 可视化与监控
 
-- **[训练可视化指南](../VISUALIZATION_GUIDE.md)** ⭐ 新增
+- **[训练可视化指南](VISUALIZATION_GUIDE.md)** ⭐ 新增
   - 科幻风格Loss地形图
   - 实时训练监控（每2秒刷新）
   - 多训练同时监控

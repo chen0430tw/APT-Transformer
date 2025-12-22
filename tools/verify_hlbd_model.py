@@ -263,7 +263,7 @@ def main():
 
     parser.add_argument('--model', type=str, required=True,
                        help='模型checkpoint路径')
-    parser.add_argument('--dataset', type=str, default='HLBD_Hardcore_Full.json',
+    parser.add_argument('--dataset', type=str, default='../data/HLBD_Hardcore_Full.json',
                        help='HLBD数据集路径')
     parser.add_argument('--sample', type=int, default=None,
                        help='每个模块采样数量（用于快速测试）')

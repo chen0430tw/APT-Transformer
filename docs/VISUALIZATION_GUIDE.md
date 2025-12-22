@@ -56,7 +56,7 @@ python train_control_experiment.py \
 
 **终端2 - 启动可视化（同时运行）**:
 ```bash
-python visualize_training.py \
+python tools/visualize_training.py \
     --log-dir control_experiments \
     --refresh 2.0
 ```
@@ -73,7 +73,7 @@ python visualize_training.py \
 
 ```bash
 # 查看已完成的训练结果
-python visualize_training.py \
+python tools/visualize_training.py \
     --log-dir control_experiments \
     --offline
 ```
@@ -181,20 +181,20 @@ APT     (霓虹粉):  ━━━━━━━━━━
 
 ```bash
 # 快速刷新（1秒）
-python visualize_training.py --refresh 1.0
+python tools/visualize_training.py --refresh 1.0
 
 # 慢速刷新（5秒，节省资源）
-python visualize_training.py --refresh 5.0
+python tools/visualize_training.py --refresh 5.0
 ```
 
 ### 监控不同目录
 
 ```bash
 # 监控HLBD训练
-python visualize_training.py --log-dir tests/saved_models
+python tools/visualize_training.py --log-dir tests/saved_models
 
 # 监控Playground训练
-python visualize_training.py --log-dir playground_checkpoints
+python tools/visualize_training.py --log-dir playground_checkpoints
 ```
 
 ### 保存可视化快照
@@ -259,8 +259,8 @@ python train_control_experiment.py --lr 3e-4 --save-dir exp_lr_3e4
 python train_control_experiment.py --lr 1e-3 --save-dir exp_lr_1e3
 
 # 对比可视化
-python visualize_training.py --log-dir exp_lr_3e4 &
-python visualize_training.py --log-dir exp_lr_1e3 &
+python tools/visualize_training.py --log-dir exp_lr_3e4 &
+python tools/visualize_training.py --log-dir exp_lr_1e3 &
 ```
 
 **观察**:
@@ -279,7 +279,7 @@ python visualize_training.py --log-dir exp_lr_1e3 &
 **解决**:
 ```bash
 # 降低刷新频率
-python visualize_training.py --refresh 5.0
+python tools/visualize_training.py --refresh 5.0
 ```
 
 ---
@@ -315,7 +315,7 @@ python train_control_experiment.py --epochs 10
 ```bash
 # Linux/Mac
 export MPLBACKEND=TkAgg
-python visualize_training.py
+python tools/visualize_training.py
 
 # 或安装TkInter
 # Ubuntu/Debian:
@@ -386,17 +386,17 @@ VAPORWAVE_THEME = {
 
 ```bash
 # 1. 降低刷新频率
-python visualize_training.py --refresh 5.0
+python tools/visualize_training.py --refresh 5.0
 
 # 2. 使用离线模式（训练完成后查看）
-python visualize_training.py --offline
+python tools/visualize_training.py --offline
 
 # 3. 如果显卡内存不足，在另一台机器上可视化
 # 机器A: 训练
 python train_control_experiment.py
 
 # 机器B: 可视化（通过共享文件系统或scp同步）
-python visualize_training.py --log-dir /path/to/shared/control_experiments
+python tools/visualize_training.py --log-dir /path/to/shared/control_experiments
 ```
 
 ---
@@ -451,7 +451,7 @@ python train_control_experiment.py \
     --save-dir control_experiments
 
 # Step 2: 启动可视化（终端2）
-python visualize_training.py \
+python tools/visualize_training.py \
     --log-dir control_experiments \
     --refresh 2.0
 
@@ -496,7 +496,7 @@ python visualize_training.py \
 ```bash
 # 最简单的开始方式
 python train_control_experiment.py --epochs 10 --batch-size 8 &
-python visualize_training.py --refresh 2.0
+python tools/visualize_training.py --refresh 2.0
 ```
 
 享受科幻风格的训练可视化体验！🚀✨

@@ -259,25 +259,25 @@ APT支持5种训练后端，满足从单卡到大规模云端训练的所有需�
 
 ```bash
 # 查看所有可用后端
-python train.py --list-backends
+python training/train.py --list-backends
 
 # Playground训练（推荐HLBD）
-python train.py --backend playground --epochs 100
+python training/train.py --backend playground --epochs 100
 
 # DeepSpeed分布式训练
-python train.py --backend deepspeed --num-gpus 4 --zero-stage 2
+python training/train.py --backend deepspeed --num-gpus 4 --zero-stage 2
 
 # Azure ML云端训练
-python train.py --backend azure \
+python training/train.py --backend azure \
   --azure-subscription-id <ID> \
   --azure-resource-group <RG> \
   --azure-workspace-name <WS>
 
 # HuggingFace + W&B
-python train.py --backend huggingface --wandb --epochs 100
+python training/train.py --backend huggingface --wandb --epochs 100
 ```
 
-**📖 完整文档**: [训练后端使用指南](TRAINING_BACKENDS.md)
+**📖 完整文档**: [训练后端使用指南](docs/docs/TRAINING_BACKENDS.md)
 
 **传统分布式训练**（单机多卡）：
 ```bash
@@ -380,6 +380,14 @@ APT-Transformer/
 #### 训练优化
 - **[Optuna超参数优化](docs/OPTUNA_GUIDE.md)** - 自动超参数搜索
 - **[SOSA训练监控](apt_model/core/training/)** - 实时监控和异常检测
+
+#### HLBD数据集训练
+- **[HLBD模块化训练指南](docs/hlbd/HLBD_MODULAR_TRAINING.md)** - 多数据集联合训练（10,000+样本）
+- **[快速开始指南](docs/hlbd/MODULAR_TRAINING_QUICKSTART.md)** - 30秒快速上手
+- **[数据集完成总结](docs/hlbd/DATASETS_COMPLETION_SUMMARY.md)** - HLBD Full & Hardcore数据集详解
+- **[HLBD Hardcore训练](docs/hlbd/HLBD_HARDCORE_TRAINING.md)** - 严格逻辑训练（5,042样本）
+- **[HLBD V2总结](docs/hlbd/HLBD_V2_SUMMARY.md)** - Hardcore V2完整报告
+- **[实现细节](docs/hlbd/MODULAR_TRAINING_IMPLEMENTATION.md)** - 技术实现说明
 
 #### 架构与集成
 - **[模块集成方案](docs/MODULE_INTEGRATION_PLAN.md)** - 插件架构和零侵入集成

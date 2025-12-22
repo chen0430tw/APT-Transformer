@@ -417,7 +417,7 @@ def main():
     parser.add_argument('--dataset', type=str, default='wikitext',
                         choices=['wikitext', 'hlbd'],
                         help='数据集类型')
-    parser.add_argument('--hlbd-path', type=str, default='HLBD_Hardcore_Full.json',
+    parser.add_argument('--hlbd-path', type=str, default='../data/HLBD_Hardcore_Full.json',
                         help='HLBD数据集路径')
     parser.add_argument('--max-samples', type=int, default=10000,
                         help='最大训练样本数 (用于快速测试)')

@@ -4,12 +4,12 @@ Write-Host "🚀 开始运行 APT Model 命令测试..." -ForegroundColor Green
 Write-Host ""
 
 # 运行测试
-python test_all_commands.py
+python scripts/testing/test_all_commands.py
 
 # 查看报告
 Write-Host ""
 Write-Host "📊 生成报告..." -ForegroundColor Cyan
-python view_test_report.py
+python scripts/testing/view_test_report.py
 
 Write-Host ""
 Write-Host "✅ 测试完成！" -ForegroundColor Green

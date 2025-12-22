@@ -194,6 +194,36 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 
 ---
 
+## Training Scripts (/training)
+- train.py                 : 统一训练启动器 - 支持5种后端(Playground/DeepSpeed/Azure/HuggingFace)一键切换
+- train_hlbd_playground.py : HLBD模块化训练 - 支持多数据集联合训练(10,000+样本)，自动格式识别，Cosine重启学习率
+- train_hlbd_modular.py    : HLBD模块化训练框架 - 独立的多数据集加载器示范实现
+- train_apt_playground.py  : APT Playground训练 - 通用APT模型训练
+- train_deepspeed.py       : DeepSpeed分布式训练 - ZeRO-2/3优化，支持CPU卸载和混合精度
+- train_azure_ml.py        : Azure ML云端训练 - MLflow实验跟踪，自动超参数扫描
+- train_hf_trainer.py      : HuggingFace Trainer集成 - W&B集成，早停回调，Hub自动上传
+- train_control_experiment.py : 对照实验训练 - 用于A/B测试和消融实验
+- resume_guide.py          : 训练恢复指南 - Checkpoint恢复和断点续训
+
+## Tools & Utilities (/tools)
+- check_training_backends.py : 后端代码质量检查器 - 语法验证、依赖检查、路径验证
+- diagnose_issues.py       : 系统诊断工具 - 自动检测依赖缺失、配置错误等8类问题
+- generate_hlbd_hardcore.py : HLBD数据集生成器 - 生成575样本的Hardcore数据集
+- monitor_all_trainings.py : 多训练监控器 - 自动发现并监控多个训练任务
+- visualize_training.py    : 训练可视化 - 科幻风格Loss地形图，6种子图实时刷新
+- demo_visualization.py    : 可视化演示 - 生成演示数据用于测试可视化系统
+- verify_hlbd_model.py     : HLBD模型验证器 - 检测模型"偷懒"行为和准确率
+- test_vocab_size.py       : 词汇表大小测试 - 验证tokenizer词汇表容量
+- mascot_render_fused45.py : 吉祥物渲染器 - ASCII艺术和Logo生成
+
+## Data Files (/data)
+- HLBD_Hardcore_Full.json  : HLBD Hardcore数据集 - 575样本，5模块(geometry/arithmetic/zodiac/physics/reverse_english)
+- HLBD_Hardcore_Full_V2.json : HLBD Hardcore V2数据集 - 5,042样本，扩充版严格逻辑训练
+- HLBD_Full_V2.json        : HLBD Full V2数据集 - 5,000样本，完整8层分层语言结构(包含Level 3句法层)
+
+## Archived Files (/archived)
+- pr/                      : 历史PR文档 - PR_DESCRIPTION.md等4个文件，保留用于参考
+
 ## Configuration Files
 - setup.py                 : Package setup (version 1.0.0)
 - requirements.txt         : Core dependencies (84 packages)
@@ -202,13 +232,16 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 - .env.example             : Environment variables template (160 lines)
 - Makefile                 : Build automation
 - config.json              : Module configuration
-- command_verification_report.md : CLI命令验证报告 - 12个命令的系统性检查，7个问题已修复(330行)
+- PR_HLBD_MODULAR_TRAINING.md : HLBD模块化训练PR说明 - 详细的功能介绍和合并检查清单
 
 ---
 
 ## Documentation (/docs)
+- README.md                : 文档中心索引 - 所有文档的导航和快速开始指南
 - APT_MODEL_HANDBOOK.md    : Complete handbook
 - INSTALLATION.md          : Installation guide
+- TRAINING_BACKENDS.md     : 训练后端使用指南 - 5种后端(Playground/DeepSpeed/Azure/HF)完整说明
+- VISUALIZATION_GUIDE.md   : 可视化使用指南 - 科幻风格Loss地形图、实时监控、多训练监控
 - DISTILLATION_PRINCIPLE.md : Knowledge distillation theory
 - TEACHER_API_GUIDE.md     : API-as-teacher guide
 - VISUAL_DISTILLATION_GUIDE.md : Multi-modal distillation
@@ -229,6 +262,22 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 - APX.md                   : APX format specification
 - HLBD.md                  : HLBD system
 - LAUNCHER_README.md       : GUI launcher guide
+- repo_schema.md           : 项目架构说明 - 完整的文件结构和技术特性详解
+
+## Documentation Subdirectories
+- hlbd/                    : HLBD数据集训练文档集
+  - README.md              : HLBD文档索引和快速开始
+  - HLBD_MODULAR_TRAINING.md : 模块化训练完整指南 - 工作原理、配置、调优
+  - MODULAR_TRAINING_QUICKSTART.md : 30秒快速开始指南
+  - MODULAR_TRAINING_IMPLEMENTATION.md : 技术实现细节和代码修改说明
+  - DATASETS_COMPLETION_SUMMARY.md : HLBD Full & Hardcore数据集详解
+  - HLBD_HARDCORE_TRAINING.md : HLBD Hardcore专门训练指南(5,042样本)
+  - HLBD_V2_SUMMARY.md     : HLBD Hardcore V2版本完整报告
+- testing/                 : 测试相关文档
+  - README_TEST.md         : 自动化测试工具使用指南
+  - 测试工具使用指南.md    : 中文测试指南
+- reports/                 : 报告文件
+  - command_verification_report.md : CLI命令验证报告
 
 ---
 
@@ -268,7 +317,18 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 - apt_eqi_manager.py       : EQI manager
 - apx_converter.py         : APX converter
 - eqi.py                   : EQI utilities
+- hlbd/                    : HLBD训练启动脚本集
+  - launch_hlbd_modular_training.py : 一键启动模块化训练 - 自动检查数据集和依赖
+  - launch_hlbd_hardcore_training.py : HLBD Hardcore训练启动器
+  - run_hlbd_hardcore_training.sh : Bash版本训练启动脚本
 - launchers/               : GUI launcher applications
+- testing/                 : 测试脚本目录
+  - test_all_commands.py   : 自动化命令测试 - 测试所有32+个CLI命令
+  - view_test_report.py    : 测试报告查看器 - 彩色报告和修复建议
+  - quick_test.sh/.bat/.ps1 : 快速测试运行器 - 跨平台支持
+- setup/                   : 安装配置脚本
+  - install_dependencies.sh : 依赖安装脚本
+  - fix_issues.sh          : 问题自动修复脚本
 
 ---
 
@@ -341,6 +401,10 @@ APT-Transformer (Autopoietic Transformer) is a production-ready PyTorch Transfor
 
 ### 10. 数据处理
 - **HLBD系统** - Hierarchical Language Bootstrap Data分层语言启蒙
+  - **模块化训练** - 支持多数据集联合训练(HLBD Full 5000 + Hardcore 5042 = 10,042样本)
+  - **自动格式识别** - 8层结构 vs 模块化Q&A格式自动检测
+  - **数据稀释学** - 自动混合打散防止模式坍缩，训练效率提升50%
+  - **Level 3句法层** - 确认句法结构(S = NP + VP)被正确训练使用
 - **多模态数据** - 文本+图像+音频联合数据加载
 - **HuggingFace集成** - 自动加载datasets和模型
 - **ETL流水线** - Extract/Transform/Load数据预处理编排
