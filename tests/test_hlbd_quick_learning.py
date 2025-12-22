@@ -47,6 +47,28 @@ class SimpleCharTokenizer_BACKUP:
         self.id_to_char = {v: k for k, v in self.vocab.items()}
         self.next_id = 10  # 从10开始，因为0-9已被特殊token占用
 
+        # ⭐ 新增：预编译正则表达式，匹配 [TAG]
+        self.tag_pattern = re.compile(r'(\[EMOJI\]|\[PHRASE\]|\[EN\]|\[PY\]|\[JP\]|\[KR\])')
+
+    def _tokenize_text(self, text):
+        """⭐ 核心修复：先切分标签，再切分字符"""
+        tokens = []
+        # 按标签切分
+        parts = self.tag_pattern.split(text)
+        for part in parts:
+            if part in self.vocab:
+                # 如果是标签，直接添加ID
+                tokens.append(self.vocab[part])
+            else:
+                # 如果是普通文本，逐字处理
+                for char in part:
+                    # 跳过空白字符（可选，看你需求）
+                    if char.strip():
+                        tokens.append(self._get_or_add_char(char))
+                    elif char == ' ': # 保留空格
+                        tokens.append(self._get_or_add_char(char))
+        return tokens
+
     def _get_or_add_char(self, char):
         """获取字符ID，如果不存在则添加"""
         if char not in self.char_to_id:
@@ -61,8 +83,7 @@ class SimpleCharTokenizer_BACKUP:
     def encode(self, text, return_tensors=None):
         """编码文本为ID序列"""
         ids = [self.bos_token_id]
-        for char in text:
-            ids.append(self._get_or_add_char(char))
+        ids.extend(self._tokenize_text(text))
         ids.append(self.eos_token_id)
 
         if return_tensors == 'pt':
@@ -72,9 +93,11 @@ class SimpleCharTokenizer_BACKUP:
     def __call__(self, text, max_length=64, padding='max_length',
                  truncation=True, return_tensors='pt'):
         """分词接口（兼容transformers）"""
-        ids = []
-        for char in text:
-            ids.append(self._get_or_add_char(char))
+        # ⭐ 使用新的切分逻辑 (支持 [EMOJI] 等标签)
+        ids = [self.bos_token_id]
+        token_ids = self._tokenize_text(text)
+        ids.extend(token_ids)
+        ids.append(self.eos_token_id)
 
         # 截断
         if truncation and len(ids) > max_length:
