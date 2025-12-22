@@ -30,22 +30,35 @@ class HLBDHardcoreGenerator:
         self.seen_inputs.add(input_text)
         return False
 
-    def generate_geometry(self, count=200) -> List[Dict]:
-        """生成几何题（扩展到200条）"""
+    def generate_geometry(self, count=800) -> List[Dict]:
+        """生成几何题（扩展到800条）"""
         problems = []
 
-        # 基础几何定义
+        # 基础几何定义 - 多种问法
         base_geometry = [
             ("三角形有几条边？", "3"),
+            ("三角形有多少条边？", "3"),
+            ("三角形的边数是？", "3"),
             ("正方形有几个直角？", "4"),
+            ("正方形有多少个直角？", "4"),
             ("圆形的半径与直径的关系是？", "直径是半径的2倍"),
+            ("圆的直径是半径的几倍？", "2倍"),
             ("平行四边形对边有什么关系？", "对边平行且相等"),
             ("三角形内角和是多少度？", "180度"),
+            ("三角形三个角加起来是多少度？", "180度"),
             ("等边三角形每个角是多少度？", "60度"),
+            ("等边三角形一个角多少度？", "60度"),
             ("矩形的对角线有什么特点？", "对角线相等且互相平分"),
             ("圆的周长公式是？", "C = 2πr"),
+            ("怎么计算圆的周长？", "C = 2πr"),
             ("圆的面积公式是？", "A = πr²"),
+            ("怎么计算圆的面积？", "A = πr²"),
             ("正方形的面积公式是？", "A = a²"),
+            ("怎么计算正方形面积？", "A = a²"),
+            ("长方形有几个直角？", "4"),
+            ("长方形有多少个直角？", "4"),
+            ("菱形对角线有什么特点？", "对角线互相垂直平分"),
+            ("等腰三角形有什么特点？", "两条边相等，两个底角相等"),
         ]
 
         for q, a in base_geometry:
@@ -87,41 +100,92 @@ class HLBDHardcoreGenerator:
                 if not self.is_duplicate(q) and len(problems) < count:
                     problems.append({"input": q, "output": a})
 
-        # 扩展：具体数值计算
-        for _ in range(count - len(problems)):
-            shape_type = random.choice(['正方形', '长方形', '圆形', '三角形'])
+        # 扩展：大量具体数值计算
+        calculation_types = ['正方形面积', '长方形面积', '圆直径', '三角形角度',
+                            '正方形周长', '长方形周长', '三角形底角']
 
-            if shape_type == '正方形':
-                side = random.randint(1, 20)
+        while len(problems) < count:
+            calc_type = random.choice(calculation_types)
+
+            if calc_type == '正方形面积':
+                side = random.randint(1, 50)
                 area = side * side
-                q = f"边长为{side}的正方形面积是多少？"
+                patterns = [
+                    f"边长为{side}的正方形面积是多少？",
+                    f"正方形边长{side}，面积是？",
+                    f"边长{side}的正方形，求面积",
+                ]
+                q = random.choice(patterns)
                 a = str(area)
-            elif shape_type == '长方形':
-                length = random.randint(1, 20)
-                width = random.randint(1, 20)
+            elif calc_type == '正方形周长':
+                side = random.randint(1, 50)
+                perimeter = side * 4
+                patterns = [
+                    f"边长为{side}的正方形周长是多少？",
+                    f"正方形边长{side}，周长是？",
+                    f"边长{side}的正方形，求周长",
+                ]
+                q = random.choice(patterns)
+                a = str(perimeter)
+            elif calc_type == '长方形面积':
+                length = random.randint(1, 30)
+                width = random.randint(1, 30)
                 area = length * width
-                q = f"长{length}宽{width}的长方形面积是多少？"
+                patterns = [
+                    f"长{length}宽{width}的长方形面积是多少？",
+                    f"长方形长{length}宽{width}，面积是？",
+                    f"长{length}、宽{width}的长方形，求面积",
+                ]
+                q = random.choice(patterns)
                 a = str(area)
-            elif shape_type == '圆形':
-                radius = random.randint(1, 10)
-                q = f"半径为{radius}的圆，直径是多少？"
+            elif calc_type == '长方形周长':
+                length = random.randint(1, 30)
+                width = random.randint(1, 30)
+                perimeter = 2 * (length + width)
+                patterns = [
+                    f"长{length}宽{width}的长方形周长是多少？",
+                    f"长方形长{length}宽{width}，周长是？",
+                ]
+                q = random.choice(patterns)
+                a = str(perimeter)
+            elif calc_type == '圆直径':
+                radius = random.randint(1, 20)
+                patterns = [
+                    f"半径为{radius}的圆，直径是多少？",
+                    f"圆的半径是{radius}，直径是？",
+                    f"半径{radius}的圆，求直径",
+                ]
+                q = random.choice(patterns)
                 a = str(radius * 2)
-            else:  # 三角形
-                angles = random.choice([
-                    (60, 60, "等边三角形"),
-                    (90, 45, "直角三角形"),
-                    (30, 60, "三角形"),
-                ])
-                q = f"一个三角形有一个{angles[0]}度的角，另一个{angles[1]}度的角，第三个角是多少度？"
-                a = f"{180 - angles[0] - angles[1]}度"
+            elif calc_type == '三角形角度':
+                angle1 = random.randint(20, 80)
+                angle2 = random.randint(20, 160 - angle1)
+                angle3 = 180 - angle1 - angle2
+                patterns = [
+                    f"一个三角形有一个{angle1}度的角，另一个{angle2}度的角，第三个角是多少度？",
+                    f"三角形两个角分别是{angle1}度和{angle2}度，第三个角是多少度？",
+                    f"三角形的两个角是{angle1}°和{angle2}°，求第三个角",
+                ]
+                q = random.choice(patterns)
+                a = f"{angle3}度"
+            else:  # 三角形底角
+                # 等腰三角形顶角求底角
+                top_angle = random.randint(20, 140)
+                base_angle = (180 - top_angle) // 2
+                patterns = [
+                    f"等腰三角形顶角是{top_angle}度，底角是多少度？",
+                    f"等腰三角形的顶角为{top_angle}度，求底角",
+                ]
+                q = random.choice(patterns)
+                a = f"{base_angle}度"
 
             if not self.is_duplicate(q):
                 problems.append({"input": q, "output": a})
 
         return problems[:count]
 
-    def generate_arithmetic(self, count=2000) -> List[Dict]:
-        """生成算术题（扩展到2000条）"""
+    def generate_arithmetic(self, count=2500) -> List[Dict]:
+        """生成算术题（扩展到2500条）"""
         problems = []
 
         # 基础四则运算（保留原有的20条）
@@ -242,65 +306,106 @@ class HLBDHardcoreGenerator:
             if not self.is_duplicate(q) and len(problems) < count:
                 problems.append({"input": q, "output": str(result)})
 
+        # 扩展：三步运算（增加复杂度）
+        for _ in range(min(600, count - len(problems))):
+            # 简单的三步加减混合
+            a, b, c, d = random.randint(1, 30), random.randint(1, 30), random.randint(1, 30), random.randint(1, 30)
+
+            op_type = random.choice(['add3', 'mixed', 'mult_add'])
+
+            if op_type == 'add3':
+                result = a + b + c + d
+                q = f"{a} + {b} + {c} + {d} = ?"
+            elif op_type == 'mixed':
+                if a + b >= c + d:
+                    result = a + b - c + d
+                    q = f"{a} + {b} - {c} + {d} = ?"
+                else:
+                    continue
+            else:  # mult_add
+                small_a, small_b, small_c = random.randint(2, 10), random.randint(2, 10), random.randint(1, 20)
+                result = small_a * small_b + small_c
+                q = f"{small_a} × {small_b} + {small_c} = ?"
+
+            if not self.is_duplicate(q):
+                problems.append({"input": q, "output": str(result)})
+
         return problems[:count]
 
-    def generate_zodiac(self, count=300) -> List[Dict]:
-        """生成生肖题（扩展到300条）"""
+    def generate_zodiac(self, count=600) -> List[Dict]:
+        """生成生肖题（扩展到600条）"""
         problems = []
 
         zodiacs = ["鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪"]
 
-        # 基础序列（保留原有）
+        # 基础序列 - 多种问法
+        question_patterns_next = [
+            "{zodiac}后面是什么生肖？",
+            "{zodiac}之后是什么？",
+            "{zodiac}的下一个生肖是？",
+            "十二生肖中{zodiac}后面是？",
+        ]
+
         for i, zodiac in enumerate(zodiacs):
             next_zodiac = zodiacs[(i + 1) % 12]
-            q = f"{zodiac}后面是什么生肖？"
-            if not self.is_duplicate(q):
-                problems.append({"input": q, "output": next_zodiac})
+            for pattern in question_patterns_next:
+                q = pattern.format(zodiac=zodiac)
+                if not self.is_duplicate(q) and len(problems) < count:
+                    problems.append({"input": q, "output": next_zodiac})
 
-        # 位置查询
-        questions = [
-            ("十二生肖第一位是？", "鼠"),
-            ("十二生肖第五位是？", "龙"),
-            ("十二生肖最后一位是？", "猪"),
+        # 扩展：前面是什么 - 多种问法
+        question_patterns_prev = [
+            "{zodiac}前面是什么生肖？",
+            "{zodiac}之前是什么？",
+            "{zodiac}的上一个生肖是？",
+            "十二生肖中{zodiac}前面是？",
         ]
-        for q, a in questions:
-            if not self.is_duplicate(q):
-                problems.append({"input": q, "output": a})
 
-        # 扩展：前面是什么
         for i, zodiac in enumerate(zodiacs):
             prev_zodiac = zodiacs[(i - 1) % 12]
-            q = f"{zodiac}前面是什么生肖？"
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": prev_zodiac})
-
-        # 扩展：位置查询（所有12个位置）
-        for i, zodiac in enumerate(zodiacs):
-            q = f"十二生肖第{i+1}位是什么？"
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": zodiac})
-
-        # 扩展：间隔查询
-        for i, zodiac in enumerate(zodiacs):
-            next2 = zodiacs[(i + 2) % 12]
-            next3 = zodiacs[(i + 3) % 12]
-            questions = [
-                (f"{zodiac}往后数2个是什么生肖？", next2),
-                (f"{zodiac}往后数3个是什么生肖？", next3),
-            ]
-            for q, a in questions:
+            for pattern in question_patterns_prev:
+                q = pattern.format(zodiac=zodiac)
                 if not self.is_duplicate(q) and len(problems) < count:
-                    problems.append({"input": q, "output": a})
+                    problems.append({"input": q, "output": prev_zodiac})
 
-        # 扩展：年份计算
+        # 扩展：位置查询（所有12个位置）- 多种问法
+        position_patterns = [
+            "十二生肖第{pos}位是什么？",
+            "十二生肖排第{pos}的是？",
+            "生肖排序第{pos}位是哪个？",
+        ]
+
+        for i, zodiac in enumerate(zodiacs):
+            for pattern in position_patterns:
+                q = pattern.format(pos=i+1)
+                if not self.is_duplicate(q) and len(problems) < count:
+                    problems.append({"input": q, "output": zodiac})
+
+        # 扩展：间隔查询 - 往后数2-6个
+        for i, zodiac in enumerate(zodiacs):
+            for offset in range(2, 7):
+                next_n = zodiacs[(i + offset) % 12]
+                questions = [
+                    (f"{zodiac}往后数{offset}个是什么生肖？", next_n),
+                    (f"{zodiac}后面第{offset}个是什么？", next_n),
+                ]
+                for q, a in questions:
+                    if not self.is_duplicate(q) and len(problems) < count:
+                        problems.append({"input": q, "output": a})
+
+        # 扩展：年份计算 - 更多年份
         base_year = 2020  # 鼠年
-        for offset in range(0, 60, 5):  # 每5年一个样本
+        for offset in range(0, 120):  # 120年
             year = base_year + offset
             zodiac_index = offset % 12
             zodiac = zodiacs[zodiac_index]
-            q = f"{year}年是什么生肖年？"
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": f"{zodiac}年"})
+            patterns = [
+                f"{year}年是什么生肖年？",
+                f"{year}年属什么？",
+            ]
+            for pattern in patterns:
+                if not self.is_duplicate(pattern) and len(problems) < count:
+                    problems.append({"input": pattern, "output": f"{zodiac}年"})
 
         # 扩展：属性关联
         zodiac_elements = {
@@ -310,21 +415,14 @@ class HLBDHardcoreGenerator:
         }
 
         for zodiac, element in zodiac_elements.items():
-            q = f"生肖{zodiac}属五行中的什么？"
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": element})
-
-        # 扩展：相冲相合
-        zodiac_clash = {
-            "鼠": "马", "牛": "羊", "虎": "猴", "兔": "鸡",
-            "龙": "狗", "蛇": "猪", "马": "鼠", "羊": "牛",
-            "猴": "虎", "鸡": "兔", "狗": "龙", "猪": "蛇"
-        }
-
-        for zodiac, clash in zodiac_clash.items():
-            q = f"生肖{zodiac}和什么生肖相冲？"
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": f"生肖{clash}"})
+            questions = [
+                f"生肖{zodiac}属五行中的什么？",
+                f"{zodiac}的五行属性是？",
+                f"十二生肖中{zodiac}属什么五行？",
+            ]
+            for q in questions:
+                if not self.is_duplicate(q) and len(problems) < count:
+                    problems.append({"input": q, "output": element})
 
         return problems[:count]
 
@@ -510,13 +608,16 @@ class HLBDHardcoreGenerator:
             "{word}用英语怎么说？",
             "{word}的英文翻译是？",
             "{word}用英文怎么说？",
+            "{word}的英语是什么？",
+            "英文中{word}怎么说？",
         ]
 
+        # 为每个词生成所有问法变体
         for chinese, english in vocabulary.items():
-            pattern = random.choice(question_patterns)
-            q = pattern.format(word=chinese)
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": english})
+            for pattern in question_patterns:
+                q = pattern.format(word=chinese)
+                if not self.is_duplicate(q) and len(problems) < count:
+                    problems.append({"input": q, "output": english})
 
         # 扩展：常用短语
         phrases = {
@@ -540,16 +641,21 @@ class HLBDHardcoreGenerator:
             "等一下": "Wait a moment",
             "别担心": "Don't worry",
             "很高兴见到你": "Nice to meet you",
+            "对不起打扰了": "Sorry to bother you",
+            "祝你成功": "Wish you success",
+            "一路平安": "Have a safe trip",
+            "保重": "Take care",
+            "开心点": "Cheer up",
         }
 
+        # 为每个短语生成所有问法变体
         for chinese, english in phrases.items():
             for pattern in question_patterns:
                 q = pattern.format(word=chinese)
                 if not self.is_duplicate(q) and len(problems) < count:
                     problems.append({"input": q, "output": english})
-                    break
 
-        # 扩展：简单句子
+        # 扩展：简单句子（大幅增加）
         sentences = {
             "我喜欢读书": "I like reading",
             "他在学校": "He is at school",
@@ -561,12 +667,50 @@ class HLBDHardcoreGenerator:
             "你叫什么名字": "What's your name",
             "你多大了": "How old are you",
             "你来自哪里": "Where are you from",
+            "我爱我的家人": "I love my family",
+            "他正在吃饭": "He is eating",
+            "她在看电视": "She is watching TV",
+            "我想喝水": "I want to drink water",
+            "今天星期几": "What day is it today",
+            "现在几点了": "What time is it now",
+            "我住在北京": "I live in Beijing",
+            "他是我的朋友": "He is my friend",
+            "这个多少钱": "How much is this",
+            "我需要帮助": "I need help",
+            "天气真冷": "It's very cold",
+            "天气真热": "It's very hot",
+            "我很开心": "I'm very happy",
+            "我很难过": "I'm very sad",
+            "这很简单": "This is easy",
+            "这很难": "This is difficult",
+            "我在工作": "I'm working",
+            "我在学习": "I'm studying",
+            "你在干什么": "What are you doing",
+            "我会说中文": "I can speak Chinese",
+            "他会游泳": "He can swim",
+            "她会唱歌": "She can sing",
+            "我喜欢音乐": "I like music",
+            "我喜欢运动": "I like sports",
+            "这是我的朋友": "This is my friend",
+            "欢迎来我家": "Welcome to my home",
+            "祝你玩得开心": "Have fun",
+            "我想你": "I miss you",
+            "我找不到了": "I can't find it",
+            "这太贵了": "This is too expensive",
         }
 
+        sentence_patterns = [
+            "'{sent}'用英语怎么说？",
+            "'{sent}'的英文是？",
+            "'{sent}'用英文怎么说？",
+            "如何用英语表达'{sent}'？",
+        ]
+
         for chinese, english in sentences.items():
-            q = f"'{chinese}'用英语怎么说？"
-            if not self.is_duplicate(q) and len(problems) < count:
-                problems.append({"input": q, "output": english})
+            for pattern in sentence_patterns:
+                q = pattern.format(sent=chinese)
+                if not self.is_duplicate(q) and len(problems) < count:
+                    problems.append({"input": q, "output": english})
 
         return problems[:count]
 
@@ -592,23 +736,23 @@ class HLBDHardcoreGenerator:
 
         # 生成各模块数据 (增加目标以达到5000+)
         print("🔢 正在生成几何题...")
-        dataset["data"]["geometry"] = self.generate_geometry(400)
+        dataset["data"]["geometry"] = self.generate_geometry(860)
         print(f"   ✓ 几何题: {len(dataset['data']['geometry'])} 条")
 
         print("🔢 正在生成算术题...")
-        dataset["data"]["arithmetic"] = self.generate_arithmetic(2500)
+        dataset["data"]["arithmetic"] = self.generate_arithmetic(2700)
         print(f"   ✓ 算术题: {len(dataset['data']['arithmetic'])} 条")
 
         print("🐉 正在生成生肖题...")
-        dataset["data"]["zodiac"] = self.generate_zodiac(600)
+        dataset["data"]["zodiac"] = self.generate_zodiac(610)
         print(f"   ✓ 生肖题: {len(dataset['data']['zodiac'])} 条")
 
         print("⚡ 正在生成物理题...")
-        dataset["data"]["physics"] = self.generate_physics(800)
+        dataset["data"]["physics"] = self.generate_physics(850)
         print(f"   ✓ 物理题: {len(dataset['data']['physics'])} 条")
 
         print("🌍 正在生成英文翻译题...")
-        dataset["data"]["reverse_english"] = self.generate_reverse_english(1500)
+        dataset["data"]["reverse_english"] = self.generate_reverse_english(1000)
         print(f"   ✓ 英文翻译题: {len(dataset['data']['reverse_english'])} 条")
 
         # 数据稀释学：打散顺序，混合不同模块
