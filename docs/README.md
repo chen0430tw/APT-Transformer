@@ -70,6 +70,23 @@
   - 多目标优化
   - 贝叶斯优化策略
 
+### 🚀 训练后端系统
+
+- **[训练后端使用指南](../TRAINING_BACKENDS.md)** ⭐ 新增
+  - Playground训练（HLBD专用，Cosine重启学习率）
+  - DeepSpeed分布式训练（ZeRO-2/3优化，支持超大模型）
+  - Azure ML云端训练（MLflow跟踪，自动超参数调优）
+  - HuggingFace Trainer（W&B、TensorBoard、Hub集成）
+  - 统一训练启动器（`train.py`一键切换后端）
+
+### 📊 可视化与监控
+
+- **[训练可视化指南](../VISUALIZATION_GUIDE.md)** ⭐ 新增
+  - 科幻风格Loss地形图
+  - 实时训练监控（每2秒刷新）
+  - 多训练同时监控
+  - 6种子图（3D地形、梯度流、LR曲线等）
+
 ### 🔧 训练监控与优化
 
 - **[SOSA训练监控](../apt_model/core/training/README.md)**

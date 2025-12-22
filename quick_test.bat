@@ -2,20 +2,67 @@
 REM 快速运行测试并查看报告 - Windows 版本
 chcp 65001 >nul 2>&1
 
-echo 🚀 开始运行 APT Model 命令测试...
+echo 🚀 开始运行 APT Model 测试套件...
 echo.
 
-REM 运行测试
-python test_all_commands.py
+REM 1. 基础命令测试
+echo ========================================
+echo 1️⃣  基础命令测试
+echo ========================================
+if exist test_all_commands.py (
+    python test_all_commands.py
+    echo.
+) else (
+    echo ⚠️  test_all_commands.py 不存在，跳过
+    echo.
+)
 
-REM 查看报告
-echo.
-echo 📊 生成报告...
-python view_test_report.py
+REM 2. 训练后端代码检查
+echo ========================================
+echo 2️⃣  训练后端代码检查
+echo ========================================
+if exist check_training_backends.py (
+    python check_training_backends.py
+    echo.
+) else (
+    echo ⚠️  check_training_backends.py 不存在，跳过
+    echo.
+)
+
+REM 3. HLBD系统诊断
+echo ========================================
+echo 3️⃣  HLBD系统诊断
+echo ========================================
+if exist diagnose_issues.py (
+    python diagnose_issues.py
+    echo.
+) else (
+    echo ⚠️  diagnose_issues.py 不存在，跳过
+    echo.
+)
+
+REM 4. 生成测试报告
+echo ========================================
+echo 4️⃣  生成测试报告
+echo ========================================
+if exist view_test_report.py (
+    python view_test_report.py
+    echo.
+) else (
+    echo ⚠️  view_test_report.py 不存在，跳过
+    echo.
+)
 
 echo.
-echo ✅ 测试完成！
+echo ========================================
+echo ✅ 所有测试完成！
+echo ========================================
 echo.
-echo 日志文件位置: test_logs\
-echo 你可以将 test_logs\ 目录中的文件发送给开发者进行修复
+echo 📂 日志文件位置: test_logs\
+echo 💡 你可以将 test_logs\ 目录中的文件发送给开发者进行修复
+echo.
+echo 🔗 相关文档:
+echo    - TRAINING_BACKENDS.md: 训练后端使用指南
+echo    - VISUALIZATION_GUIDE.md: 可视化使用指南
+echo.
 pause
