@@ -282,6 +282,19 @@ class ControlExperimentTrainer:
         print(f"   对照组: {control_ckpt}")
         print(f"   实验组: {autopoietic_ckpt}")
 
+    def save_progress_report(self, save_dir: str):
+        """保存实时进度报告（用于可视化）"""
+        report_path = Path(save_dir) / "experiment_report.json"
+        report = {
+            'control_losses': list(self.control_losses),
+            'autopoietic_losses': list(self.autopoietic_losses),
+            'current_epoch': len(self.control_losses),
+            'timestamp': time.time()
+        }
+
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+
 
 # ============================================================================
 # 主函数
@@ -392,6 +405,9 @@ def main():
         print(f"\n   对照组损失: {results['control_loss']:.4f}")
         print(f"   实验组损失: {results['autopoietic_loss']:.4f}")
         print(f"   用时: {results['epoch_time']:.2f}s")
+
+        # 🎨 实时保存进度（用于可视化）
+        trainer.save_progress_report(args.save_dir)
 
         # 定期评估
         if (epoch + 1) % args.save_interval == 0:
