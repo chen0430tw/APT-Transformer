@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
 """
 HLBD Playground训练脚本
-使用APT Playground架构训练HLBD Hardcore数据集
+使用APT Playground架构训练HLBD数据集（支持模块化多数据集训练）
 
 特性:
+- 🔗 模块化训练 - 支持同时加载多个HLBD数据集
+- 📊 自动格式识别 - HLBD Full (8层) + HLBD Hardcore (模块化)
 - 🎢 Playground Theory (CosineAnnealingWarmRestarts)
 - 🚀 RTX 3070优化 (混合精度 + 梯度累积)
-- 🏷️  支持动态标签 ([EMOJI], [EN], [PY], [JP], [KR])
+- 🏷️  支持动态标签 ([EMOJI], [EN], [PY], [JP], [KR], [PHRASE])
 - 🔧 DBC-DAC梯度稳定
 - 📊 实时可视化支持
+- 🎲 数据稀释学 - 自动打散混合，防止模式坍缩
+
+数据集格式支持:
+1. HLBD Full: 8层分层语言结构 (包含Level 3句法层)
+2. HLBD Hardcore: 严格逻辑问答 (几何、算术、生肖、物理、英文)
+
+使用示例:
+  # 单数据集
+  python train_hlbd_playground.py --dataset data/HLBD_Hardcore_Full_V2.json
+
+  # 多数据集联合训练 (~10,000样本)
+  python train_hlbd_playground.py --datasets data/HLBD_Full_V2.json data/HLBD_Hardcore_Full_V2.json --epochs 50
 """
 
 import os
@@ -115,30 +129,159 @@ class DynamicTagTokenizer:
 # ============================================================================
 
 class HLBDPlaygroundDataset(Dataset):
-    """HLBD Hardcore数据集"""
+    """HLBD模块化数据集 - 支持多数据集和多格式"""
 
-    def __init__(self, json_path: str, tokenizer: DynamicTagTokenizer, max_len: int = 128):
+    def __init__(self, json_paths, tokenizer: DynamicTagTokenizer, max_len: int = 128):
+        """
+        初始化HLBD数据集
+
+        Args:
+            json_paths: 单个路径(str)或多个路径(list)
+            tokenizer: DynamicTagTokenizer实例
+            max_len: 最大序列长度
+        """
         self.tokenizer = tokenizer
         self.max_len = max_len
 
-        print(f"📂 加载HLBD数据集: {json_path}")
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        # 统一处理为列表
+        if isinstance(json_paths, str):
+            json_paths = [json_paths]
 
-        # 合并所有模块
         self.pairs = []
-        for module_name, module_data in data['data'].items():
-            for item in module_data:
-                self.pairs.append((item['input'], item['output']))
+        self.dataset_stats = {}
 
-        print(f"   ✓ 加载 {len(self.pairs)} 个训练对")
+        print(f"\n📚 模块化HLBD数据集加载器")
+        print(f"   数据集数量: {len(json_paths)}")
+        print("=" * 60)
+
+        # 加载所有数据集
+        for i, json_path in enumerate(json_paths, 1):
+            print(f"\n📂 [{i}/{len(json_paths)}] 加载数据集: {json_path}")
+            dataset_pairs = self._load_single_dataset(json_path)
+
+            if dataset_pairs:
+                self.pairs.extend(dataset_pairs)
+                dataset_name = Path(json_path).stem
+                self.dataset_stats[dataset_name] = len(dataset_pairs)
+                print(f"   ✓ 成功加载 {len(dataset_pairs)} 个训练对")
+            else:
+                print(f"   ⚠️  数据集为空或加载失败")
+
+        # 打散混合
+        import random
+        random.shuffle(self.pairs)
+
+        print(f"\n📊 数据集统计:")
+        for name, count in self.dataset_stats.items():
+            percentage = count / len(self.pairs) * 100 if self.pairs else 0
+            print(f"   {name}: {count} 对 ({percentage:.1f}%)")
+        print(f"   总计: {len(self.pairs)} 个训练对")
+        print(f"   ✓ 已混合打散")
 
         # 预填充词汇表（避免多进程陷阱）
-        print(f"   预填充词汇表...")
+        print(f"\n🔤 预填充词汇表...")
         for src, tgt in self.pairs:
             self.tokenizer.encode(src)
             self.tokenizer.encode(tgt)
         print(f"   ✓ 词汇表大小: {len(self.tokenizer.char_to_id)}")
+        print("=" * 60)
+
+    def _load_single_dataset(self, json_path: str):
+        """加载单个数据集并转换为统一格式"""
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # 检测数据集类型
+            if 'samples' in data:
+                # HLBD Full格式（8层结构）
+                print(f"   格式: HLBD Full (8层结构)")
+                return self._process_hlbd_full(data['samples'])
+            elif 'data' in data:
+                # HLBD Hardcore格式（模块化）
+                print(f"   格式: HLBD Hardcore (模块化)")
+                return self._process_hlbd_hardcore(data['data'])
+            else:
+                print(f"   ⚠️  未知的数据集格式")
+                return []
+
+        except Exception as e:
+            print(f"   ❌ 加载失败: {e}")
+            return []
+
+    def _process_hlbd_hardcore(self, data):
+        """处理HLBD Hardcore格式（模块化Q&A）"""
+        pairs = []
+        for module_name, module_data in data.items():
+            for item in module_data:
+                src = item['input']
+                tgt = item['output']
+                pairs.append((src, tgt))
+        return pairs
+
+    def _process_hlbd_full(self, samples):
+        """处理HLBD Full格式（8层结构）"""
+        pairs = []
+
+        for sample in samples:
+            concept = sample.get('concept', '')
+
+            # 构建输入：概念 + 关键层级信息
+            input_parts = [f"概念: {concept}"]
+
+            # Level 1: 字卡 + Emoji
+            if 'level_1' in sample:
+                char_card = sample['level_1'].get('字卡', '')
+                emoji = sample['level_1'].get('emoji', '')
+                input_parts.append(f"[EMOJI] {char_card} {emoji}")
+
+            # Level 2: 短语
+            if 'level_2' in sample:
+                phrase = sample['level_2'].get('短语', '')
+                input_parts.append(f"[PHRASE] {phrase}")
+
+            # Level 3: 数学（句法结构）← 重要！
+            if 'level_3' in sample:
+                math_expr = sample['level_3'].get('数学', '')
+                input_parts.append(f"句法结构: {math_expr}")
+
+            input_text = "\n".join(input_parts)
+
+            # 构建输出：多语言翻译
+            output_parts = []
+
+            # Level 4: 拼音
+            if 'level_4' in sample:
+                pinyin = sample['level_4'].get('拼音', '')
+                output_parts.append(f"[PY] {pinyin}")
+
+            # Level 5: 英文
+            if 'level_5' in sample:
+                english = sample['level_5'].get('英文', '')
+                output_parts.append(f"[EN] {english}")
+
+            # Level 6: 中文
+            if 'level_6' in sample:
+                chinese = sample['level_6'].get('中文', '')
+                output_parts.append(f"{chinese}")
+
+            # Level 7: 日文
+            if 'level_7' in sample:
+                japanese = sample['level_7'].get('日文', '')
+                if japanese:
+                    output_parts.append(f"[JP] {japanese}")
+
+            # Level 8: 韩文
+            if 'level_8' in sample:
+                korean = sample['level_8'].get('韩文', '')
+                if korean:
+                    output_parts.append(f"[KR] {korean}")
+
+            output_text = "\n".join(output_parts)
+
+            pairs.append((input_text, output_text))
+
+        return pairs
 
     def __len__(self):
         return len(self.pairs)
@@ -228,12 +371,14 @@ class HLBDPlaygroundTrainer:
         model: APTModel,
         train_loader: DataLoader,
         tokenizer: DynamicTagTokenizer,
+        dataset_stats: dict = None,
         device: str = 'cuda'
     ):
         self.config = config
         self.model = model.to(device)
         self.train_loader = train_loader
         self.tokenizer = tokenizer
+        self.dataset_stats = dataset_stats or {}
         self.device = device
 
         # 优化器
@@ -334,7 +479,8 @@ class HLBDPlaygroundTrainer:
             'tokenizer_next_id': self.tokenizer.next_id,
             'tokenizer_vocab_size': self.tokenizer.vocab_size,
             'config': self.config.__dict__,
-            'losses': self.losses
+            'losses': self.losses,
+            'dataset_stats': self.dataset_stats  # 保存数据集统计
         }
 
         if self.scaler:
@@ -342,6 +488,12 @@ class HLBDPlaygroundTrainer:
 
         torch.save(checkpoint, save_path)
         print(f"✅ Checkpoint已保存: {save_path}")
+
+        # 如果是多数据集训练，显示统计信息
+        if len(self.dataset_stats) > 1:
+            print(f"   数据集来源:")
+            for name, count in self.dataset_stats.items():
+                print(f"     - {name}: {count} 样本")
 
     def save_progress_report(self, save_dir: str):
         """保存进度报告（用于可视化）"""
@@ -361,10 +513,26 @@ class HLBDPlaygroundTrainer:
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='HLBD Playground训练')
+    parser = argparse.ArgumentParser(
+        description='HLBD Playground训练 - 支持单数据集和多数据集模块化训练',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例用法:
+  # 单数据集训练（向后兼容）
+  python train_hlbd_playground.py --dataset data/HLBD_Hardcore_Full_V2.json
 
-    parser.add_argument('--dataset', type=str, default='../data/HLBD_Hardcore_Full.json',
-                       help='HLBD数据集路径')
+  # 多数据集模块化训练
+  python train_hlbd_playground.py --datasets data/HLBD_Full_V2.json data/HLBD_Hardcore_Full_V2.json
+
+  # 自定义训练参数
+  python train_hlbd_playground.py --datasets data/*.json --epochs 50 --save-dir models/hlbd_combined
+        """
+    )
+
+    parser.add_argument('--dataset', type=str, default=None,
+                       help='单个HLBD数据集路径（向后兼容）')
+    parser.add_argument('--datasets', nargs='+', default=None,
+                       help='多个HLBD数据集路径（模块化训练）')
     parser.add_argument('--epochs', type=int, default=100,
                        help='训练轮数')
     parser.add_argument('--save-dir', type=str, default='hlbd_playground',
@@ -373,6 +541,18 @@ def main():
                        help='保存间隔')
 
     args = parser.parse_args()
+
+    # 处理数据集参数
+    if args.datasets:
+        # 多数据集模式
+        dataset_paths = args.datasets
+    elif args.dataset:
+        # 单数据集模式（向后兼容）
+        dataset_paths = args.dataset
+    else:
+        # 默认使用HLBD Hardcore
+        dataset_paths = '../data/HLBD_Hardcore_Full.json'
+        print(f"⚠️  未指定数据集，使用默认: {dataset_paths}\n")
 
     # 设备
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -385,8 +565,8 @@ def main():
     print(f"\n🔤 初始化Tokenizer（支持动态标签）...")
     tokenizer = DynamicTagTokenizer(vocab_size=5000)
 
-    # 数据集
-    dataset = HLBDPlaygroundDataset(args.dataset, tokenizer)
+    # 数据集（支持单个或多个）
+    dataset = HLBDPlaygroundDataset(dataset_paths, tokenizer)
 
     # DataLoader
     train_loader = DataLoader(
@@ -421,6 +601,7 @@ def main():
         model=model,
         train_loader=train_loader,
         tokenizer=tokenizer,
+        dataset_stats=dataset.dataset_stats,  # 传递数据集统计
         device=device
     )
 
