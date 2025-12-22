@@ -4,6 +4,8 @@
 
 import sys
 import os
+import re
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -49,7 +51,7 @@ class SimpleCharTokenizer_BACKUP:
 
         # ⭐ 新增：预编译正则表达式，匹配 [TAG]
         self.tag_pattern = re.compile(r'(\[EMOJI\]|\[PHRASE\]|\[EN\]|\[PY\]|\[JP\]|\[KR\])')
-
+    
     def _tokenize_text(self, text):
         """⭐ 核心修复：先切分标签，再切分字符"""
         tokens = []
@@ -92,11 +94,16 @@ class SimpleCharTokenizer_BACKUP:
 
     def __call__(self, text, max_length=64, padding='max_length',
                  truncation=True, return_tensors='pt'):
+        
         """分词接口（兼容transformers）"""
-        # ⭐ 使用新的切分逻辑 (支持 [EMOJI] 等标签)
+        # 1. 初始化 ids
         ids = [self.bos_token_id]
+
+        # 2. ⭐ 使用新的切分逻辑 (支持 [EMOJI])
         token_ids = self._tokenize_text(text)
         ids.extend(token_ids)
+        
+        # 3. 加 EOS
         ids.append(self.eos_token_id)
 
         # 截断
@@ -276,7 +283,7 @@ def create_small_hlbd_config(vocab_size):
         num_decoder_layers=3,     # 3层解码器
         num_heads=8,              # 8个注意力头
         d_ff=1024,                # 前馈网络
-        dropout=0.1,
+        dropout=0.1,             # 适度dropout
         use_autopoietic=True,     # 启用自生成机制
         use_dbc_dac=True,         # 启用DBC-DAC
     )
@@ -361,7 +368,7 @@ def generate_with_vocab_mask(model, input_ids, valid_token_ids, max_length,
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, accumulation_steps=4):
-    """训练一个epoch（使用梯度累积）"""
+    """训练一个epoch（带性能诊断版）"""
     model.train()
     total_loss = 0
     total_steps = 0
@@ -376,38 +383,95 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
         ascii=True
     )
 
-    for i, (src_ids, tgt_ids) in enumerate(progress_bar):
+    # ⏱️ [诊断初始化]
+    t_start = time.time()
+    times = {"data": 0, "forward": 0, "backward": 0, "step": 0}
 
-        # 数据传输到设备
-        src_ids = src_ids.to(device)
-        tgt_ids = tgt_ids.to(device)
+    # 注意：如果你的 dataloader 返回的是字典（如 HLBD 脚本），这里可能需要改成 for i, batch in enumerate...
+    # 下面保留你提供的解包格式，请根据实际情况调整
+    for i, batch_data in enumerate(progress_bar):
+        
+        # ⏱️ [1. 记录数据加载耗时] (从上轮循环结束到这里的时间)
+        t_data_end = time.time()
+        times["data"] = t_data_end - t_start
 
+        # 兼容处理：检查是元组还是字典
+        if isinstance(batch_data, dict):
+            src_ids = batch_data['input_ids'].to(device)
+            # 假设 HLBD 任务中 target 就是 input
+            tgt_ids = src_ids.clone() 
+        else:
+            src_ids, tgt_ids = batch_data
+            src_ids = src_ids.to(device)
+            tgt_ids = tgt_ids.to(device)
+
+        # ⏱️ [2. 记录前向传播耗时]
+        t_fw_start = time.time()
+        
         # 前向传播
-        output = model(src_ids, tgt_ids[:, :-1])
+        if hasattr(model.config, 'pad_token_id'): # 简单的 input/label 处理
+             # 自回归任务通常输入是 src，目标也是 src（错位）
+             output = model(src_ids, tgt_ids[:, :-1])
+        else:
+             output = model(src_ids, tgt_ids[:, :-1])
 
         # 计算损失
         loss = criterion(
             output.reshape(-1, output.size(-1)),
             tgt_ids[:, 1:].reshape(-1)
         )
-
+        
         # 损失归一化
         loss = loss / ACCUMULATION_STEPS
+        
+        torch.cuda.synchronize() if device.type == 'cuda' else None
+        t_fw_end = time.time()
+        times["forward"] = t_fw_end - t_fw_start
 
-        # 反向传播
+        # ⏱️ [3. 记录反向传播耗时] (这里是DBC钩子起作用的地方!)
+        t_bw_start = time.time()
+        
         loss.backward()
+        
+        torch.cuda.synchronize() if device.type == 'cuda' else None
+        t_bw_end = time.time()
+        times["backward"] = t_bw_end - t_bw_start
 
         # 条件优化和清零（每N步执行一次）
+        step_time = 0
         if (i + 1) % ACCUMULATION_STEPS == 0:
+            # ⏱️ [4. 记录参数更新耗时]
+            t_step_start = time.time()
+            
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             optimizer.zero_grad()
+            
+            torch.cuda.synchronize() if device.type == 'cuda' else None
+            t_step_end = time.time()
+            step_time = t_step_end - t_step_start
+            times["step"] = step_time
 
         total_loss += loss.item() * ACCUMULATION_STEPS
         total_steps += 1
 
-        # 实时更新进度条上的Loss
-        progress_bar.set_postfix({'loss': f'{loss.item() * ACCUMULATION_STEPS:.4f}'})
+        # 实时更新进度条上的Loss和关键耗时
+        progress_bar.set_postfix({
+            'loss': f'{loss.item() * ACCUMULATION_STEPS:.4f}',
+            'fw': f"{times['forward']*1000:.1f}ms",
+            'bw': f"{times['backward']*1000:.1f}ms"
+        })
+
+        # 🛑 [诊断打印] 每10个Batch打印一次详细报告
+        # if i % 10 == 0:
+            # print(f"\n[诊断 Batch {i}] "
+                  # f"数据加载: {times['data']*1000:.1f}ms | "
+                  # f"前向(APT): {times['forward']*1000:.1f}ms | "
+                  # f"反向(DBC): {times['backward']*1000:.1f}ms | "
+                  # f"更新: {times['step']*1000:.1f}ms")
+
+        # 重置下一轮计时起点
+        t_start = time.time()
 
     # 【最后一步清理】处理剩余的累积梯度
     try:
@@ -416,58 +480,34 @@ def train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=False, 
             optimizer.step()
             optimizer.zero_grad()
     except NameError:
-         # 如果i没定义（比如dataloader是空的），则忽略清理
          pass
 
     return (total_loss / total_steps) if total_steps > 0 else 0
 
-
 def generate_text(model, tokenizer, input_text, device, max_length=50, repetition_penalty=1.5):
     """
-    生成文本（修复：支持 emoji，去除输入复读，限制 vocab 范围）
+    生成文本（修改版：直接调用模型内部修好的 generate 方法）
     """
-    model.eval()
+    # 1. 编码 Encoder 输入 (Prompt)
+    # 这一步必须做，把字符串变成 Tensor
+    input_encoded = tokenizer(input_text, max_length=64, padding=False, return_tensors='pt')
+    input_ids = input_encoded['input_ids'].to(device)
 
-    # 1. 获取 BOS/PAD ID
-    bos_id = tokenizer.bos_token_id
-    pad_id = tokenizer.pad_token_id
-
-    # 2. 编码输入文本（使用 __call__ 方法，不添加特殊 token）
-    # SimpleCharTokenizer_BACKUP 的 __call__ 不添加 BOS/EOS
-    input_result = tokenizer(input_text, max_length=64, padding=False,
-                            truncation=True, return_tensors='pt')
-    input_ids = input_result['input_ids'].to(device)  # shape: [1, seq_len]
-
-    # 去除 padding（如果有）
-    # 找到第一个非 pad token 的位置
-    input_ids = input_ids[input_ids != pad_id].unsqueeze(0) if pad_id in input_ids else input_ids
-
-    # 3. 准备模型输入 input_ids = [BOS] + Prompt Tokens
-    bos_tensor = torch.tensor([[bos_id]], device=device)
-    initial_ids = torch.cat([bos_tensor, input_ids], dim=1)
-
-    # 4. 🔧 【修复】使用自定义生成，限制 vocab 范围
-    # 只允许生成 tokenizer 已知的 token IDs
-    valid_ids = set(tokenizer.id_to_char.keys())
-    max_valid_id = max(valid_ids)
-
-    generated_ids = generate_with_vocab_mask(
-        model=model,
-        input_ids=initial_ids,
-        valid_token_ids=valid_ids,
-        max_length=max_length + initial_ids.size(1),
-        repetition_penalty=repetition_penalty,
-        pad_token_id=pad_id,
-        device=device
+    # 2. 【关键修改】直接调用模型内部方法 (正规军)
+    # 我们刚刚在 apt_model.py 里修好了 generate，现在这里直接用它！
+    # 它内部已经包含了：Encoder-Decoder逻辑、EOS切除、强力去重
+    output_ids = model.generate(
+        input_ids=input_ids,
+        max_length=max_length,
+        repetition_penalty=repetition_penalty,  # 传递惩罚系数，治愈复读机
+        temperature=0.1,      # 可以微调，1.0 比较标准
+        top_p=0.5,              # ➕ 新增这行！只看前 50% 可信的词，过滤掉胡言乱语
+        do_sample=True        # 建议 True，让回答稍微灵活点；如果要死板准确就 False
     )
 
-    # 5. 【修复】只解码新生成的部分，去掉输入
-    input_length = initial_ids.size(1)
-    generated_only = generated_ids[0][input_length:]  # 去掉输入部分
-    generated_text = tokenizer.decode(generated_only, skip_special_tokens=True)
-
-    return generated_text
-
+    # 3. 解码
+    # model.generate 返回的是 [batch, seq_len]，我们取第一个样本 [0]
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
 def test_generation(model, tokenizer, test_cases, device):
     """测试生成能力"""
@@ -480,6 +520,13 @@ def test_generation(model, tokenizer, test_cases, device):
 
     for input_text, expected_concept in test_cases:
         generated = generate_text(model, tokenizer, input_text, device, repetition_penalty=REPETITION_FACTOR)
+        input_ids = tokenizer.encode(input_text)
+
+        ids_display = str(input_ids)
+        if len(input_ids) > 8:
+            ids_display = f"[{input_ids[0]}, {input_ids[1]}, ..., {input_ids[-1]}]"
+        
+        print(f"🕵️ Debug: Len={len(input_ids)} | IDs={ids_display}")
         print(f"\n输入: {input_text}")
         print(f"期望概念: {expected_concept}")
         print(f"生成: {generated}")
@@ -658,7 +705,7 @@ def main():
     print("\n🚀 HLBD快速学习测试 - APT模型能否快速学会说话?")
     print(f"PyTorch版本: {torch.__version__}")
 
-    ACCUMULATION_STEPS = 8  # 保持原始配置：batch_size=4, 4 * 8 = 32 的有效批次大小
+    ACCUMULATION_STEPS = 2  # 保持原始配置：batch_size=4, 4 * 8 = 32 的有效批次大小
 
     # 自动检测：有显卡就用显卡，没有才用 CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -680,86 +727,159 @@ def main():
     # 2. 创建训练对
     training_pairs = create_training_pairs(samples)
 
-    # 3. 准备分词器
-    print(f"\n🔧 准备分词器...")
-    # 使用 SimpleCharTokenizer_BACKUP（支持 emoji 动态添加）
-    tokenizer = SimpleCharTokenizer_BACKUP()
-    print(f"   使用的分词器: {type(tokenizer).__name__}")
-    print(f"   初始词汇表: {len(tokenizer.char_to_id)} 个token (预留空间: {tokenizer.vocab_size})")
-    print(f"   初始token: {list(tokenizer.char_to_id.keys())}")
+    # 3. 准备读档或新建模型
+    # 🚨【关键设置】在这里填入您的存档文件名！
+    # 如果填空字符串 ""，则代表【从头开始新训练】
+    resume_checkpoint = "hlbd_model_20251222_074140.pt"   # <--- 请修改这里的文件名！
+    resume_path = os.path.join(project_root, 'tests', 'saved_models', resume_checkpoint)
 
-    # 4. 创建数据集
+    model = None
+    tokenizer = None
+    config = None
+
+    # [逻辑分支] 决定是“读档”还是“新建”
+    if resume_checkpoint and os.path.exists(resume_path):
+        print(f"\n🔄 发现存档，正在恢复训练: {resume_path}")
+        # A. 读档模式：加载旧的分词器和模型 (恢复记忆)
+        model, tokenizer, info = load_model_and_tokenizer(resume_path, device)
+        config = model.config
+        print(f"   已继承之前的词汇表 (Size: {len(tokenizer.char_to_id)})")
+
+        # 👇👇👇 【这里是插入点！MATH 疫苗补丁】 👇👇👇
+        # 即使你现在只用旧数据，打上这个补丁也没有坏处，防止未来报错
+        if '[MATH]' not in tokenizer.char_to_id:
+            print(f"\n💉 检测到旧模型缺少 [MATH] 标签，正在动态补丁...")
+            
+            # 1. 分配新ID
+            new_id = tokenizer.next_id
+            tokenizer.char_to_id['[MATH]'] = new_id
+            tokenizer.id_to_char[new_id] = '[MATH]'
+            tokenizer.vocab['[MATH]'] = new_id  # 保持字典同步
+            tokenizer.next_id += 1
+            tokenizer.vocab_size += 1 # 词表大小+1
+            
+            # 2. 🚨 关键：更新正则！否则分词器看不见这个标签
+            # 必须把 [MATH] 加入到识别规则里
+            tokenizer.tag_pattern = re.compile(r'(\[EMOJI\]|\[PHRASE\]|\[EN\]|\[PY\]|\[JP\]|\[KR\]|\[MATH\])')
+            
+            print(f"   ✅ [MATH] 补丁应用成功 (ID: {new_id})")
+        else:
+            print(f"   ✅ 模型已包含 [MATH] 标签 (ID: {tokenizer.char_to_id['[MATH]']})")
+        # 👆👆👆 【补丁结束】 👆👆👆
+
+        # 👇👇👇 【这里插入：强制脑科手术】 👇👇👇
+        # 必须在这里手动把 Dropout 拉高，因为 torch.load 会恢复成旧的 0.0 或 0.1
+        print(f"\n💉 [手术中] 正在强制提升 Dropout (防止死记硬背)...")
+        print(f"   原 Dropout 配置: {model.config.dropout}")
+        
+        # 1. 修改配置参数 (为了保存时正确)
+        model.config.dropout = 0.1
+        
+        # 2. 🚨 关键：递归修改所有正在运行的层
+        # 光改 config 没用，必须深入到每一层神经网络里去改 p 值
+        modified_count = 0
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Dropout):
+                module.p = 0.1
+                modified_count += 1
+                
+        print(f"   ✅ 手术完成！已将 {modified_count} 个 Dropout 层的概率强制设为 {model.config.dropout}")
+        print(f"   当前 Dropout 配置: {model.config.dropout}")
+        # 👆👆👆 【手术结束】 👆👆👆
+
+    else:
+        print(f"\n🆕 未找到存档或未指定，开始【从头训练】...")
+        # B. 新建模式：创建新的空白分词器
+        print(f"🔧 准备分词器...")
+        tokenizer = SimpleCharTokenizer_BACKUP()
+
+    # 4. 创建数据集 
+    # (无论读档还是新建，都要跑这一步。如果是读档，tokenizer 会自动沿用旧ID，不会乱码)
     print(f"\n📊 创建数据集...")
     dataset = SimpleDialogueDataset(training_pairs, tokenizer)
 
-    # 【关键修复】预填充词汇表，避免多进程陷阱
-    # 在多进程 DataLoader 启动前，让主进程的 tokenizer 学习所有字符
-    print(f"\n📝 预填充词汇表（避免多进程陷阱）...")
+    # 预填充/更新词汇表
+    print(f"\n📝 检查词汇表覆盖率...")
     for src, tgt in training_pairs:
-        _ = tokenizer.encode(src)
-        _ = tokenizer.encode(tgt)
-    print(f"   词汇表预填充完成: {len(tokenizer.char_to_id)} 个token")
+        tokenizer.encode(src)
+        tokenizer.encode(tgt)
+    print(f"   当前词汇表大小: {len(tokenizer.char_to_id)} (预留空间: {tokenizer.vocab_size})")
 
-    # 优化：保持原始batch_size，只添加多线程加载
     dataloader = DataLoader(
         dataset,
-        batch_size=4,  # 保持原始batch_size=4（稳定性优先）
+        batch_size=16, 
         shuffle=True,
-        num_workers=4,  # 使用4个工作进程并行加载（现在安全了）
-        pin_memory=True,  # 固定内存，加速CPU→GPU传输
-        persistent_workers=True  # 保持worker存活，避免重复创建
+        num_workers=0,
+        pin_memory=True,
+        persistent_workers=False
     )
     print(f"   训练批次数: {len(dataloader)}")
 
-    # 【新增验证代码：检查实际样本数】
-    actual_pairs = len(dataset)
-    print(f"--- 长度验证 ---")
-    print(f"模型实际看到的训练对数量: {actual_pairs} (每个概念6个层级映射)")
-    print(f"   emoji/短语/英文/拼音/日文/韩文 → 中文")
-    print(f"----------------")
-
-    # 【词汇表增长验证】
-    print(f"\n📊 词汇表动态增长情况:")
-    print(f"   处理数据后的词汇表大小: {len(tokenizer.char_to_id)} 个token")
-    print(f"   新增token数量: {len(tokenizer.char_to_id) - 10}")
-    print(f"   下一个ID: {tokenizer.next_id}")
-    print(f"   预留空间利用率: {len(tokenizer.char_to_id)}/{tokenizer.vocab_size} ({100*len(tokenizer.char_to_id)/tokenizer.vocab_size:.1f}%)")
-
-    # 显示前20个动态添加的字符（跳过特殊token）
-    dynamic_chars = [char for char, idx in sorted(tokenizer.char_to_id.items(), key=lambda x: x[1]) if idx >= 10][:20]
-    print(f"   前20个动态添加的字符: {dynamic_chars}")
-
-    # 5. 创建模型
-    print(f"\n🏗️ 创建APT模型...")
-    config = create_small_hlbd_config(tokenizer.vocab_size)
-    model = APTModel(config).to(device)
+    # 5. 确保模型已创建 
+    # (如果是新建模式，现在才创建模型；如果是读档，上面已经有了)
+    if model is None:
+        print(f"\n🏗️ 创建APT模型 (Fresh Start)...")
+        config = create_small_hlbd_config(tokenizer.vocab_size)
+        model = APTModel(config).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"   模型参数: {total_params:,}")
-    print(f"   配置: d_model={config.d_model}, layers={config.num_encoder_layers}")
 
-    # 保存未训练模型的副本用于评估对比
+    # 创建一个副本用于对比 (防止报错，随便建一个)
     untrained_model = APTModel(config).to(device)
-    untrained_model.load_state_dict(model.state_dict())
+    if not resume_checkpoint:
+        untrained_model.load_state_dict(model.state_dict())
     untrained_model.eval()
 
+    # ============================================================
+    # 🎛️ 战术指挥中心 (只需要改这里！)
+    # ============================================================
+    # 模式选择:
+    # "BREAKOUT" (暴力破局) -> LR=1e-4, DBC=关 (用于把 Loss 炸高，跳出局部最优)
+    # "LANDING"  (平稳降落) -> LR=1e-5, DBC=开 (用于把高 Loss 收敛，精细学习)
+    
+    TACTICAL_MODE = "LANDING"  # 👈 当前任务：降落！(要把 Loss 1.8 降下来)
+
+    if TACTICAL_MODE == "BREAKOUT":
+        current_lr = 8e-5
+        use_dbc = False
+        mode_msg = "🔥 [暴力破局模式] 全力输出，允许梯度爆发"
+    else: # LANDING
+        current_lr = 1e-5
+        use_dbc = True
+        mode_msg = "❄️ [平稳降落模式] 开启辅助，精细收敛"
+
+    # ============================================================
+
     # 6. 创建优化器
-    # 使用原始学习率（稳定性优先）+ Weight Decay防止过拟合
-    optimizer = optim.Adam(model.parameters(), lr=5e-5, weight_decay=0.01)
+    # ------------------------------------------------------------
+    optimizer = optim.Adam(model.parameters(), lr=current_lr, weight_decay=1e-2)
+    print(f"🔧 优化器配置完成 | 模式: {TACTICAL_MODE} | LR: {current_lr} | Weight Decay: 1e-2")
+    
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
-    # 7. 注册DBC hooks
-    print(f"\n⚡ 注册DBC-DAC加速...")
-    #hooks = register_dbc_hooks(model)
-    hooks = [] # 保持 hooks 变量存在，防止后面报错
-    #print(f"   注册了 {len(hooks)} 个梯度稳定钩子")
+    # 7. 注册DBC hooks (智能控制版)
+    # ------------------------------------------------------------
+    print(f"\n⚡ [步骤 7] DBC-DAC 状态: {mode_msg}")
+    
+    # 先清理旧钩子 (防止残留)
+    if hasattr(model, 'gradient_hooks'):
+        model.gradient_hooks = []
+    
+    if use_dbc:
+        # ✅ 开启模式：注册钩子
+        hooks = register_dbc_hooks(model)
+        print(f"   ✅ 已激活 {len(hooks)} 个梯度稳定钩子 (降落伞已打开)")
+    else:
+        # 🛑 禁用模式：确保裸奔
+        print(f"   🚫 梯度钩子已移除 (限制已解除)")
 
     # 8. 训练模型
     print(f"\n" + "="*60)
     print("🏃 开始快速训练 (看能否快速学会说话)")
     print("="*60)
 
-    num_epochs = 50  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
+    num_epochs = 30  # 600个训练对（100概念×6层级：emoji/短语/英文/拼音/日文/韩文→中文）
 
     for epoch in range(num_epochs):
         loss = train_epoch(model, dataloader, optimizer, criterion, device, use_dbc=True, accumulation_steps=ACCUMULATION_STEPS)
@@ -775,6 +895,22 @@ def main():
                 ("[KR] 사랑해", "我爱你"),  # 韩文测试
             ]
             test_generation(model, tokenizer, test_cases, device)
+
+            # 👇👇👇 【这里插入自动存档代码】 👇👇👇
+            print(f"💾 正在自动存档 (Epoch {epoch+1})...")
+            save_dir = os.path.join(project_root, 'tests', 'saved_models')
+            
+            # 这里调用保存函数
+            # 注意：num_epochs 参数传入当前的 epoch+1，这样你知道这个档是跑了多少轮的
+            save_model_and_tokenizer(
+                model=model,
+                tokenizer=tokenizer,
+                config=model.config,  # 确保传入配置
+                save_dir=save_dir,
+                num_epochs=epoch+1,   # 记录当前进度
+                final_loss=loss
+            )
+            print("------------------------------------------------")
 
     # 9. 最终测试
     print(f"\n" + "="*60)
