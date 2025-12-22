@@ -721,8 +721,8 @@ def main():
     untrained_model.eval()
 
     # 6. 创建优化器
-    # 使用原始学习率（稳定性优先）
-    optimizer = optim.Adam(model.parameters(), lr=5e-5)
+    # 使用原始学习率（稳定性优先）+ Weight Decay防止过拟合
+    optimizer = optim.Adam(model.parameters(), lr=5e-5, weight_decay=0.01)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 
     # 7. 注册DBC hooks

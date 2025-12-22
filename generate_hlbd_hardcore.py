@@ -192,6 +192,30 @@ def create_hardcore_dataset():
                     "input": "压强的公式是？",
                     "output": "P = F/S"
                 },
+            ],
+
+            "reverse_english": [
+                # 反向学英文 - 中文→英文翻译
+                {"input": "我爱你的英文是？", "output": "I love you"},
+                {"input": "你好用英语怎么说？", "output": "Hello"},
+                {"input": "谢谢的英文翻译是？", "output": "Thank you"},
+                {"input": "再见用英文怎么说？", "output": "Goodbye"},
+                {"input": "对不起的英文是？", "output": "Sorry"},
+                {"input": "请用英语怎么说？", "output": "Please"},
+                {"input": "是的英文翻译是？", "output": "Yes"},
+                {"input": "不是用英文怎么说？", "output": "No"},
+                {"input": "水的英文是？", "output": "Water"},
+                {"input": "书用英语怎么说？", "output": "Book"},
+                {"input": "猫的英文翻译是？", "output": "Cat"},
+                {"input": "狗用英文怎么说？", "output": "Dog"},
+                {"input": "苹果的英文是？", "output": "Apple"},
+                {"input": "香蕉用英语怎么说？", "output": "Banana"},
+                {"input": "红色的英文翻译是？", "output": "Red"},
+                {"input": "蓝色用英文怎么说？", "output": "Blue"},
+                {"input": "大的英文是？", "output": "Big"},
+                {"input": "小用英语怎么说？", "output": "Small"},
+                {"input": "快的英文翻译是？", "output": "Fast"},
+                {"input": "慢用英文怎么说？", "output": "Slow"},
             ]
         }
     }
@@ -211,6 +235,7 @@ def create_hardcore_dataset():
     print(f"   算术运算: {len(dataset['data']['arithmetic'])} 条 (含{len(auto_generated_math)}道自动生成)")
     print(f"   生肖序列: {len(dataset['data']['zodiac'])} 条")
     print(f"   物理定律: {len(dataset['data']['physics'])} 条")
+    print(f"   反向学英文: {len(dataset['data']['reverse_english'])} 条")
     print(f"   总计: {total_samples} 条")
 
     return dataset
