@@ -428,7 +428,7 @@ class HLBDPlaygroundTrainer:
             self.train_loader,
             desc=f"📍 Epoch {epoch + 1}",
             unit="batch",
-            ncols=120
+            # ncols=120
         )
 
         for batch_idx, batch in enumerate(pbar):
@@ -439,7 +439,8 @@ class HLBDPlaygroundTrainer:
             t0 = time.time()
 
             # 混合精度前向
-            with autocast(enabled=self.config.mixed_precision):
+            # 显式指定 device_type='cuda'，这是新版 PyTorch 的推荐写法
+            with torch.amp.autocast('cuda', enabled=self.config.mixed_precision):
                 logits = self.model(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
