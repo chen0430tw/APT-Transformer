@@ -461,11 +461,22 @@ class SciFiVisualizer:
                 data = json.load(f)
 
             # 更新数据
-            if 'control_losses' in data:
+            # 优先使用control_losses（epoch级别），如果为空则使用batch_losses（实时）
+            if 'control_losses' in data and len(data['control_losses']) > 0:
                 for i, loss in enumerate(data['control_losses']):
                     if i >= len(self.epochs):
                         self.epochs.append(i + 1)
                         self.control_losses.append(loss)
+            elif 'batch_losses' in data and len(data['batch_losses']) > 0:
+                # 使用batch_losses进行实时可视化
+                # 每10个batch取一个点，避免数据过密
+                batch_losses = data['batch_losses']
+                step = max(1, len(batch_losses) // 100)  # 最多100个点
+                for i in range(0, len(batch_losses), step):
+                    if i >= len(self.control_losses):
+                        epoch_progress = i / len(batch_losses)  # 当前epoch的进度
+                        self.epochs.append(epoch_progress)
+                        self.control_losses.append(batch_losses[i])
 
             if 'autopoietic_losses' in data:
                 for i, loss in enumerate(data['autopoietic_losses']):
