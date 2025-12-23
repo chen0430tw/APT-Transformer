@@ -606,6 +606,52 @@ class HLBDPlaygroundTrainer:
             for name, count in self.dataset_stats.items():
                 print(f"     - {name}: {count} 样本")
 
+    def load_checkpoint(self, checkpoint_path: str):
+        """从checkpoint恢复训练"""
+        print(f"\n🔄 加载checkpoint: {checkpoint_path}")
+
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        # 恢复模型权重
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        print("✓ 模型权重已恢复")
+
+        # 恢复优化器状态
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print("✓ 优化器状态已恢复")
+
+        # 恢复学习率调度器
+        if 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print("✓ 学习率调度器已恢复")
+
+        # 恢复scaler（如果使用混合精度）
+        if self.scaler and 'scaler_state_dict' in checkpoint:
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            print("✓ GradScaler状态已恢复")
+
+        # 恢复tokenizer状态
+        if 'tokenizer_char_to_id' in checkpoint:
+            self.tokenizer.char_to_id = checkpoint['tokenizer_char_to_id']
+            self.tokenizer.id_to_char = checkpoint['tokenizer_id_to_char']
+            self.tokenizer.next_id = checkpoint['tokenizer_next_id']
+            print(f"✓ Tokenizer已恢复 (词汇表大小: {checkpoint['tokenizer_vocab_size']})")
+
+        # 恢复训练历史
+        if 'losses' in checkpoint:
+            self.losses = checkpoint['losses']
+            print(f"✓ 训练历史已恢复 ({len(self.losses)} epochs)")
+
+        # 恢复数据集统计
+        if 'dataset_stats' in checkpoint:
+            self.dataset_stats = checkpoint['dataset_stats']
+
+        # 返回起始epoch
+        start_epoch = checkpoint.get('epoch', 0)
+        print(f"\n✅ 将从Epoch {start_epoch + 1} 继续训练\n")
+
+        return start_epoch
+
 
 # ============================================================================
 # 主函数
@@ -638,6 +684,8 @@ def main():
                        help='保存目录')
     parser.add_argument('--save-interval', type=int, default=25,
                        help='保存间隔')
+    parser.add_argument('--resume', type=str, default=None,
+                       help='从checkpoint恢复训练（提供checkpoint文件路径）')
 
     args = parser.parse_args()
 
@@ -708,12 +756,24 @@ def main():
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # 检查是否从checkpoint恢复
+    start_epoch = 0
+    if args.resume:
+        if Path(args.resume).exists():
+            start_epoch = trainer.load_checkpoint(args.resume)
+        else:
+            print(f"⚠️  Checkpoint文件不存在: {args.resume}")
+            print("   将从头开始训练\n")
+
     # 训练循环
     print("\n" + "=" * 60)
-    print("🎮 HLBD Playground训练开始")
+    if start_epoch > 0:
+        print(f"🔄 HLBD Playground训练恢复 (从Epoch {start_epoch + 1})")
+    else:
+        print("🎮 HLBD Playground训练开始")
     print("=" * 60)
 
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         # 训练
         loss, epoch_time = trainer.train_epoch(epoch)
 

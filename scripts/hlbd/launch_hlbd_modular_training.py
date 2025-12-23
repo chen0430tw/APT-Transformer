@@ -79,6 +79,65 @@ def check_dependencies():
     return True
 
 
+def find_latest_checkpoint(save_dir='hlbd_modular'):
+    """查找最新的checkpoint"""
+    save_path = Path(save_dir)
+    if not save_path.exists():
+        return None
+
+    # 查找所有checkpoint文件
+    checkpoints = list(save_path.glob('checkpoint_epoch_*.pt'))
+    if not checkpoints:
+        return None
+
+    # 提取epoch数字并排序
+    checkpoint_epochs = []
+    for ckpt in checkpoints:
+        try:
+            # 文件名格式: checkpoint_epoch_10.pt
+            epoch_num = int(ckpt.stem.split('_')[-1])
+            checkpoint_epochs.append((epoch_num, ckpt))
+        except ValueError:
+            continue
+
+    if not checkpoint_epochs:
+        return None
+
+    # 返回最新的checkpoint
+    checkpoint_epochs.sort(key=lambda x: x[0], reverse=True)
+    latest_epoch, latest_ckpt = checkpoint_epochs[0]
+
+    return {
+        'path': latest_ckpt,
+        'epoch': latest_epoch,
+        'size_mb': latest_ckpt.stat().st_size / (1024 * 1024)
+    }
+
+
+def ask_resume_training(checkpoint_info):
+    """询问是否恢复训练"""
+    print("\n" + "=" * 60)
+    print("🔍 发现已有checkpoint")
+    print("=" * 60)
+    print(f"文件: {checkpoint_info['path']}")
+    print(f"Epoch: {checkpoint_info['epoch']}")
+    print(f"大小: {checkpoint_info['size_mb']:.1f} MB")
+    print()
+
+    while True:
+        response = input("是否从此checkpoint恢复训练? [Y/n]: ").strip().lower()
+        if response in ['', 'y', 'yes']:
+            return True
+        elif response in ['n', 'no']:
+            print("\n⚠️  将从epoch 1重新开始训练（已有checkpoint将被覆盖）")
+            confirm = input("确认重新开始? [y/N]: ").strip().lower()
+            if confirm in ['y', 'yes']:
+                return False
+            # 否则继续循环询问
+        else:
+            print("请输入 y 或 n")
+
+
 def main():
     """主启动流程"""
     # 确保在项目根目录运行
@@ -100,6 +159,13 @@ def main():
     if not check_dependencies():
         return 1
 
+    # 检查是否有已存在的checkpoint
+    checkpoint_info = find_latest_checkpoint('hlbd_modular')
+    resume_training = False
+
+    if checkpoint_info:
+        resume_training = ask_resume_training(checkpoint_info)
+
     # 训练配置
     print("\n" + "=" * 60)
     print("训练配置")
@@ -109,6 +175,10 @@ def main():
     print("训练轮数: 50")
     print("批次大小: 16 (梯度累积x2)")
     print("保存目录: hlbd_modular")
+    if resume_training:
+        print(f"恢复模式: 从Epoch {checkpoint_info['epoch']} 继续")
+    else:
+        print("训练模式: 从头开始")
     print("=" * 60)
     print()
 
@@ -123,6 +193,10 @@ def main():
         '--save-dir', 'hlbd_modular',
         '--save-interval', '10'
     ]
+
+    # 添加恢复参数
+    if resume_training:
+        cmd.extend(['--resume', str(checkpoint_info['path'])])
 
     print("启动命令:")
     print(" ".join(cmd))
