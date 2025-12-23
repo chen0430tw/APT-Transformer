@@ -29,6 +29,7 @@ import os
 import sys
 import json
 import time
+import math
 import re
 import random
 import argparse
@@ -38,9 +39,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torch.cuda.amp import autocast, GradScaler
+from tqdm import tqdm
 
-# 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent))
+# ============================================================================
+# 修复路径问题：添加项目根目录到sys.path
+# ============================================================================
+# 获取当前脚本所在目录的父目录（即项目根目录）
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
 
@@ -337,7 +343,7 @@ class PlaygroundConfig:
     # 模型配置
     d_model = 256
     n_layers = 6
-    n_heads = 8
+    num_heads = 8  # ✅ 修复：统一使用num_heads（256/8=32可整除）
     d_ff = 1024
     max_seq_len = 256
     dropout = 0.1
@@ -347,6 +353,7 @@ class PlaygroundConfig:
     gradient_accumulation_steps = 2
     mixed_precision = True
     max_grad_norm = 1.0
+    epochs = 100  # 添加默认epochs
 
     # Playground Theory
     base_lr = 3e-4
@@ -363,7 +370,7 @@ class PlaygroundConfig:
 # ============================================================================
 
 class HLBDPlaygroundTrainer:
-    """HLBD Playground训练器"""
+    """HLBD Playground训练器（全能仪表盘版）"""
 
     def __init__(
         self,
@@ -372,6 +379,7 @@ class HLBDPlaygroundTrainer:
         train_loader: DataLoader,
         tokenizer: DynamicTagTokenizer,
         dataset_stats: dict = None,
+        save_dir: str = 'hlbd_playground',
         device: str = 'cuda'
     ):
         self.config = config
@@ -379,13 +387,14 @@ class HLBDPlaygroundTrainer:
         self.train_loader = train_loader
         self.tokenizer = tokenizer
         self.dataset_stats = dataset_stats or {}
+        self.save_dir = save_dir
         self.device = device
 
         # 优化器
         self.optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=config.base_lr,
-            weight_decay=0.01  # ✅ Weight Decay
+            weight_decay=0.01
         )
 
         # Playground Theory调度器
@@ -402,29 +411,51 @@ class HLBDPlaygroundTrainer:
         # 损失函数
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-        # 统计
+        # 统计 - 按epoch聚合
         self.losses = []
+        self.batch_losses = []  # 实时batch loss用于可视化
 
     def train_epoch(self, epoch: int):
-        """训练一个epoch"""
+        """训练一个epoch（全能仪表盘版）"""
         self.model.train()
         total_loss = 0
         num_batches = 0
 
         epoch_start = time.time()
 
-        for batch_idx, batch in enumerate(self.train_loader):
+        # 创建进度条
+        pbar = tqdm(
+            self.train_loader,
+            desc=f"📍 Epoch {epoch + 1}",
+            unit="batch",
+            ncols=120
+        )
+
+        for batch_idx, batch in enumerate(pbar):
             input_ids = batch['input_ids'].to(self.device)
             labels = batch['labels'].to(self.device)
 
-            # 混合精度
+            # --- ⏱️ 计时：前向传播 ---
+            t0 = time.time()
+
+            # 混合精度前向
             with autocast(enabled=self.config.mixed_precision):
                 logits = self.model(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     labels.view(-1)
                 )
+                # 记录真实Loss（未除以accumulation_steps前）
+                real_loss_val = loss.item()
+
+                # 为梯度累积做除法
                 loss = loss / self.config.gradient_accumulation_steps
+
+            t1 = time.time()
+            fw_ms = (t1 - t0) * 1000
+
+            # --- ⏱️ 计时：反向传播 ---
+            t2 = time.time()
 
             # Backward
             if self.scaler:
@@ -432,7 +463,7 @@ class HLBDPlaygroundTrainer:
             else:
                 loss.backward()
 
-            # 梯度累积
+            # 梯度累积更新
             if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
                 if self.scaler:
                     self.scaler.unscale_(self.optimizer)
@@ -450,15 +481,52 @@ class HLBDPlaygroundTrainer:
 
                 self.optimizer.zero_grad()
 
-            total_loss += loss.item() * self.config.gradient_accumulation_steps
+            t3 = time.time()
+            bw_ms = (t3 - t2) * 1000
+
+            # --- 📊 计算指标（Acc & PPL）---
+            with torch.no_grad():
+                # PPL (Perplexity) = exp(Loss)
+                try:
+                    ppl_val = math.exp(min(real_loss_val, 20))  # 限制最大值防止溢出
+                except OverflowError:
+                    ppl_val = float('inf')
+
+                # Accuracy (准确率)
+                preds = logits.argmax(dim=-1)
+                mask = labels != -100
+                correct = (preds == labels) & mask
+                accuracy = correct.sum().float() / mask.sum().float() if mask.sum() > 0 else torch.tensor(0.0)
+                acc_val = accuracy.item() * 100
+
+            total_loss += real_loss_val
             num_batches += 1
 
-            if batch_idx % 20 == 0:
-                current_lr = self.scheduler.get_last_lr()[0]
-                print(f"   Batch {batch_idx}/{len(self.train_loader)} | "
-                      f"Loss: {loss.item():.4f} | LR: {current_lr:.6f}")
+            # 保存batch loss用于可视化
+            self.batch_losses.append({
+                'epoch': epoch + 1,
+                'batch': batch_idx,
+                'loss': real_loss_val,
+                'ppl': ppl_val,
+                'acc': acc_val
+            })
 
-        # 更新学习率
+            # --- 🚀 实时更新进度条 ---
+            current_lr = self.scheduler.get_last_lr()[0]
+            pbar.set_postfix({
+                "Loss": f"{real_loss_val:.4f}",
+                "PPL": f"{ppl_val:.1f}",
+                "Acc": f"{acc_val:.1f}%",
+                "LR": f"{current_lr:.6f}",
+                "FW": f"{fw_ms:.0f}ms",
+                "BW": f"{bw_ms:.0f}ms"
+            })
+
+            # --- 📡 实时更新可视化（每10个batch）---
+            if batch_idx % 10 == 0:
+                self._save_batch_progress()
+
+        # Epoch结束更新学习率
         self.scheduler.step()
 
         avg_loss = total_loss / num_batches
@@ -466,6 +534,49 @@ class HLBDPlaygroundTrainer:
         self.losses.append(avg_loss)
 
         return avg_loss, epoch_time
+
+    def _save_batch_progress(self):
+        """保存batch级别的进度（cluster存储，不每秒一个文件）"""
+        report_path = Path(self.save_dir) / "experiment_report.json"
+
+        # 确保目录存在
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Cluster存储：按epoch聚合，每个epoch最多保留100个点
+            epoch_clusters = {}
+            for item in self.batch_losses:
+                epoch_num = item['epoch']
+                if epoch_num not in epoch_clusters:
+                    epoch_clusters[epoch_num] = []
+                epoch_clusters[epoch_num].append(item['loss'])
+
+            # 压缩：每个epoch均匀采样最多100个点
+            clustered_losses = []
+            for epoch_num in sorted(epoch_clusters.keys()):
+                losses = epoch_clusters[epoch_num]
+                if len(losses) <= 100:
+                    clustered_losses.extend(losses)
+                else:
+                    # 均匀采样
+                    step = len(losses) / 100
+                    sampled = [losses[int(i * step)] for i in range(100)]
+                    clustered_losses.extend(sampled)
+
+            report = {
+                'control_losses': self.losses,  # Epoch平均loss
+                'batch_losses': clustered_losses,  # Batch实时loss（cluster压缩）
+                'current_epoch': len(self.losses),
+                'total_batches': len(self.batch_losses),
+                'dataset_stats': self.dataset_stats,
+                'timestamp': time.time()
+            }
+
+            with open(report_path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            # 静默失败，不中断训练
+            pass
 
     def save_checkpoint(self, save_path: str, epoch: int):
         """保存checkpoint"""
@@ -480,7 +591,7 @@ class HLBDPlaygroundTrainer:
             'tokenizer_vocab_size': self.tokenizer.vocab_size,
             'config': self.config.__dict__,
             'losses': self.losses,
-            'dataset_stats': self.dataset_stats  # 保存数据集统计
+            'dataset_stats': self.dataset_stats
         }
 
         if self.scaler:
@@ -494,18 +605,6 @@ class HLBDPlaygroundTrainer:
             print(f"   数据集来源:")
             for name, count in self.dataset_stats.items():
                 print(f"     - {name}: {count} 样本")
-
-    def save_progress_report(self, save_dir: str):
-        """保存进度报告（用于可视化）"""
-        report_path = Path(save_dir) / "experiment_report.json"
-        report = {
-            'control_losses': self.losses,  # 兼容可视化脚本
-            'current_epoch': len(self.losses),
-            'timestamp': time.time()
-        }
-
-        with open(report_path, 'w', encoding='utf-8') as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
 
 
 # ============================================================================
@@ -544,14 +643,11 @@ def main():
 
     # 处理数据集参数
     if args.datasets:
-        # 多数据集模式
         dataset_paths = args.datasets
     elif args.dataset:
-        # 单数据集模式（向后兼容）
         dataset_paths = args.dataset
     else:
-        # 默认使用HLBD Hardcore
-        dataset_paths = '../data/HLBD_Hardcore_Full.json'
+        dataset_paths = str(PROJECT_ROOT / 'data' / 'HLBD_Hardcore_Full.json')
         print(f"⚠️  未指定数据集，使用默认: {dataset_paths}\n")
 
     # 设备
@@ -560,12 +656,13 @@ def main():
 
     # 配置
     config = PlaygroundConfig()
+    config.epochs = args.epochs  # 更新epochs
 
     # Tokenizer
     print(f"\n🔤 初始化Tokenizer（支持动态标签）...")
     tokenizer = DynamicTagTokenizer(vocab_size=5000)
 
-    # 数据集（支持单个或多个）
+    # 数据集
     dataset = HLBDPlaygroundDataset(dataset_paths, tokenizer)
 
     # DataLoader
@@ -574,15 +671,15 @@ def main():
         batch_size=config.batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=0  # 避免多进程陷阱
+        num_workers=0
     )
 
-    # 模型
+    # 模型配置（✅ 修复：统一使用num_heads）
     print(f"\n🏗️  构建APT模型...")
     model_config = APTModelConfiguration(
         vocab_size=tokenizer.vocab_size,
         d_model=config.d_model,
-        n_heads=config.n_heads,
+        num_heads=config.num_heads,  # ✅ 左边必须是num_heads
         num_encoder_layers=config.n_layers,
         num_decoder_layers=config.n_layers,
         d_ff=config.d_ff,
@@ -594,6 +691,7 @@ def main():
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"   总参数: {total_params:,}")
+    print(f"   d_model={config.d_model}, num_heads={config.num_heads} (每头维度={config.d_model//config.num_heads})")
 
     # 训练器
     trainer = HLBDPlaygroundTrainer(
@@ -601,7 +699,8 @@ def main():
         model=model,
         train_loader=train_loader,
         tokenizer=tokenizer,
-        dataset_stats=dataset.dataset_stats,  # 传递数据集统计
+        dataset_stats=dataset.dataset_stats,
+        save_dir=args.save_dir,
         device=device
     )
 
@@ -615,14 +714,13 @@ def main():
     print("=" * 60)
 
     for epoch in range(args.epochs):
-        print(f"\n📍 Epoch {epoch + 1}/{args.epochs}")
-
         # 训练
         loss, epoch_time = trainer.train_epoch(epoch)
-        print(f"   Loss: {loss:.4f} | 用时: {epoch_time:.2f}s")
 
-        # 保存进度（用于可视化）
-        trainer.save_progress_report(args.save_dir)
+        print(f"\n📊 Epoch {epoch + 1}/{args.epochs} 完成:")
+        print(f"   平均Loss: {loss:.4f}")
+        print(f"   PPL: {math.exp(min(loss, 20)):.2f}")
+        print(f"   用时: {epoch_time:.2f}s")
 
         # 定期保存
         if (epoch + 1) % args.save_interval == 0:
@@ -636,6 +734,8 @@ def main():
     print("\n" + "=" * 60)
     print("✨ 训练完成！")
     print("=" * 60)
+    print(f"\n📁 模型保存位置: {save_dir}")
+    print(f"📈 可视化数据: {save_dir / 'experiment_report.json'}")
 
 
 if __name__ == "__main__":
