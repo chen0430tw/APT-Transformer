@@ -67,13 +67,16 @@ class SciFiVisualizer:
         """创建科幻风格的图形界面"""
         # 创建主窗口
         self.fig = plt.figure(figsize=(20, 12), facecolor=CYBER_COLORS['bg'])
-        self.fig.suptitle('🚀 APT Training Visualization - Sci-Fi Edition',
+        # 移除emoji避免显示问题，调整标题位置避免重叠
+        self.fig.suptitle('APT Training Visualization - Sci-Fi Edition',
                          fontsize=24, color=CYBER_COLORS['primary'],
-                         weight='bold', y=0.98)
+                         weight='bold', y=0.96)
 
-        # 创建子图网格
+        # 创建子图网格，增加间距避免重叠
         from matplotlib.gridspec import GridSpec
-        gs = GridSpec(3, 3, figure=self.fig, hspace=0.3, wspace=0.3)
+        gs = GridSpec(3, 3, figure=self.fig,
+                     hspace=0.35, wspace=0.35,
+                     top=0.93, bottom=0.05, left=0.05, right=0.98)
 
         # 1. 3D Loss地形图 (左上，2x2)
         self.ax_landscape = self.fig.add_subplot(gs[0:2, 0:2], projection='3d')
@@ -217,17 +220,21 @@ class SciFiVisualizer:
                                  linewidths=1,
                                  offset=Z.min())
 
-        # 标记当前优化点（发光球体）
+        # 标记当前优化点（发光球体）- 会随训练移动
         self.ax_landscape.scatter(
             [current_pos[0]], [current_pos[1]], [loss],
             color=CYBER_COLORS['success'],
-            s=200,
+            s=300,  # 增大球体，更明显
             marker='o',
             edgecolors=CYBER_COLORS['warning'],
-            linewidths=3,
+            linewidths=4,
             alpha=1.0,
-            label='Current Position'
+            label=f'Epoch {epoch:.1f}'
         )
+
+        # 添加视角自动旋转，让3D效果更明显
+        angle = (epoch * 20) % 360  # 每个epoch旋转20度
+        self.ax_landscape.view_init(elev=25, azim=angle)
 
         # 添加粒子轨迹效果
         if len(self.loss_landscape_history) > 0:
