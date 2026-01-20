@@ -162,7 +162,11 @@ class VirtualBlackwellAdapter:
         # Layer 1: 虚拟GPU获取
         W_cached = self.vgpu.access(weight_id)
         if W_cached is not None:
-            W = W_cached
+            # 确保缓存的W和输入X在同一设备上
+            W = W_cached.to(X.device)
+        else:
+            # 确保W和X在同一设备上
+            W = W.to(X.device)
 
         # Layer 3: VGPU-SL量化
         if self.enable_quant:

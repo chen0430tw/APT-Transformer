@@ -154,7 +154,9 @@ class _CacheManager:
             if step < self.interval:
                 self.counter[weight_id] = step + 1
                 self.hits += 1
-                return self.cache[weight_id]
+                # 确保缓存的tensor和当前W在同一设备上
+                W_comp_cached, W_res_cached = self.cache[weight_id]
+                return W_comp_cached.to(W.device), W_res_cached.to(W.device)
 
         # 压缩 - 所有操作在GPU上
         self.misses += 1
