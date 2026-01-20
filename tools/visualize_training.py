@@ -506,25 +506,17 @@ class SciFiVisualizer:
                         if i >= len(self.autopoietic_losses):
                             self.autopoietic_losses.append(loss)
 
-            # 模拟梯度范数数据（如果没有的话）
-            if len(self.grad_norms) < len(self.epochs):
-                for i in range(len(self.grad_norms), len(self.epochs)):
-                    # 模拟：随epoch递减 + 噪声
-                    grad_norm = max(0.1, 5.0 / (i + 1) + np.random.rand() * 0.5)
-                    self.grad_norms.append(grad_norm)
+            # 读取真实梯度范数数据
+            if 'grad_norms' in data:
+                for i, grad_norm in enumerate(data['grad_norms']):
+                    if i >= len(self.grad_norms):
+                        self.grad_norms.append(grad_norm)
 
-            # 模拟学习率数据（CosineAnnealing）
-            if len(self.learning_rates) < len(self.epochs):
-                base_lr = 3e-4
-                min_lr = 1e-5
-                T_0 = 10
-                for i in range(len(self.learning_rates), len(self.epochs)):
-                    # Cosine annealing计算
-                    epoch = i + 1
-                    cycle = epoch // T_0
-                    epoch_in_cycle = epoch % T_0
-                    lr = min_lr + (base_lr - min_lr) * (1 + np.cos(np.pi * epoch_in_cycle / T_0)) / 2
-                    self.learning_rates.append(lr)
+            # 读取真实学习率数据
+            if 'learning_rates' in data:
+                for i, lr in enumerate(data['learning_rates']):
+                    if i >= len(self.learning_rates):
+                        self.learning_rates.append(lr)
 
             return True
 
