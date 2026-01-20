@@ -7,8 +7,7 @@ APT Model Optimization Module
 from apt_model.optimization.microvm_compression import (
     AutoCompressor,
     compress,
-    CompressedLinear,
-    PYTORCH_AVAILABLE
+    CompressedLinear
 )
 
 from apt_model.optimization.virtual_blackwell_adapter import (
@@ -16,25 +15,18 @@ from apt_model.optimization.virtual_blackwell_adapter import (
     create_virtual_blackwell
 )
 
-# PyTorch集成模块（可选）
-try:
-    from apt_model.optimization.vb_integration import (
-        VBOptimizedLinear,
-        VBModelWrapper,
-        enable_vb_optimization,
-        TORCH_AVAILABLE as VB_TORCH_AVAILABLE
-    )
-except ImportError:
-    VB_TORCH_AVAILABLE = False
-    VBOptimizedLinear = None
-    VBModelWrapper = None
-    enable_vb_optimization = None
+# PyTorch集成模块
+from apt_model.optimization.vb_integration import (
+    VBOptimizedLinear,
+    VBModelWrapper,
+    enable_vb_optimization,
+    TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+)
 
 __all__ = [
     'AutoCompressor',
     'compress',
     'CompressedLinear',
-    'PYTORCH_AVAILABLE',
     'VirtualBlackwellAdapter',
     'create_virtual_blackwell',
     'VBOptimizedLinear',
