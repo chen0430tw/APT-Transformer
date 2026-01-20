@@ -50,6 +50,10 @@ from apt_model.optimization.vgpu_estimator import (
     quick_estimate
 )
 
+# VGPU全局启用器（最简单的方式）
+from apt_model.optimization import vb_global
+from apt_model.optimization import vb_autopatch
+
 __all__ = [
     # GPU Flash优化（推荐使用）
     'FP4Codec',
@@ -70,6 +74,10 @@ __all__ = [
     'MemoryEstimate',
     'VGPUConfig',
     'quick_estimate',
+
+    # VGPU全局启用器（一行启用虚空算力）
+    'vb_global',
+    'vb_autopatch',
 
     # 旧版（兼容）
     'AutoCompressor',
