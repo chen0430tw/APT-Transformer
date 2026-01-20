@@ -174,12 +174,12 @@ if HAS_TRITON:
             
             # 加载X: [BLOCK_M, BLOCK_K]
             x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :] * stride_xk
-            x_mask = (offs_m[:, None] < M) & (offs_k[None, :] < K)
+            x_mask = (offs_m[:, None] < M) & (offs_k[None, :] < HEAD_DIM)
             x = tl.load(x_ptrs, mask=x_mask, other=0.0)
             
             # 加载W (FP4 packed): [BLOCK_N, BLOCK_K//2]
             w_ptrs = weight_fp4_ptr + offs_n[:, None] * stride_wn + (offs_k[None, :] // 2) * stride_wk
-            w_mask = (offs_n[:, None] < N) & (offs_k[None, :] < K)
+            w_mask = (offs_n[:, None] < N) & (offs_k[None, :] < HEAD_DIM)
             w_packed = tl.load(w_ptrs, mask=w_mask, other=0)
             
             # 解包FP4
@@ -262,7 +262,7 @@ if HAS_TRITON:
         
         # 加载X: [BLOCK_M, K]
         x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :] * stride_xk
-        x_mask = (offs_m[:, None] < M) & (offs_k[None, :] < K)
+        x_mask = (offs_m[:, None] < M) & (offs_k[None, :] < HEAD_DIM)
         x = tl.load(x_ptrs, mask=x_mask, other=0.0)
         
         # LayerNorm
@@ -301,7 +301,7 @@ if HAS_TRITON:
         stride_kb, stride_kh, stride_kn, stride_kk,
         stride_vb, stride_vh, stride_vn, stride_vk,
         stride_ob, stride_oh, stride_om, stride_ok,
-        B, H, M, N, K,
+        B, H, M, N, HEAD_DIM,
         scale,
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
@@ -309,32 +309,32 @@ if HAS_TRITON:
     ):
         """
         Flash Attention前向传播
-        
+
         核心思想：
         1. 分块计算attention
         2. 在线计算softmax (不存储完整attention矩阵)
         3. O(N)显存，而不是O(N²)
-        
+
         输入:
-            Q: [B, H, M, K] queries
-            K: [B, H, N, K] keys
-            V: [B, H, N, K] values
+            Q: [B, H, M, HEAD_DIM] queries
+            K: [B, H, N, HEAD_DIM] keys
+            V: [B, H, N, HEAD_DIM] values
         输出:
-            Out: [B, H, M, K]
+            Out: [B, H, M, HEAD_DIM]
         """
         # Program IDs
         pid_b = tl.program_id(0)
         pid_h = tl.program_id(1)
         pid_m = tl.program_id(2)
-        
+
         # Query块的offset
         offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_k = tl.arange(0, BLOCK_K)
-        
-        # 加载Q块: [BLOCK_M, K]
+
+        # 加载Q块: [BLOCK_M, HEAD_DIM]
         q_ptrs = Q + pid_b * stride_qb + pid_h * stride_qh + \
                  offs_m[:, None] * stride_qm + offs_k[None, :] * stride_qk
-        q = tl.load(q_ptrs, mask=(offs_m[:, None] < M) & (offs_k[None, :] < K))
+        q = tl.load(q_ptrs, mask=(offs_m[:, None] < M) & (offs_k[None, :] < HEAD_DIM))
         
         # 初始化输出和统计量
         out_acc = tl.zeros((BLOCK_M, BLOCK_K), dtype=tl.float32)
@@ -348,12 +348,12 @@ if HAS_TRITON:
             # 加载K块: [BLOCK_N, K]
             k_ptrs = K + pid_b * stride_kb + pid_h * stride_kh + \
                      offs_n[:, None] * stride_kn + offs_k[None, :] * stride_kk
-            k = tl.load(k_ptrs, mask=(offs_n[:, None] < N) & (offs_k[None, :] < K))
+            k = tl.load(k_ptrs, mask=(offs_n[:, None] < N) & (offs_k[None, :] < HEAD_DIM))
             
             # 加载V块: [BLOCK_N, K]
             v_ptrs = V + pid_b * stride_vb + pid_h * stride_vh + \
                      offs_n[:, None] * stride_vn + offs_k[None, :] * stride_vk
-            v = tl.load(v_ptrs, mask=(offs_n[:, None] < N) & (offs_k[None, :] < K))
+            v = tl.load(v_ptrs, mask=(offs_n[:, None] < N) & (offs_k[None, :] < HEAD_DIM))
             
             # 计算attention scores: [BLOCK_M, BLOCK_N]
             scores = tl.dot(q, tl.trans(k)) * scale
@@ -385,7 +385,7 @@ if HAS_TRITON:
         # 存储结果
         out_ptrs = Out + pid_b * stride_ob + pid_h * stride_oh + \
                    offs_m[:, None] * stride_om + offs_k[None, :] * stride_ok
-        tl.store(out_ptrs, out_acc, mask=(offs_m[:, None] < M) & (offs_k[None, :] < K))
+        tl.store(out_ptrs, out_acc, mask=(offs_m[:, None] < M) & (offs_k[None, :] < HEAD_DIM))
 
 
 # ============================================================================
@@ -572,25 +572,25 @@ class FlashAttention(nn.Module):
     
     def _flash_attention_triton(self, Q, K, V):
         """Triton Flash Attention"""
-        B, H, M, K = Q.shape
+        B, H, M, HEAD_DIM = Q.shape
         N = K.shape[2]
-        
+
         output = torch.empty_like(Q)
-        
+
         BLOCK_M, BLOCK_N, BLOCK_K = 128, 128, 64
         grid = lambda meta: (B, H, triton.cdiv(M, meta['BLOCK_M']))
-        
+
         flash_attention_fwd_kernel[grid](
             Q, K, V, output,
             Q.stride(0), Q.stride(1), Q.stride(2), Q.stride(3),
             K.stride(0), K.stride(1), K.stride(2), K.stride(3),
             V.stride(0), V.stride(1), V.stride(2), V.stride(3),
             output.stride(0), output.stride(1), output.stride(2), output.stride(3),
-            B, H, M, N, K,
+            B, H, M, N, HEAD_DIM,
             self.scale,
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
         )
-        
+
         return output
     
     def _flash_attention_pytorch(self, Q, K, V, mask):
