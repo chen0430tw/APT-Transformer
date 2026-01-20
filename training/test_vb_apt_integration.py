@@ -59,14 +59,13 @@ class VBOptimizedAPTModel(nn.Module):
         self.vgpu_stack = vgpu_stack
         self.use_fp4 = use_fp4
         self.use_flash_attn = use_flash_attn
+        self.optimized_layers = []  # 必须在_optimize_model之前初始化
 
         # 创建原始APT模型
         self.base_model = APTLargeModel(apt_config)
 
         # 替换关键层为VGPU优化版本
         self._optimize_model()
-
-        self.optimized_layers = []
 
     def _optimize_model(self):
         """将模型中的Linear层替换为VGPU优化版本"""
