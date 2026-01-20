@@ -33,6 +33,14 @@ from apt_model.optimization.vb_integration import (
     TORCH_AVAILABLE as VB_TORCH_AVAILABLE
 )
 
+# VGPU堆叠技术（最新）
+from apt_model.optimization.vgpu_stack import (
+    VGPUStack,
+    VGPULevel,
+    VGPUStackLinear,
+    create_vgpu_stack
+)
+
 __all__ = [
     # GPU Flash优化（推荐使用）
     'FP4Codec',
@@ -40,6 +48,12 @@ __all__ = [
     'FlashAttention',
     'OptimizedTransformerBlock',
     'HAS_TRITON',
+
+    # VGPU堆叠（最新）
+    'VGPUStack',
+    'VGPULevel',
+    'VGPUStackLinear',
+    'create_vgpu_stack',
 
     # 旧版（兼容）
     'AutoCompressor',
