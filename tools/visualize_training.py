@@ -60,6 +60,11 @@ class SciFiVisualizer:
         # Loss地形数据
         self.loss_landscape_history = []
 
+        # 训练状态追踪
+        self.last_update_time = None
+        self.training_active = True
+        self.no_update_timeout = 30  # 30秒无更新则认为训练已停止
+
         # 创建图形界面
         self.setup_figure()
 
@@ -67,7 +72,7 @@ class SciFiVisualizer:
         """创建科幻风格的图形界面"""
         # 创建主窗口
         self.fig = plt.figure(figsize=(20, 12), facecolor=CYBER_COLORS['bg'])
-        self.fig.suptitle('🚀 APT Training Visualization - Sci-Fi Edition',
+        self.title_text = self.fig.suptitle('🚀 APT Training Visualization - Sci-Fi Edition',
                          fontsize=24, color=CYBER_COLORS['primary'],
                          weight='bold', y=0.98)
 
@@ -456,6 +461,23 @@ class SciFiVisualizer:
 
         latest_report = max(report_files, key=lambda p: p.stat().st_mtime)
 
+        # 检查文件修改时间
+        file_mtime = latest_report.stat().st_mtime
+        current_time = time.time()
+
+        # 如果文件超过timeout时间未更新，认为训练已停止
+        if self.last_update_time is not None:
+            time_since_update = current_time - file_mtime
+            if time_since_update > self.no_update_timeout and self.training_active:
+                self.training_active = False
+                # 更新标题为"训练完成"
+                self.title_text.set_text('✅ APT Training Complete - Final Results')
+                self.title_text.set_color(CYBER_COLORS['success'])
+                print(f"\n✅ 训练已完成（{self.no_update_timeout}秒无数据更新）")
+                print("📊 可视化显示最终结果，可以关闭窗口退出")
+
+        self.last_update_time = file_mtime
+
         try:
             with open(latest_report) as f:
                 data = json.load(f)
@@ -512,6 +534,10 @@ class SciFiVisualizer:
 
     def update_all_plots(self):
         """更新所有图表"""
+        # 如果训练已停止，不再加载新数据，只保持显示
+        if not self.training_active:
+            return
+
         # 加载最新数据
         data_updated = self.load_latest_data()
 
@@ -529,11 +555,12 @@ class SciFiVisualizer:
         self.update_trajectory_plot()
         self.update_stats_display()
 
-        # 添加时间戳
+        # 添加时间戳和状态
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        self.fig.text(0.99, 0.01, f'Last Update: {timestamp}',
+        status = '🟢 Training Active' if self.training_active else '🔴 Training Stopped'
+        self.fig.text(0.99, 0.01, f'{status} | Last Update: {timestamp}',
                      ha='right', va='bottom',
-                     fontsize=8, color=CYBER_COLORS['grid'],
+                     fontsize=8, color=CYBER_COLORS['success'] if self.training_active else CYBER_COLORS['danger'],
                      style='italic')
 
         plt.draw()
@@ -543,7 +570,11 @@ class SciFiVisualizer:
         print("🚀 启动科幻风格训练可视化...")
         print(f"   日志目录: {self.log_dir}")
         print(f"   刷新频率: {self.refresh_rate}秒")
-        print("\n按 Ctrl+C 停止可视化\n")
+        print(f"   自动停止: {self.no_update_timeout}秒无更新时停止刷新")
+        print("\n💡 提示:")
+        print("   - 可视化会自动检测训练结束")
+        print("   - 训练停止后显示最终结果，可直接关闭窗口")
+        print("   - 或按 Ctrl+C 手动退出\n")
 
         # 初始化数据
         self.load_latest_data()
