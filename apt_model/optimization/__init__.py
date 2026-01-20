@@ -1,9 +1,19 @@
 """
 APT Model Optimization Module
 
-包含虚拟Blackwell优化框架和MicroVM压缩技术。
+包含GPU Flash优化框架（FP4量化 + Triton Kernel融合 + Flash Attention）
 """
 
+# GPU Flash优化（推荐）
+from apt_model.optimization.gpu_flash_optimization import (
+    FP4Codec,
+    FusedFP4Linear,
+    FlashAttention,
+    OptimizedTransformerBlock,
+    HAS_TRITON
+)
+
+# 旧版虚拟Blackwell（已弃用，仅兼容）
 from apt_model.optimization.microvm_compression import (
     AutoCompressor,
     compress,
@@ -24,6 +34,14 @@ from apt_model.optimization.vb_integration import (
 )
 
 __all__ = [
+    # GPU Flash优化（推荐使用）
+    'FP4Codec',
+    'FusedFP4Linear',
+    'FlashAttention',
+    'OptimizedTransformerBlock',
+    'HAS_TRITON',
+
+    # 旧版（兼容）
     'AutoCompressor',
     'compress',
     'CompressedLinear',
