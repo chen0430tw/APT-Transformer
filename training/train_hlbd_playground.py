@@ -414,12 +414,15 @@ class HLBDPlaygroundTrainer:
         # 统计 - 按epoch聚合
         self.losses = []
         self.batch_losses = []  # 实时batch loss用于可视化
+        self.grad_norms = []  # 每个epoch的梯度范数
+        self.learning_rates = []  # 每个epoch的学习率
 
     def train_epoch(self, epoch: int):
         """训练一个epoch（全能仪表盘版）"""
         self.model.train()
         total_loss = 0
         num_batches = 0
+        epoch_grad_norms = []  # 记录本epoch所有batch的梯度范数
 
         epoch_start = time.time()
 
@@ -469,10 +472,12 @@ class HLBDPlaygroundTrainer:
                 if self.scaler:
                     self.scaler.unscale_(self.optimizer)
 
-                torch.nn.utils.clip_grad_norm_(
+                # 记录梯度范数（在裁剪之前）
+                grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.config.max_grad_norm
                 )
+                epoch_grad_norms.append(grad_norm.item())
 
                 if self.scaler:
                     self.scaler.step(self.optimizer)
@@ -527,7 +532,14 @@ class HLBDPlaygroundTrainer:
             if batch_idx % 10 == 0:
                 self._save_batch_progress()
 
-        # Epoch结束更新学习率
+        # Epoch结束：记录平均梯度范数和学习率
+        avg_grad_norm = sum(epoch_grad_norms) / len(epoch_grad_norms) if epoch_grad_norms else 0.0
+        current_lr = self.scheduler.get_last_lr()[0]
+
+        self.grad_norms.append(avg_grad_norm)
+        self.learning_rates.append(current_lr)
+
+        # 更新学习率调度器
         self.scheduler.step()
 
         avg_loss = total_loss / num_batches
@@ -567,6 +579,8 @@ class HLBDPlaygroundTrainer:
             report = {
                 'control_losses': self.losses,  # Epoch平均loss
                 'batch_losses': clustered_losses,  # Batch实时loss（cluster压缩）
+                'grad_norms': self.grad_norms,  # 真实梯度范数（每个epoch）
+                'learning_rates': self.learning_rates,  # 真实学习率（每个epoch）
                 'current_epoch': len(self.losses),
                 'total_batches': len(self.batch_losses),
                 'dataset_stats': self.dataset_stats,
@@ -578,6 +592,56 @@ class HLBDPlaygroundTrainer:
         except Exception as e:
             # 静默失败，不中断训练
             pass
+
+    def load_checkpoint(self, checkpoint_path: str):
+        """从checkpoint恢复训练"""
+        print(f"\n🔄 加载checkpoint: {checkpoint_path}")
+
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        # 恢复模型权重
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        print("✓ 模型权重已恢复")
+
+        # 恢复优化器状态
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print("✓ 优化器状态已恢复")
+
+        # 恢复学习率调度器
+        if 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print("✓ 学习率调度器已恢复")
+
+        # 恢复tokenizer状态
+        if 'tokenizer_char_to_id' in checkpoint:
+            self.tokenizer.char_to_id = checkpoint['tokenizer_char_to_id']
+            self.tokenizer.id_to_char = checkpoint['tokenizer_id_to_char']
+            self.tokenizer.next_id = checkpoint['tokenizer_next_id']
+            print(f"✓ Tokenizer已恢复 (词汇表大小: {checkpoint['tokenizer_vocab_size']})")
+
+        # 恢复训练历史
+        if 'losses' in checkpoint:
+            self.losses = checkpoint['losses']
+            print(f"✓ Loss历史已恢复 ({len(self.losses)} epochs)")
+
+        if 'grad_norms' in checkpoint:
+            self.grad_norms = checkpoint['grad_norms']
+            print(f"✓ 梯度范数历史已恢复 ({len(self.grad_norms)} epochs)")
+
+        if 'learning_rates' in checkpoint:
+            self.learning_rates = checkpoint['learning_rates']
+            print(f"✓ 学习率历史已恢复 ({len(self.learning_rates)} epochs)")
+
+        # 恢复混合精度scaler
+        if self.scaler and 'scaler_state_dict' in checkpoint:
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            print("✓ GradScaler已恢复")
+
+        # 返回起始epoch
+        start_epoch = checkpoint.get('epoch', 0)
+        print(f"\n✅ 将从Epoch {start_epoch + 1} 继续训练\n")
+
+        return start_epoch
 
     def save_checkpoint(self, save_path: str, epoch: int):
         """保存checkpoint"""
@@ -592,6 +656,8 @@ class HLBDPlaygroundTrainer:
             'tokenizer_vocab_size': self.tokenizer.vocab_size,
             'config': self.config.__dict__,
             'losses': self.losses,
+            'grad_norms': self.grad_norms,
+            'learning_rates': self.learning_rates,
             'dataset_stats': self.dataset_stats
         }
 
@@ -639,6 +705,8 @@ def main():
                        help='保存目录')
     parser.add_argument('--save-interval', type=int, default=25,
                        help='保存间隔')
+    parser.add_argument('--resume', type=str, default=None,
+                       help='从checkpoint恢复训练（提供checkpoint文件路径）')
 
     args = parser.parse_args()
 
@@ -709,12 +777,21 @@ def main():
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # 检查是否从checkpoint恢复
+    start_epoch = 0
+    if args.resume:
+        if Path(args.resume).exists():
+            start_epoch = trainer.load_checkpoint(args.resume)
+        else:
+            print(f"⚠️  Checkpoint文件不存在: {args.resume}")
+            print("从头开始训练...")
+
     # 训练循环
     print("\n" + "=" * 60)
     print("🎮 HLBD Playground训练开始")
     print("=" * 60)
 
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         # 训练
         loss, epoch_time = trainer.train_epoch(epoch)
 
