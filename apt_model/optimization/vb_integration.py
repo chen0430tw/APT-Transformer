@@ -14,13 +14,12 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 if TORCH_AVAILABLE:
-    import numpy as np
     from typing import Optional, Dict
     from apt_model.optimization.virtual_blackwell_adapter import create_virtual_blackwell
 
 
     class VBOptimizedLinear(nn.Module):
-        """使用虚拟Blackwell优化的线性层"""
+        """使用虚拟Blackwell优化的线性层（GPU加速版）"""
 
         def __init__(self, in_features: int, out_features: int,
                      mode: str = 'auto', bias: bool = True,
@@ -48,45 +47,41 @@ if TORCH_AVAILABLE:
             self._registered = False
 
         def forward(self, x):
-            """前向传播"""
-            # 注册权重（仅首次）
+            """前向传播（GPU加速，无CPU转换）"""
+            # 注册权重（仅首次）- 直接使用tensor
             if not self._registered:
-                W_np = self.weight.detach().cpu().numpy()
-                self.vb_adapter.register_weight(self.layer_id, W_np)
+                self.vb_adapter.register_weight(self.layer_id, self.weight.detach())
                 self._registered = True
 
-            # 转numpy
-            W_np = self.weight.detach().cpu().numpy()
-            X_np = x.detach().cpu().numpy()
+            # 获取权重和输入 - 保持在GPU上
+            W = self.weight
+            X = x
 
             # 处理维度 (batch, seq, dim) -> (dim, batch*seq)
-            original_shape = X_np.shape
+            original_shape = X.shape
             if len(original_shape) == 3:
                 batch, seq, dim = original_shape
-                X_np = X_np.reshape(batch * seq, dim).T
+                X = X.reshape(batch * seq, dim).T
             elif len(original_shape) == 2:
-                X_np = X_np.T
+                X = X.T
             else:
                 raise ValueError(f"Unsupported input shape: {original_shape}")
 
-            # 虚拟Blackwell压缩计算
-            Y_np = self.vb_adapter.compress(W_np, X_np, self.layer_id)
+            # 虚拟Blackwell压缩计算 - 全程在GPU上
+            Y = self.vb_adapter.compress(W, X, self.layer_id)
 
             # 转置回来
-            Y_np = Y_np.T
+            Y = Y.T
 
             # 恢复维度
             if len(original_shape) == 3:
-                Y_np = Y_np.reshape(batch, seq, -1)
+                Y = Y.reshape(batch, seq, -1)
 
-            # 转回torch - 确保设备和数据类型正确
-            y = torch.from_numpy(Y_np.copy()).to(device=x.device, dtype=x.dtype)
-
+            # 添加bias
             if self.bias is not None:
-                # 确保bias在正确的设备上
-                y = y + self.bias.to(x.device)
+                Y = Y + self.bias
 
-            return y
+            return Y
 
         def get_stats(self) -> Dict:
             """获取虚拟Blackwell统计信息"""
