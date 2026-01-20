@@ -115,6 +115,19 @@ def benchmark_attention():
     attn_standard = nn.MultiheadAttention(d_model, n_heads, batch_first=True).to(device)
     attn_flash = FlashAttention(d_model, n_heads).to(device)
 
+    # 复制权重（关键！）
+    with torch.no_grad():
+        # 复制QKV投影权重
+        attn_flash.qkv.weight.copy_(attn_standard.in_proj_weight)
+        attn_flash.qkv.bias.copy_(attn_standard.in_proj_bias)
+        # 复制输出投影权重
+        attn_flash.o_proj.weight.copy_(attn_standard.out_proj.weight)
+        attn_flash.o_proj.bias.copy_(attn_standard.out_proj.bias)
+
+    # 设置eval模式（关闭dropout）
+    attn_standard.eval()
+    attn_flash.eval()
+
     # 测试输入
     x = torch.randn(batch_size, seq_len, d_model, device=device)
 
