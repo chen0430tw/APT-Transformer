@@ -79,11 +79,12 @@ if TORCH_AVAILABLE:
             if len(original_shape) == 3:
                 Y_np = Y_np.reshape(batch, seq, -1)
 
-            # 转回torch
-            y = torch.from_numpy(Y_np).to(x.device, dtype=x.dtype)
+            # 转回torch - 确保设备和数据类型正确
+            y = torch.from_numpy(Y_np.copy()).to(device=x.device, dtype=x.dtype)
 
             if self.bias is not None:
-                y = y + self.bias
+                # 确保bias在正确的设备上
+                y = y + self.bias.to(x.device)
 
             return y
 
