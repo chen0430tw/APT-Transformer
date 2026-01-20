@@ -179,8 +179,19 @@ class VGPUStack:
                   f"@ {level.transfer_speed/(1024**3):.1f}GB/s")
 
     def _default_config(self) -> Dict:
-        """默认配置（支持GPU/NPU/CPU）"""
-        # 检测NPU
+        """默认配置（支持多厂商加速器）"""
+        # 检测CUDA (NVIDIA GPU / AMD ROCm)
+        cuda_available = torch.cuda.is_available()
+
+        # 检测Intel Habana Gaudi HPU
+        hpu_available = False
+        try:
+            import habana_frameworks.torch as habana_torch
+            hpu_available = hasattr(habana_torch, 'hpu') and habana_torch.hpu.is_available()
+        except ImportError:
+            pass
+
+        # 检测华为昇腾NPU
         npu_available = False
         try:
             import torch_npu
@@ -188,24 +199,48 @@ class VGPUStack:
         except ImportError:
             pass
 
-        # 检测CUDA
-        cuda_available = torch.cuda.is_available()
+        # 检测Intel XPU (包括Ultra NPU)
+        xpu_available = False
+        try:
+            import intel_extension_for_pytorch as ipex
+            xpu_available = hasattr(ipex, 'xpu') and ipex.xpu.is_available()
+        except ImportError:
+            pass
 
-        if npu_available:
-            # NPU配置（华为昇腾）
-            return {
-                'levels': [
-                    {'capacity_mb': 2000, 'device': 'npu:0', 'speed_gbps': 600},   # NPU HBM
-                    {'capacity_mb': 8000, 'device': 'cpu', 'speed_gbps': 40},      # PCIe to CPU
-                    {'capacity_mb': 32000, 'device': 'ssd', 'speed_gbps': 7}       # NVMe
-                ]
-            }
-        elif cuda_available:
-            # CUDA GPU配置
+        # 优先级: CUDA > HPU > NPU > XPU > CPU
+        if cuda_available:
+            # NVIDIA GPU配置
             return {
                 'levels': [
                     {'capacity_mb': 2000, 'device': 'cuda:0', 'speed_gbps': 900},  # NVLink
                     {'capacity_mb': 8000, 'device': 'cpu', 'speed_gbps': 50},      # PCIe 4.0
+                    {'capacity_mb': 32000, 'device': 'ssd', 'speed_gbps': 7}       # NVMe
+                ]
+            }
+        elif hpu_available:
+            # Intel Habana Gaudi配置
+            return {
+                'levels': [
+                    {'capacity_mb': 3000, 'device': 'hpu:0', 'speed_gbps': 700},   # Gaudi2 HBM2E
+                    {'capacity_mb': 16000, 'device': 'cpu', 'speed_gbps': 45},     # PCIe 4.0
+                    {'capacity_mb': 64000, 'device': 'ssd', 'speed_gbps': 7}       # NVMe
+                ]
+            }
+        elif npu_available:
+            # 华为昇腾NPU配置
+            return {
+                'levels': [
+                    {'capacity_mb': 2000, 'device': 'npu:0', 'speed_gbps': 600},   # Ascend HBM
+                    {'capacity_mb': 8000, 'device': 'cpu', 'speed_gbps': 40},      # PCIe
+                    {'capacity_mb': 32000, 'device': 'ssd', 'speed_gbps': 7}       # NVMe
+                ]
+            }
+        elif xpu_available:
+            # Intel XPU配置
+            return {
+                'levels': [
+                    {'capacity_mb': 1500, 'device': 'xpu:0', 'speed_gbps': 400},   # Intel Arc/Ultra
+                    {'capacity_mb': 8000, 'device': 'cpu', 'speed_gbps': 40},      # PCIe
                     {'capacity_mb': 32000, 'device': 'ssd', 'speed_gbps': 7}       # NVMe
                 ]
             }

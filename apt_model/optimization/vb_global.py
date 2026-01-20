@@ -17,7 +17,13 @@ import os
 # 虚拟Blackwell组件
 from apt_model.optimization.vgpu_stack import VGPUStack, create_vgpu_stack
 from apt_model.optimization.vgpu_estimator import VGPUResourceEstimator, ModelConfig
-from apt_model.optimization.npu_backend import get_accelerator_type, is_npu_available, is_cuda_available
+from apt_model.optimization.npu_backend import (
+    get_accelerator_type,
+    is_cuda_available,
+    is_npu_available,
+    is_hpu_available,
+    is_xpu_available
+)
 
 # 全局状态
 _vb_enabled = False
@@ -83,9 +89,11 @@ def enable(use_fp4: bool = False,
         device_type = get_accelerator_type()
         device_emoji = {
             'cuda': '🟢 NVIDIA GPU',
-            'npu': '🟡 华为昇腾NPU',
-            'cpu': '🔵 CPU'
-        }.get(device_type, '⚪ 未知设备')
+            'hpu': '🟣 Intel Habana Gaudi HPU',
+            'npu': '🟡 Huawei Ascend NPU',
+            'xpu': '🔵 Intel XPU',
+            'cpu': '⚪ CPU'
+        }.get(device_type, '⚫ 未知设备')
 
         print("\n" + "="*70)
         print("🚀 虚拟Blackwell已全局启用")

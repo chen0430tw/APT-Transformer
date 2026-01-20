@@ -54,14 +54,20 @@ from apt_model.optimization.vgpu_estimator import (
 from apt_model.optimization import vb_global
 from apt_model.optimization import vb_autopatch
 
-# NPU后端适配器（统一GPU/NPU/CPU接口）
+# NPU/XPU/HPU后端适配器（统一多厂商加速器接口）
 from apt_model.optimization.npu_backend import (
     DeviceBackend,
     UnifiedDeviceManager,
     get_device_manager,
     get_unified_backend,
+    # 设备检测
+    is_cuda_available,
     is_npu_available,
-    get_accelerator_type
+    is_hpu_available,
+    is_xpu_available,
+    # 工具函数
+    get_accelerator_type,
+    get_all_accelerator_types,
 )
 
 __all__ = [
@@ -89,13 +95,19 @@ __all__ = [
     'vb_global',
     'vb_autopatch',
 
-    # NPU后端适配器（GPU/NPU/CPU统一接口）
+    # NPU/XPU/HPU后端适配器（多厂商加速器统一接口）
     'DeviceBackend',
     'UnifiedDeviceManager',
     'get_device_manager',
     'get_unified_backend',
+    # 设备检测
+    'is_cuda_available',
     'is_npu_available',
+    'is_hpu_available',
+    'is_xpu_available',
+    # 工具函数
     'get_accelerator_type',
+    'get_all_accelerator_types',
 
     # 旧版（兼容）
     'AutoCompressor',
