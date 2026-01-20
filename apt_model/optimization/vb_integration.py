@@ -77,9 +77,9 @@ if TORCH_AVAILABLE:
             if len(original_shape) == 3:
                 Y = Y.reshape(batch, seq, -1)
 
-            # 添加bias
+            # 添加bias - 确保在同一设备上
             if self.bias is not None:
-                Y = Y + self.bias
+                Y = Y + self.bias.to(Y.device)
 
             return Y
 
