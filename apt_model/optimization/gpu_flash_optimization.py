@@ -594,16 +594,22 @@ class FlashAttention(nn.Module):
         return output
     
     def _flash_attention_pytorch(self, Q, K, V, mask):
-        """真正的Flash Attention - 分块计算，O(N)显存"""
+        """
+        真正的Flash Attention - 分块计算，O(N)显存
+
+        使用在线softmax算法（Flash Attention V2），数值稳定版本
+        参考: https://arxiv.org/abs/2405.02803
+        """
         B, H, M, K_dim = Q.shape
         _, _, N, _ = K.shape
 
         # 分块大小（根据显存调整）
         BLOCK_SIZE = min(256, N)
 
-        output = torch.zeros_like(Q)
-        l = torch.zeros(B, H, M, 1, device=Q.device, dtype=Q.dtype)  # 累积的softmax分母
-        m = torch.full((B, H, M, 1), -float('inf'), device=Q.device, dtype=Q.dtype)  # 最大值
+        # 使用float32累积，提高精度（重要！）
+        output = torch.zeros(B, H, M, K_dim, device=Q.device, dtype=torch.float32)
+        l = torch.zeros(B, H, M, 1, device=Q.device, dtype=torch.float32)  # 累积的softmax分母
+        m = torch.full((B, H, M, 1), -float('inf'), device=Q.device, dtype=torch.float32)  # 最大值
 
         # 遍历K,V的块（在线softmax）
         for j in range(0, N, BLOCK_SIZE):
@@ -611,27 +617,29 @@ class FlashAttention(nn.Module):
             K_block = K[:, :, j:j_end, :]  # [B, H, block_n, K]
             V_block = V[:, :, j:j_end, :]  # [B, H, block_n, K]
 
-            # 计算scores（只存储当前块）
-            scores = torch.matmul(Q, K_block.transpose(-2, -1)) * self.scale  # [B, H, M, block_n]
+            # 计算scores（只存储当前块），转float32提高精度
+            scores = torch.matmul(Q.float(), K_block.transpose(-2, -1).float()) * self.scale  # [B, H, M, block_n]
 
-            # 在线更新max
-            m_new = torch.maximum(m, scores.max(dim=-1, keepdim=True)[0])
+            # 在线更新max（当前块的最大值）
+            m_block = scores.max(dim=-1, keepdim=True)[0]
+            m_new = torch.maximum(m, m_block)
 
-            # 更新之前的累积值（rescale）
+            # 更新之前的累积值（rescale）- 必须总是rescale以保证正确性
             scale_old = torch.exp(m - m_new)
             output = output * scale_old
             l = l * scale_old
 
-            # 新的softmax项
+            # 新的softmax项（数值稳定版本）
             exp_scores = torch.exp(scores - m_new)
-            output = output + torch.matmul(exp_scores, V_block)
+            output = output + torch.matmul(exp_scores, V_block.float())
             l = l + exp_scores.sum(dim=-1, keepdim=True)
             m = m_new
 
-        # 归一化
-        output = output / (l + 1e-10)  # 添加epsilon防止除零
+        # 归一化（安全除法）
+        output = output / torch.clamp(l, min=1e-10)
 
-        return output
+        # 转回原始dtype
+        return output.to(Q.dtype)
 
 
 class OptimizedTransformerBlock(nn.Module):
