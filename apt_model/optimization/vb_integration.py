@@ -77,9 +77,9 @@ if TORCH_AVAILABLE:
             if len(original_shape) == 3:
                 Y = Y.reshape(batch, seq, -1)
 
-            # 添加bias
+            # 添加bias - 确保在同一设备上
             if self.bias is not None:
-                Y = Y + self.bias
+                Y = Y + self.bias.to(Y.device)
 
             return Y
 
@@ -217,7 +217,7 @@ if TORCH_AVAILABLE:
 
 
     def enable_vb_optimization(model: nn.Module, mode: str = 'training',
-                              enable_quantization: bool = True,
+                              enable_quantization: bool = False,
                               replace_pattern: str = 'all') -> VBModelWrapper:
         """
         快速启用虚拟Blackwell优化
@@ -225,7 +225,7 @@ if TORCH_AVAILABLE:
         Args:
             model: 要优化的模型
             mode: 'auto', 'training', 'inference', 'precision'
-            enable_quantization: 是否启用量化
+            enable_quantization: 是否启用量化（默认禁用，因为太慢）
             replace_pattern: 'all' 或 'large'
 
         Returns:

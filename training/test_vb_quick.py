@@ -241,7 +241,7 @@ def main():
         model_vb = enable_vb_optimization(
             model_vb,
             mode='training',
-            enable_quantization=True,
+            enable_quantization=False,  # 禁用量化（太慢，每个8x8 block都要做SVD）
             replace_pattern='large'  # 只优化大型层
         )
     except Exception as e:

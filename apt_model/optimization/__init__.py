@@ -1,14 +1,23 @@
 """
 APT Model Optimization Module
 
-包含虚拟Blackwell优化框架和MicroVM压缩技术。
+包含GPU Flash优化框架（FP4量化 + Triton Kernel融合 + Flash Attention）
 """
 
+# GPU Flash优化（推荐）
+from apt_model.optimization.gpu_flash_optimization import (
+    FP4Codec,
+    FusedFP4Linear,
+    FlashAttention,
+    OptimizedTransformerBlock,
+    HAS_TRITON
+)
+
+# 旧版虚拟Blackwell（已弃用，仅兼容）
 from apt_model.optimization.microvm_compression import (
     AutoCompressor,
     compress,
-    CompressedLinear,
-    PYTORCH_AVAILABLE
+    CompressedLinear
 )
 
 from apt_model.optimization.virtual_blackwell_adapter import (
@@ -16,25 +25,26 @@ from apt_model.optimization.virtual_blackwell_adapter import (
     create_virtual_blackwell
 )
 
-# PyTorch集成模块（可选）
-try:
-    from apt_model.optimization.vb_integration import (
-        VBOptimizedLinear,
-        VBModelWrapper,
-        enable_vb_optimization,
-        TORCH_AVAILABLE as VB_TORCH_AVAILABLE
-    )
-except ImportError:
-    VB_TORCH_AVAILABLE = False
-    VBOptimizedLinear = None
-    VBModelWrapper = None
-    enable_vb_optimization = None
+# PyTorch集成模块
+from apt_model.optimization.vb_integration import (
+    VBOptimizedLinear,
+    VBModelWrapper,
+    enable_vb_optimization,
+    TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+)
 
 __all__ = [
+    # GPU Flash优化（推荐使用）
+    'FP4Codec',
+    'FusedFP4Linear',
+    'FlashAttention',
+    'OptimizedTransformerBlock',
+    'HAS_TRITON',
+
+    # 旧版（兼容）
     'AutoCompressor',
     'compress',
     'CompressedLinear',
-    'PYTORCH_AVAILABLE',
     'VirtualBlackwellAdapter',
     'create_virtual_blackwell',
     'VBOptimizedLinear',
