@@ -106,8 +106,8 @@ class FP4Codec:
         # 展平
         indices = indices.flatten(-2)  # [B, N_padded]
 
-        # 查表 - flatten indices for 1D table lookup, then reshape
-        values = table[indices.flatten()].reshape(indices.shape)
+        # 查表 - convert to long for indexing, then lookup and reshape
+        values = table[indices.flatten().long()].reshape(indices.shape)
         
         # 去掉padding
         values = values[..., :original_size]
