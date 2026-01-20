@@ -594,16 +594,43 @@ class FlashAttention(nn.Module):
         return output
     
     def _flash_attention_pytorch(self, Q, K, V, mask):
-        """PyTorch标准attention (fallback)"""
-        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
-        
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, -1e9)
-        
-        attn = F.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
-        
-        output = torch.matmul(attn, V)
+        """真正的Flash Attention - 分块计算，O(N)显存"""
+        B, H, M, K_dim = Q.shape
+        _, _, N, _ = K.shape
+
+        # 分块大小（根据显存调整）
+        BLOCK_SIZE = min(256, N)
+
+        output = torch.zeros_like(Q)
+        l = torch.zeros(B, H, M, 1, device=Q.device, dtype=Q.dtype)  # 累积的softmax分母
+        m = torch.full((B, H, M, 1), -float('inf'), device=Q.device, dtype=Q.dtype)  # 最大值
+
+        # 遍历K,V的块（在线softmax）
+        for j in range(0, N, BLOCK_SIZE):
+            j_end = min(j + BLOCK_SIZE, N)
+            K_block = K[:, :, j:j_end, :]  # [B, H, block_n, K]
+            V_block = V[:, :, j:j_end, :]  # [B, H, block_n, K]
+
+            # 计算scores（只存储当前块）
+            scores = torch.matmul(Q, K_block.transpose(-2, -1)) * self.scale  # [B, H, M, block_n]
+
+            # 在线更新max
+            m_new = torch.maximum(m, scores.max(dim=-1, keepdim=True)[0])
+
+            # 更新之前的累积值（rescale）
+            scale_old = torch.exp(m - m_new)
+            output = output * scale_old
+            l = l * scale_old
+
+            # 新的softmax项
+            exp_scores = torch.exp(scores - m_new)
+            output = output + torch.matmul(exp_scores, V_block)
+            l = l + exp_scores.sum(dim=-1, keepdim=True)
+            m = m_new
+
+        # 归一化
+        output = output / (l + 1e-10)  # 添加epsilon防止除零
+
         return output
 
 
