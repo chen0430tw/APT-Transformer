@@ -41,6 +41,15 @@ from apt_model.optimization.vgpu_stack import (
     create_vgpu_stack
 )
 
+# VGPU资源评估器
+from apt_model.optimization.vgpu_estimator import (
+    VGPUResourceEstimator,
+    ModelConfig,
+    MemoryEstimate,
+    VGPUConfig,
+    quick_estimate
+)
+
 __all__ = [
     # GPU Flash优化（推荐使用）
     'FP4Codec',
@@ -54,6 +63,13 @@ __all__ = [
     'VGPULevel',
     'VGPUStackLinear',
     'create_vgpu_stack',
+
+    # VGPU资源评估器
+    'VGPUResourceEstimator',
+    'ModelConfig',
+    'MemoryEstimate',
+    'VGPUConfig',
+    'quick_estimate',
 
     # 旧版（兼容）
     'AutoCompressor',
