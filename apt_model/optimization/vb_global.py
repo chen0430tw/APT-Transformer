@@ -1,11 +1,12 @@
 """
 虚拟Blackwell全局启用器
 
-一行代码启用虚拟Blackwell优化：
+一行代码启用虚拟Blackwell优化（支持GPU/NPU/CPU）：
     import apt_model.optimization.vb_global as vb
     vb.enable()
 
 所有后续创建的APT模型都会自动应用VGPU优化。
+支持设备：NVIDIA CUDA GPU、华为昇腾NPU、CPU
 """
 
 import torch
@@ -16,6 +17,7 @@ import os
 # 虚拟Blackwell组件
 from apt_model.optimization.vgpu_stack import VGPUStack, create_vgpu_stack
 from apt_model.optimization.vgpu_estimator import VGPUResourceEstimator, ModelConfig
+from apt_model.optimization.npu_backend import get_accelerator_type, is_npu_available, is_cuda_available
 
 # 全局状态
 _vb_enabled = False
@@ -77,9 +79,18 @@ def enable(use_fp4: bool = False,
         _vb_stack = create_vgpu_stack()
 
     if verbose:
+        # 检测设备类型
+        device_type = get_accelerator_type()
+        device_emoji = {
+            'cuda': '🟢 NVIDIA GPU',
+            'npu': '🟡 华为昇腾NPU',
+            'cpu': '🔵 CPU'
+        }.get(device_type, '⚪ 未知设备')
+
         print("\n" + "="*70)
         print("🚀 虚拟Blackwell已全局启用")
         print("="*70)
+        print(f"加速设备:        {device_emoji}")
         print(f"FP4量化:         {'✅ 启用' if use_fp4 else '❌ 禁用'}")
         print(f"Flash Attention: {'✅ 启用' if use_flash_attn else '❌ 禁用'}")
         print(f"混合精度:        {'✅ 启用' if mixed_precision else '❌ 禁用'}")

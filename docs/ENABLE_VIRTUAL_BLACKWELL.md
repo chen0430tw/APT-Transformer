@@ -1,5 +1,7 @@
 # 如何在整个APT项目启用虚拟Blackwell
 
+> **✨ 新功能：现已支持华为昇腾NPU！** 虚拟Blackwell自动检测并优化GPU/NPU/CPU设备。详见：[NPU集成指南](./NPU_INTEGRATION_GUIDE.md)
+
 ## 🎯 三种启用方式
 
 ### 方式1：全局启用（推荐，一行代码）

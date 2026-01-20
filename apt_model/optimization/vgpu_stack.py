@@ -179,11 +179,29 @@ class VGPUStack:
                   f"@ {level.transfer_speed/(1024**3):.1f}GB/s")
 
     def _default_config(self) -> Dict:
-        """默认配置"""
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        """默认配置（支持GPU/NPU/CPU）"""
+        # 检测NPU
+        npu_available = False
+        try:
+            import torch_npu
+            npu_available = torch_npu.npu.is_available()
+        except ImportError:
+            pass
 
-        if device == 'cuda':
-            # 多GPU配置
+        # 检测CUDA
+        cuda_available = torch.cuda.is_available()
+
+        if npu_available:
+            # NPU配置（华为昇腾）
+            return {
+                'levels': [
+                    {'capacity_mb': 2000, 'device': 'npu:0', 'speed_gbps': 600},   # NPU HBM
+                    {'capacity_mb': 8000, 'device': 'cpu', 'speed_gbps': 40},      # PCIe to CPU
+                    {'capacity_mb': 32000, 'device': 'ssd', 'speed_gbps': 7}       # NVMe
+                ]
+            }
+        elif cuda_available:
+            # CUDA GPU配置
             return {
                 'levels': [
                     {'capacity_mb': 2000, 'device': 'cuda:0', 'speed_gbps': 900},  # NVLink

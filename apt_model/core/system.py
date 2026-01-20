@@ -29,39 +29,78 @@ import numpy as np
 # 设备管理
 # ============================================================================
 
-def get_device(force_cpu: bool = False) -> torch.device:
+def get_device(force_cpu: bool = False, prefer_npu: bool = False) -> torch.device:
     """
-    获取计算设备
+    获取计算设备（支持GPU/NPU/CPU）
 
     参数:
         force_cpu: 是否强制使用CPU
+        prefer_npu: 是否优先使用NPU（华为昇腾）
 
     返回:
         torch.device: 计算设备
     """
     if force_cpu:
         return torch.device("cpu")
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 检测NPU（华为昇腾）
+    npu_available = False
+    try:
+        import torch_npu
+        npu_available = torch_npu.npu.is_available()
+    except ImportError:
+        pass
+
+    # 优先级：prefer_npu -> NPU -> CUDA -> CPU
+    if prefer_npu and npu_available:
+        return torch.device("npu:0")
+    elif npu_available and not torch.cuda.is_available():
+        # NPU可用且没有CUDA，使用NPU
+        return torch.device("npu:0")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    elif npu_available:
+        # CUDA不可用但NPU可用
+        return torch.device("npu:0")
+    else:
+        return torch.device("cpu")
 
 
 def get_device_info() -> dict:
     """
-    获取设备详细信息
+    获取设备详细信息（支持GPU/NPU/CPU）
 
     返回:
         dict: 设备信息字典
     """
     info = {
         "cuda_available": torch.cuda.is_available(),
+        "npu_available": False,
         "device_count": 0,
         "device_name": "CPU",
         "cuda_version": None,
+        "npu_version": None,
+        "device_type": "cpu",
     }
 
-    if torch.cuda.is_available():
+    # 检测NPU
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            info["npu_available"] = True
+            info["device_count"] = torch_npu.npu.device_count()
+            info["device_name"] = f"NPU {torch_npu.npu.get_device_name(0)}"
+            info["npu_version"] = getattr(torch_npu, '__version__', 'unknown')
+            info["device_type"] = "npu"
+    except ImportError:
+        pass
+
+    # 检测CUDA（如果没有NPU或CUDA优先）
+    if torch.cuda.is_available() and not info["npu_available"]:
         info["device_count"] = torch.cuda.device_count()
         info["device_name"] = torch.cuda.get_device_name(0)
         info["cuda_version"] = torch.version.cuda
+        info["device_type"] = "cuda"
 
     return info
 
@@ -88,7 +127,7 @@ def set_device(device_id: int = 0) -> torch.device:
 
 def set_seed(seed: int = 42) -> None:
     """
-    设置随机种子以确保可重现性
+    设置随机种子以确保可重现性（支持GPU/NPU/CPU）
 
     参数:
         seed: 随机种子值
@@ -97,11 +136,20 @@ def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    # CUDA种子
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
         # 确保CUDA操作的确定性
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+    # NPU种子
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            torch_npu.npu.manual_seed_all(seed)
+    except ImportError:
+        pass
 
 
 # ============================================================================
@@ -109,20 +157,30 @@ def set_seed(seed: int = 42) -> None:
 # ============================================================================
 
 def memory_cleanup() -> None:
-    """清理内存和缓存"""
+    """清理内存和缓存（支持GPU/NPU/CPU）"""
     gc.collect()
+
+    # 清理CUDA缓存
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+    # 清理NPU缓存
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            torch_npu.npu.empty_cache()
+    except ImportError:
+        pass
 
 
 def get_memory_info() -> dict:
     """
-    获取内存使用信息
+    获取内存使用信息（支持GPU/NPU/CPU）
 
     返回:
         dict: 内存信息字典
     """
-    info = {"ram": {}, "vram": {}}
+    info = {"ram": {}, "vram": {}, "npu_memory": {}}
 
     # RAM信息
     try:
@@ -137,7 +195,7 @@ def get_memory_info() -> dict:
     except ImportError:
         info["ram"] = {"error": "psutil not installed"}
 
-    # VRAM信息
+    # VRAM信息（GPU）
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             info["vram"][f"gpu_{i}"] = {
@@ -145,6 +203,19 @@ def get_memory_info() -> dict:
                 "reserved_gb": torch.cuda.memory_reserved(i) / (1024**3),
                 "max_allocated_gb": torch.cuda.max_memory_allocated(i) / (1024**3),
             }
+
+    # NPU内存信息
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            for i in range(torch_npu.npu.device_count()):
+                info["npu_memory"][f"npu_{i}"] = {
+                    "allocated_gb": torch_npu.npu.memory_allocated(i) / (1024**3),
+                    "reserved_gb": torch_npu.npu.memory_reserved(i) / (1024**3),
+                    "max_allocated_gb": torch_npu.npu.max_memory_allocated(i) / (1024**3),
+                }
+    except (ImportError, AttributeError):
+        pass
 
     return info
 

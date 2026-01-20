@@ -54,6 +54,16 @@ from apt_model.optimization.vgpu_estimator import (
 from apt_model.optimization import vb_global
 from apt_model.optimization import vb_autopatch
 
+# NPU后端适配器（统一GPU/NPU/CPU接口）
+from apt_model.optimization.npu_backend import (
+    DeviceBackend,
+    UnifiedDeviceManager,
+    get_device_manager,
+    get_unified_backend,
+    is_npu_available,
+    get_accelerator_type
+)
+
 __all__ = [
     # GPU Flash优化（推荐使用）
     'FP4Codec',
@@ -78,6 +88,14 @@ __all__ = [
     # VGPU全局启用器（一行启用虚空算力）
     'vb_global',
     'vb_autopatch',
+
+    # NPU后端适配器（GPU/NPU/CPU统一接口）
+    'DeviceBackend',
+    'UnifiedDeviceManager',
+    'get_device_manager',
+    'get_unified_backend',
+    'is_npu_available',
+    'get_accelerator_type',
 
     # 旧版（兼容）
     'AutoCompressor',
