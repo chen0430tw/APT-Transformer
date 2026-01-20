@@ -156,7 +156,11 @@ class VirtualBlackwellAdapter:
         print(f"[虚拟Blackwell] Mode={mode}, 量化={'启用' if enable_quantization else '禁用'}")
 
     def register_weight(self, weight_id: str, weight: torch.Tensor, priority: int = 5):
+        # Layer 1: 注册到虚拟GPU网络
         self.vgpu.register(weight_id, weight, priority)
+
+        # Layer 2: 预计算MicroVM压缩
+        self.microvm.register_weight(weight_id, weight)
 
     def compress(self, W: torch.Tensor, X: torch.Tensor, weight_id: str = 'default') -> torch.Tensor:
         # Layer 1: 虚拟GPU获取
