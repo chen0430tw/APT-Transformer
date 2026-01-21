@@ -614,8 +614,120 @@ class ContextComposer(BaseClass):
 # ==================== 便捷函数 ====================
 
 def create_context_composer(config: Optional[MemoryConfig] = None) -> ContextComposer:
-    """创建上下文组合器"""
+    """创建上下文组合器（ChatGPT-style）"""
     return ContextComposer(config)
+
+
+def create_hierarchical_composer(config: Optional[MemoryConfig] = None):
+    """
+    创建分层记忆组合器（增强版）
+
+    结合两种记忆系统：
+    1. ContextComposer（ChatGPT-style）：用户友好，简单易用
+    2. HierarchicalMemoryManager（分层记忆）：精确控制，防漂移
+
+    Example:
+        >>> from apt_model.memory.context_composer import create_hierarchical_composer
+        >>>
+        >>> composer = create_hierarchical_composer()
+        >>>
+        >>> # 使用锚点指令
+        >>> text = \"\"\"
+        >>> 【封存·原文】DEF:Apeiron:v1: Apeiron是无限未分化的原始存在。
+        >>> 【封存·字段】PARAM:HyperParams:v1: {"learning_rate": 0.001, "batch_size": 32}
+        >>> 【封存·摘要】NARR:Background:v1: 这个概念源于古希腊哲学。
+        >>> \"\"\"
+        >>>
+        >>> # 自动解析并存储
+        >>> composer.hierarchical.process_anchor_directives(text)
+        >>>
+        >>> # 组合上下文
+        >>> context = composer.compose_unified_context("讨论 Apeiron 概念")
+        >>> print(context['full_context'])
+    """
+    try:
+        from apt_model.memory.hierarchical_memory import (
+            create_hierarchical_memory,
+            HierarchicalMemoryConfig
+        )
+
+        class UnifiedComposer:
+            """统一组合器（同时使用两种系统）"""
+
+            def __init__(self, config: Optional[MemoryConfig] = None):
+                self.basic = ContextComposer(config)  # ChatGPT-style
+                self.hierarchical = create_hierarchical_memory(HierarchicalMemoryConfig())  # 分层记忆
+
+            def compose_unified_context(
+                self,
+                current_message: str,
+                use_basic: bool = True,
+                use_hierarchical: bool = True,
+                validate: bool = True
+            ) -> Dict[str, Any]:
+                """
+                统一上下文组合（同时使用两种系统）
+
+                Args:
+                    current_message: 当前用户消息
+                    use_basic: 使用基础记忆系统
+                    use_hierarchical: 使用分层记忆系统
+                    validate: 启用一致性验证
+
+                Returns:
+                    统一上下文字典
+                """
+                result = {
+                    "basic_context": None,
+                    "hierarchical_context": None,
+                    "full_context": ""
+                }
+
+                parts = []
+
+                # 1. 基础记忆系统（ChatGPT-style）
+                if use_basic:
+                    basic_ctx = self.basic.compose_context(
+                        current_message,
+                        include_memories=True,
+                        include_history=True,
+                        include_skeleton=True
+                    )
+                    result["basic_context"] = basic_ctx
+                    if basic_ctx["system_prompt"]:
+                        parts.append("【基础记忆系统】\n" + basic_ctx["system_prompt"])
+
+                # 2. 分层记忆系统（增强版）
+                if use_hierarchical:
+                    hier_ctx = self.hierarchical.compose_context(
+                        current_message,
+                        include_skeleton=True,
+                        retrieve_details=True,
+                        validate_consistency=validate
+                    )
+                    result["hierarchical_context"] = hier_ctx
+                    if hier_ctx["full_context"]:
+                        parts.append("\n【分层记忆系统】\n" + hier_ctx["full_context"])
+
+                result["full_context"] = "\n\n".join(parts)
+
+                return result
+
+            def save_to_file(self, filepath_basic: str, filepath_hierarchical: str):
+                """保存到文件（两个文件）"""
+                self.basic.save_to_file(filepath_basic)
+                self.hierarchical.save_to_file(filepath_hierarchical)
+
+            def load_from_file(self, filepath_basic: str, filepath_hierarchical: str):
+                """从文件加载（两个文件）"""
+                self.basic.load_from_file(filepath_basic)
+                self.hierarchical.load_from_file(filepath_hierarchical)
+
+        return UnifiedComposer(config)
+
+    except ImportError as e:
+        logger.warning(f"分层记忆系统不可用: {e}，回退到基础系统")
+        return create_context_composer(config)
 
 
 # ==================== 测试代码 ====================
