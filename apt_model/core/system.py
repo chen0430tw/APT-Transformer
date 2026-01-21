@@ -29,39 +29,139 @@ import numpy as np
 # 设备管理
 # ============================================================================
 
-def get_device(force_cpu: bool = False) -> torch.device:
+def get_device(force_cpu: bool = False,
+               prefer_npu: bool = False,
+               prefer_hpu: bool = False,
+               prefer_xpu: bool = False) -> torch.device:
     """
-    获取计算设备
+    获取计算设备（支持多厂商加速器）
 
     参数:
         force_cpu: 是否强制使用CPU
+        prefer_npu: 是否优先使用华为昇腾NPU
+        prefer_hpu: 是否优先使用Intel Habana Gaudi HPU
+        prefer_xpu: 是否优先使用Intel XPU (包括Ultra NPU)
 
     返回:
         torch.device: 计算设备
+
+    优先级（无prefer参数时）: CUDA > HPU > NPU > XPU > CPU
     """
     if force_cpu:
         return torch.device("cpu")
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 检测各类加速器
+    cuda_available = torch.cuda.is_available()
+
+    npu_available = False
+    try:
+        import torch_npu
+        npu_available = torch_npu.npu.is_available()
+    except ImportError:
+        pass
+
+    hpu_available = False
+    try:
+        import habana_frameworks.torch as habana_torch
+        hpu_available = hasattr(habana_torch, 'hpu') and habana_torch.hpu.is_available()
+    except ImportError:
+        pass
+
+    xpu_available = False
+    try:
+        import intel_extension_for_pytorch as ipex
+        xpu_available = hasattr(ipex, 'xpu') and ipex.xpu.is_available()
+    except ImportError:
+        pass
+
+    # 用户指定优先级
+    if prefer_hpu and hpu_available:
+        return torch.device("hpu:0")
+    if prefer_npu and npu_available:
+        return torch.device("npu:0")
+    if prefer_xpu and xpu_available:
+        return torch.device("xpu:0")
+
+    # 默认优先级: CUDA > HPU > NPU > XPU > CPU
+    if cuda_available:
+        return torch.device("cuda")
+    elif hpu_available:
+        return torch.device("hpu:0")
+    elif npu_available:
+        return torch.device("npu:0")
+    elif xpu_available:
+        return torch.device("xpu:0")
+    else:
+        return torch.device("cpu")
 
 
 def get_device_info() -> dict:
     """
-    获取设备详细信息
+    获取设备详细信息（支持多厂商加速器）
 
     返回:
         dict: 设备信息字典
     """
     info = {
         "cuda_available": torch.cuda.is_available(),
+        "npu_available": False,
+        "hpu_available": False,
+        "xpu_available": False,
         "device_count": 0,
         "device_name": "CPU",
         "cuda_version": None,
+        "npu_version": None,
+        "hpu_version": None,
+        "xpu_version": None,
+        "device_type": "cpu",
     }
 
+    # 检测CUDA (优先级最高)
     if torch.cuda.is_available():
         info["device_count"] = torch.cuda.device_count()
         info["device_name"] = torch.cuda.get_device_name(0)
         info["cuda_version"] = torch.version.cuda
+        info["device_type"] = "cuda"
+        return info
+
+    # 检测Intel Habana Gaudi HPU
+    try:
+        import habana_frameworks.torch as habana_torch
+        if hasattr(habana_torch, 'hpu') and habana_torch.hpu.is_available():
+            info["hpu_available"] = True
+            info["device_count"] = habana_torch.hpu.device_count()
+            info["device_name"] = f"Intel Habana Gaudi HPU"
+            info["hpu_version"] = getattr(habana_torch, '__version__', 'unknown')
+            info["device_type"] = "hpu"
+            return info
+    except ImportError:
+        pass
+
+    # 检测华为昇腾NPU
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            info["npu_available"] = True
+            info["device_count"] = torch_npu.npu.device_count()
+            info["device_name"] = f"Huawei Ascend NPU {torch_npu.npu.get_device_name(0)}"
+            info["npu_version"] = getattr(torch_npu, '__version__', 'unknown')
+            info["device_type"] = "npu"
+            return info
+    except ImportError:
+        pass
+
+    # 检测Intel XPU
+    try:
+        import intel_extension_for_pytorch as ipex
+        if hasattr(ipex, 'xpu') and ipex.xpu.is_available():
+            info["xpu_available"] = True
+            info["device_count"] = ipex.xpu.device_count()
+            info["device_name"] = f"Intel XPU {ipex.xpu.get_device_name(0)}"
+            info["xpu_version"] = getattr(ipex, '__version__', 'unknown')
+            info["device_type"] = "xpu"
+            return info
+    except ImportError:
+        pass
 
     return info
 
@@ -88,7 +188,7 @@ def set_device(device_id: int = 0) -> torch.device:
 
 def set_seed(seed: int = 42) -> None:
     """
-    设置随机种子以确保可重现性
+    设置随机种子以确保可重现性（支持多厂商加速器）
 
     参数:
         seed: 随机种子值
@@ -97,11 +197,35 @@ def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    # CUDA种子
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        # 确保CUDA操作的确定性
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+    # 华为昇腾NPU种子
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            torch_npu.npu.manual_seed_all(seed)
+    except ImportError:
+        pass
+
+    # Intel Habana Gaudi HPU种子
+    try:
+        import habana_frameworks.torch as habana_torch
+        if hasattr(habana_torch, 'hpu') and habana_torch.hpu.is_available():
+            habana_torch.hpu.manual_seed_all(seed)
+    except (ImportError, AttributeError):
+        pass
+
+    # Intel XPU种子
+    try:
+        import intel_extension_for_pytorch as ipex
+        if hasattr(ipex, 'xpu') and ipex.xpu.is_available():
+            ipex.xpu.manual_seed_all(seed)
+    except (ImportError, AttributeError):
+        pass
 
 
 # ============================================================================
@@ -109,20 +233,46 @@ def set_seed(seed: int = 42) -> None:
 # ============================================================================
 
 def memory_cleanup() -> None:
-    """清理内存和缓存"""
+    """清理内存和缓存（支持多厂商加速器）"""
     gc.collect()
+
+    # 清理CUDA缓存
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+    # 清理华为昇腾NPU缓存
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            torch_npu.npu.empty_cache()
+    except ImportError:
+        pass
+
+    # 清理Intel Habana Gaudi HPU缓存
+    try:
+        import habana_frameworks.torch as habana_torch
+        if hasattr(habana_torch, 'hpu') and habana_torch.hpu.is_available():
+            habana_torch.hpu.empty_cache()
+    except (ImportError, AttributeError):
+        pass
+
+    # 清理Intel XPU缓存
+    try:
+        import intel_extension_for_pytorch as ipex
+        if hasattr(ipex, 'xpu') and ipex.xpu.is_available():
+            ipex.xpu.empty_cache()
+    except (ImportError, AttributeError):
+        pass
 
 
 def get_memory_info() -> dict:
     """
-    获取内存使用信息
+    获取内存使用信息（支持多厂商加速器）
 
     返回:
         dict: 内存信息字典
     """
-    info = {"ram": {}, "vram": {}}
+    info = {"ram": {}, "vram": {}, "npu_memory": {}, "hpu_memory": {}, "xpu_memory": {}}
 
     # RAM信息
     try:
@@ -137,7 +287,7 @@ def get_memory_info() -> dict:
     except ImportError:
         info["ram"] = {"error": "psutil not installed"}
 
-    # VRAM信息
+    # VRAM信息（GPU）
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             info["vram"][f"gpu_{i}"] = {
@@ -145,6 +295,51 @@ def get_memory_info() -> dict:
                 "reserved_gb": torch.cuda.memory_reserved(i) / (1024**3),
                 "max_allocated_gb": torch.cuda.max_memory_allocated(i) / (1024**3),
             }
+
+    # 华为昇腾NPU内存信息
+    try:
+        import torch_npu
+        if torch_npu.npu.is_available():
+            for i in range(torch_npu.npu.device_count()):
+                info["npu_memory"][f"npu_{i}"] = {
+                    "allocated_gb": torch_npu.npu.memory_allocated(i) / (1024**3),
+                    "reserved_gb": torch_npu.npu.memory_reserved(i) / (1024**3),
+                    "max_allocated_gb": torch_npu.npu.max_memory_allocated(i) / (1024**3),
+                }
+    except (ImportError, AttributeError):
+        pass
+
+    # Intel Habana Gaudi HPU内存信息
+    try:
+        import habana_frameworks.torch as habana_torch
+        if hasattr(habana_torch, 'hpu') and habana_torch.hpu.is_available():
+            for i in range(habana_torch.hpu.device_count()):
+                try:
+                    info["hpu_memory"][f"hpu_{i}"] = {
+                        "allocated_gb": habana_torch.hpu.memory_allocated(i) / (1024**3),
+                        "reserved_gb": habana_torch.hpu.memory_reserved(i) / (1024**3),
+                        "max_allocated_gb": habana_torch.hpu.max_memory_allocated(i) / (1024**3),
+                    }
+                except AttributeError:
+                    pass
+    except ImportError:
+        pass
+
+    # Intel XPU内存信息
+    try:
+        import intel_extension_for_pytorch as ipex
+        if hasattr(ipex, 'xpu') and ipex.xpu.is_available():
+            for i in range(ipex.xpu.device_count()):
+                try:
+                    info["xpu_memory"][f"xpu_{i}"] = {
+                        "allocated_gb": ipex.xpu.memory_allocated(i) / (1024**3),
+                        "reserved_gb": ipex.xpu.memory_reserved(i) / (1024**3),
+                        "max_allocated_gb": ipex.xpu.max_memory_allocated(i) / (1024**3),
+                    }
+                except AttributeError:
+                    pass
+    except ImportError:
+        pass
 
     return info
 

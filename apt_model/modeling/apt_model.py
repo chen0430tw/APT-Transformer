@@ -17,6 +17,13 @@ import warnings
 import sys
 from typing import Optional, Tuple, List, Dict, Union
 
+# 导入左旋平滑模块
+from apt_model.modeling.left_spin_smooth import (
+    LeftSpinStep,
+    LeftSpinResidual,
+    AdaptiveLeftSpinStep
+)
+
 
 class DBCDAC_Optimizer:
     """
@@ -633,9 +640,30 @@ class AutopoieticAttention(nn.Module):
                     mean_padding_mask = mean_padding_mask.to(torch.bool)
 
 
-            # 泰勒展开修复
+            # 🚀 左旋平滑替换泰勒展开
+            # 传统: taylor = 1.0 + α·Δ  (遇尖点会炸)
+            # 左旋: taylor = 1.0 + g(φ)·Δ  (遇尖点自动缩小步长)
+
+            # 计算尖点强度（基于二范数）
+            base_value = torch.ones_like(autopoietic_attn)
+            delta_attn = autopoietic_attn  # 增量部分
+
+            # 计算相对变化强度
+            norm_base = torch.norm(base_value, p=2, dim=-1, keepdim=True) + 1e-8
+            norm_delta = torch.norm(delta_attn, p=2, dim=-1, keepdim=True)
+            spike_strength = norm_delta / norm_base
+
+            # 缓冲角: φ = α·softplus(s - τ)
+            left_spin_alpha = 0.5
+            left_spin_tau = 0.3
+            phi = left_spin_alpha * F.softplus(spike_strength - left_spin_tau)
+
+            # 门控函数: g(φ) = 1/√(1+φ²)
+            gate = 1.0 / torch.sqrt(1.0 + phi ** 2)
+
+            # 应用左旋平滑
             scale_factor = 50.0
-            scaled_attn_2 = autopoietic_attn * scale_factor
+            scaled_attn_2 = autopoietic_attn * scale_factor * gate  # 🔥 关键替换
             alpha_safe = 0.05
             taylor_expanded = 1.0 + alpha_safe * scaled_attn_2
             taylor_expanded = torch.clamp(taylor_expanded, min=0.5, max=1.5)
@@ -826,7 +854,7 @@ class AutopoieticAttention(nn.Module):
 class APTEncoderLayer(nn.Module):
     """
     APT编码器层
-    集成自生成注意力机制的Transformer编码器层
+    集成自生成注意力机制 + 左旋平滑残差连接
     """
     def __init__(
         self,
@@ -846,10 +874,15 @@ class APTEncoderLayer(nn.Module):
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
-        dbc_iterations: int = 1
+        dbc_iterations: int = 1,
+        # 左旋平滑参数
+        use_left_spin: bool = True,
+        left_spin_alpha: float = 0.5,
+        left_spin_tau: float = 0.3,
+        left_spin_beta: float = 0.7
     ):
         super().__init__()
-        
+
         # 自生成注意力层
         self.self_attn = AutopoieticAttention(
             embed_dim=d_model,
@@ -867,24 +900,44 @@ class APTEncoderLayer(nn.Module):
             dbc_threshold=dbc_threshold,
             dbc_iterations=dbc_iterations
         )
-        
+
         # 前馈网络
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        
+
         # 层归一化
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-        
+
         # 激活函数
         self.activation = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
-        self.res_scale = 1.0
+        self.use_left_spin = use_left_spin
+
+        # 🚀 左旋平滑残差连接（替换传统泰勒展开）
+        if use_left_spin:
+            self.left_spin_attn = LeftSpinResidual(
+                alpha=left_spin_alpha,
+                tau=left_spin_tau,
+                beta=left_spin_beta,
+                gate_type='normalized',
+                adaptive=True
+            )
+            self.left_spin_ffn = LeftSpinResidual(
+                alpha=left_spin_alpha,
+                tau=left_spin_tau,
+                beta=left_spin_beta,
+                gate_type='normalized',
+                adaptive=True
+            )
+        else:
+            self.left_spin_attn = None
+            self.left_spin_ffn = None
 
         # 【新增这行】默认关闭 debug，防止拖慢速度
         self.debug_mode = getattr(config, 'debug_mode', False) if 'config' in locals() else False
@@ -896,17 +949,17 @@ class APTEncoderLayer(nn.Module):
         src_key_padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        编码器层前向传播
-        
+        编码器层前向传播（集成左旋平滑）
+
         参数:
             src: 输入张量 [seq_len, batch_size, d_model] 或 [batch_size, seq_len, d_model]
             src_mask: 序列掩码 [seq_len, seq_len] 或 [batch_size, seq_len, seq_len]
             src_key_padding_mask: 填充掩码 [batch_size, seq_len]
-            
+
         返回:
             output: 编码器层输出
         """
-        # 自注意力子层(带残差连接)
+        # 🚀 自注意力子层（左旋平滑残差连接）
         src2, _ = self.self_attn(
             query=src,
             key=src,
@@ -914,21 +967,37 @@ class APTEncoderLayer(nn.Module):
             attn_mask=src_mask,
             key_padding_mask=src_key_padding_mask
         )
-        src = src + self.res_scale * self.dropout1(src2)
+        src2_dropout = self.dropout1(src2)
+
+        # 替换: src = src + src2  →  src = LeftSpin(src, src2)
+        if self.use_left_spin and self.left_spin_attn is not None:
+            src = self.left_spin_attn(src, src2_dropout)
+        else:
+            # 降级为标准残差
+            src = src + src2_dropout
+
         src = self.norm1(src)
-        
-        # 前馈网络子层(带残差连接)
+
+        # 🚀 前馈网络子层（左旋平滑残差连接）
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-        src = src + self.res_scale * self.dropout2(src2)
+        src2_dropout = self.dropout2(src2)
+
+        # 替换: src = src + src2  →  src = LeftSpin(src, src2)
+        if self.use_left_spin and self.left_spin_ffn is not None:
+            src = self.left_spin_ffn(src, src2_dropout)
+        else:
+            # 降级为标准残差
+            src = src + src2_dropout
+
         src = self.norm2(src)
-        
+
         return src
 
 
 class APTDecoderLayer(nn.Module):
     """
     APT解码器层
-    集成自生成注意力机制的Transformer解码器层
+    集成自生成注意力机制 + 左旋平滑残差连接
     """
     def __init__(
         self,
@@ -948,10 +1017,15 @@ class APTDecoderLayer(nn.Module):
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
-        dbc_iterations: int = 1
+        dbc_iterations: int = 1,
+        # 左旋平滑参数
+        use_left_spin: bool = True,
+        left_spin_alpha: float = 0.5,
+        left_spin_tau: float = 0.3,
+        left_spin_beta: float = 0.7
     ):
         super().__init__()
-        
+
         # 自注意力层(掩码)
         self.self_attn = AutopoieticAttention(
             embed_dim=d_model,
@@ -969,7 +1043,7 @@ class APTDecoderLayer(nn.Module):
             dbc_threshold=dbc_threshold,
             dbc_iterations=dbc_iterations
         )
-        
+
         # 编码器-解码器注意力层
         self.multihead_attn = AutopoieticAttention(
             embed_dim=d_model,
@@ -987,12 +1061,12 @@ class APTDecoderLayer(nn.Module):
             dbc_threshold=dbc_threshold,
             dbc_iterations=dbc_iterations
         )
-        
+
         # 前馈网络
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        
+
         # 层归一化
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
@@ -1000,13 +1074,41 @@ class APTDecoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
-        
+
         # 激活函数
         self.activation = F.gelu if activation == "gelu" else F.relu
-        
+
         # 配置
         self.batch_first = batch_first
-        self.res_scale = 1.0
+        self.use_left_spin = use_left_spin
+
+        # 🚀 左旋平滑残差连接（3个子层）
+        if use_left_spin:
+            self.left_spin_self_attn = LeftSpinResidual(
+                alpha=left_spin_alpha,
+                tau=left_spin_tau,
+                beta=left_spin_beta,
+                gate_type='normalized',
+                adaptive=True
+            )
+            self.left_spin_cross_attn = LeftSpinResidual(
+                alpha=left_spin_alpha,
+                tau=left_spin_tau,
+                beta=left_spin_beta,
+                gate_type='normalized',
+                adaptive=True
+            )
+            self.left_spin_ffn = LeftSpinResidual(
+                alpha=left_spin_alpha,
+                tau=left_spin_tau,
+                beta=left_spin_beta,
+                gate_type='normalized',
+                adaptive=True
+            )
+        else:
+            self.left_spin_self_attn = None
+            self.left_spin_cross_attn = None
+            self.left_spin_ffn = None
     
     def forward(
         self,
@@ -1018,8 +1120,8 @@ class APTDecoderLayer(nn.Module):
         memory_key_padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        解码器层前向传播
-        
+        解码器层前向传播（集成左旋平滑）
+
         参数:
             tgt: 目标序列 [seq_len, batch_size, d_model] 或 [batch_size, seq_len, d_model]
             memory: 编码器输出 同上
@@ -1027,11 +1129,11 @@ class APTDecoderLayer(nn.Module):
             memory_mask: 记忆掩码 [tgt_len, src_len]
             tgt_key_padding_mask: 目标填充掩码 [batch_size, tgt_len]
             memory_key_padding_mask: 记忆填充掩码 [batch_size, src_len]
-            
+
         返回:
             output: 解码器层输出
         """
-        # 自注意力子层(带残差连接)
+        # 🚀 自注意力子层（左旋平滑残差连接）
         tgt2, _ = self.self_attn(
             query=tgt,
             key=tgt,
@@ -1039,10 +1141,16 @@ class APTDecoderLayer(nn.Module):
             attn_mask=tgt_mask,
             key_padding_mask=tgt_key_padding_mask
         )
-        tgt = tgt + self.res_scale * self.dropout1(tgt2)
+        tgt2_dropout = self.dropout1(tgt2)
+
+        if self.use_left_spin and self.left_spin_self_attn is not None:
+            tgt = self.left_spin_self_attn(tgt, tgt2_dropout)
+        else:
+            tgt = tgt + tgt2_dropout
+
         tgt = self.norm1(tgt)
-        
-        # 编码器-解码器注意力子层(带残差连接)
+
+        # 🚀 编码器-解码器注意力子层（左旋平滑残差连接）
         tgt2, _ = self.multihead_attn(
             query=tgt,
             key=memory,
@@ -1050,19 +1158,31 @@ class APTDecoderLayer(nn.Module):
             attn_mask=memory_mask,
             key_padding_mask=memory_key_padding_mask
         )
-        tgt = tgt + self.res_scale * self.dropout2(tgt2)
+        tgt2_dropout = self.dropout2(tgt2)
+
+        if self.use_left_spin and self.left_spin_cross_attn is not None:
+            tgt = self.left_spin_cross_attn(tgt, tgt2_dropout)
+        else:
+            tgt = tgt + tgt2_dropout
+
         tgt = self.norm2(tgt)
-        
-        # 前馈网络子层(带残差连接)
+
+        # 🚀 前馈网络子层（左旋平滑残差连接）
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
-        tgt = tgt + self.res_scale * self.dropout3(tgt2)
+        tgt2_dropout = self.dropout3(tgt2)
+
+        if self.use_left_spin and self.left_spin_ffn is not None:
+            tgt = self.left_spin_ffn(tgt, tgt2_dropout)
+        else:
+            tgt = tgt + tgt2_dropout
+
         tgt = self.norm3(tgt)
-        
+
         return tgt
 
 
 class APTModelConfiguration:
-    """APT模型配置类"""
+    """APT模型配置类（集成左旋平滑）"""
     def __init__(
         self,
         vocab_size: int = 30522,  # 词汇表大小
@@ -1075,7 +1195,7 @@ class APTModelConfiguration:
         dropout: float = 0.1,  # Dropout比率
         activation: str = "gelu",  # 激活函数
         epsilon: float = 1e-6,  # 自生成无穷倒数缩放因子
-        alpha: float = 0.1,  # 泰勒展开系数
+        alpha: float = 0.1,  # 泰勒展开系数（已被左旋平滑替换）
         beta: float = 0.01,  # 动态调节系数
         init_tau: float = 1.0,  # 初始温度
         sr_ratio: int = 4,  # 自生成矩阵压缩比
@@ -1091,6 +1211,11 @@ class APTModelConfiguration:
         rank_ratio_res: float = 0.05,  # DAC残差比例
         dbc_threshold: float = 1e-6,  # DBC阈值
         dbc_iterations: int = 1,  # DAC迭代次数
+        # 🚀 左旋平滑相关参数（替换泰勒展开）
+        use_left_spin: bool = True,  # 是否使用左旋平滑残差
+        left_spin_alpha: float = 0.5,  # 缓冲强度系数
+        left_spin_tau: float = 0.3,  # 尖点阈值
+        left_spin_beta: float = 0.7,  # 惯性系数
         **kwargs  # 其他参数
     ):
         self.vocab_size = vocab_size
@@ -1113,14 +1238,20 @@ class APTModelConfiguration:
         self.pad_token_id = pad_token_id
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
-        
+
         # DBC-DAC相关参数
         self.use_dbc_dac = use_dbc_dac
         self.rank_ratio_proj = rank_ratio_proj
         self.rank_ratio_res = rank_ratio_res
         self.dbc_threshold = dbc_threshold
         self.dbc_iterations = dbc_iterations
-        
+
+        # 🚀 左旋平滑相关参数
+        self.use_left_spin = use_left_spin
+        self.left_spin_alpha = left_spin_alpha
+        self.left_spin_tau = left_spin_tau
+        self.left_spin_beta = left_spin_beta
+
         # 添加任何额外参数
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -1194,6 +1325,12 @@ class APTModel(nn.Module):
         dbc_threshold = getattr(config, "dbc_threshold", 1e-6)
         dbc_iterations = getattr(config, "dbc_iterations", 1)
 
+        # 🚀 左旋平滑参数
+        use_left_spin = getattr(config, "use_left_spin", True)
+        left_spin_alpha = getattr(config, "left_spin_alpha", 0.5)
+        left_spin_tau = getattr(config, "left_spin_tau", 0.3)
+        left_spin_beta = getattr(config, "left_spin_beta", 0.7)
+
         # 创建编码器层
         encoder_layers = []
         for _ in range(config.num_encoder_layers):
@@ -1214,7 +1351,12 @@ class APTModel(nn.Module):
                     rank_ratio_proj=rank_ratio_proj,
                     rank_ratio_res=rank_ratio_res,
                     dbc_threshold=dbc_threshold,
-                    dbc_iterations=dbc_iterations
+                    dbc_iterations=dbc_iterations,
+                    # 🚀 左旋平滑参数
+                    use_left_spin=use_left_spin,
+                    left_spin_alpha=left_spin_alpha,
+                    left_spin_tau=left_spin_tau,
+                    left_spin_beta=left_spin_beta
                 )
             )
 
@@ -1238,7 +1380,12 @@ class APTModel(nn.Module):
                     rank_ratio_proj=rank_ratio_proj,
                     rank_ratio_res=rank_ratio_res,
                     dbc_threshold=dbc_threshold,
-                    dbc_iterations=dbc_iterations
+                    dbc_iterations=dbc_iterations,
+                    # 🚀 左旋平滑参数
+                    use_left_spin=use_left_spin,
+                    left_spin_alpha=left_spin_alpha,
+                    left_spin_tau=left_spin_tau,
+                    left_spin_beta=left_spin_beta
                 )
             )
         
