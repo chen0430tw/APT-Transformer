@@ -70,6 +70,16 @@ from apt_model.optimization.npu_backend import (
     get_all_accelerator_types,
 )
 
+# 云端NPU适配器（无需购买硬件，通过API调用远程NPU）
+from apt_model.optimization.cloud_npu_adapter import (
+    CloudNPUBackend,
+    HuaweiModelArtsNPU,
+    CloudNPULinear,
+    CloudNPUManager,
+    get_cloud_npu_manager,
+    enable_cloud_npu,
+)
+
 __all__ = [
     # GPU Flash优化（推荐使用）
     'FP4Codec',
@@ -108,6 +118,14 @@ __all__ = [
     # 工具函数
     'get_accelerator_type',
     'get_all_accelerator_types',
+
+    # 云端NPU适配器（API调用远程NPU）
+    'CloudNPUBackend',
+    'HuaweiModelArtsNPU',
+    'CloudNPULinear',
+    'CloudNPUManager',
+    'get_cloud_npu_manager',
+    'enable_cloud_npu',
 
     # 旧版（兼容）
     'AutoCompressor',
