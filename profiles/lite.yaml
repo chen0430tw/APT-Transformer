@@ -1,0 +1,120 @@
+# APT-Transformer Lite Profile
+# 基础版 (L0 Kernel Only) - 适合论文复现、CI/CD、教学演示
+
+name: apt-lite
+version: 2.0.0
+description: "基础版 - 仅核心APT算法 (L0)"
+
+# ═══════════════════════════════════════════════════════════
+# 启用层级
+# ═══════════════════════════════════════════════════════════
+layers:
+  - L0  # Kernel: Autopoietic Transform, DBC-DAC, Left-Spin Smooth
+
+# ═══════════════════════════════════════════════════════════
+# 核心模型配置
+# ═══════════════════════════════════════════════════════════
+model:
+  type: APTModel
+
+  # 模型结构
+  vocab_size: 50000
+  d_model: 768
+  num_heads: 12
+  num_encoder_layers: 12
+  num_decoder_layers: 12
+  max_seq_len: 512
+
+  # 核心特性（APT 三大创新）
+  use_autopoietic: true      # 自生成注意力
+  use_dbc_dac: true          # DBC-DAC 优化
+  use_left_spin: true        # Left-Spin Smooth
+
+  # Autopoietic 参数
+  autopoietic:
+    adaptive_rank_ratio: 0.3  # 保留30%秩
+    energy_threshold: 0.95    # 95%能量保留
+
+  # DBC-DAC 参数
+  dbc_dac:
+    compression_ratio: 0.7    # 压缩率70%
+    compensation: true         # 启用补偿
+
+  # Left-Spin 参数
+  left_spin:
+    smooth_factor: 0.1
+    epsilon: 1.0e-6
+    grad_threshold: 1000.0
+
+# ═══════════════════════════════════════════════════════════
+# 训练配置
+# ═══════════════════════════════════════════════════════════
+training:
+  optimizer: AdamW
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  batch_size: 32
+  max_steps: 100000
+  gradient_accumulation_steps: 1
+
+  lr_scheduler: cosine
+  warmup_steps: 1000
+  max_grad_norm: 1.0
+
+  eval_steps: 1000
+  save_steps: 5000
+  logging_steps: 100
+
+# ═══════════════════════════════════════════════════════════
+# 数据配置
+# ═══════════════════════════════════════════════════════════
+data:
+  train_file: data/train.txt
+  eval_file: data/eval.txt
+  tokenizer: gpt2
+
+  preprocessing:
+    lowercase: false
+    remove_special_chars: false
+
+# ═══════════════════════════════════════════════════════════
+# 性能层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+performance:
+  enabled: false
+
+# ═══════════════════════════════════════════════════════════
+# 记忆层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+memory:
+  enabled: false
+
+# ═══════════════════════════════════════════════════════════
+# 应用层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+product:
+  enabled: false
+  logging:
+    level: INFO
+    format: simple
+
+# ═══════════════════════════════════════════════════════════
+# 输出配置
+# ═══════════════════════════════════════════════════════════
+output:
+  checkpoint_dir: ./checkpoints/lite
+  log_dir: ./logs/lite
+  tensorboard: false
+  save_total_limit: 3
+
+# ═══════════════════════════════════════════════════════════
+# 适用场景
+# ═══════════════════════════════════════════════════════════
+# - 论文复现：只需要核心算法
+# - 单元测试：最快的测试速度
+# - CI/CD：持续集成环境
+# - 教学演示：最简单的入门
+# - Debug：排除干扰因素
