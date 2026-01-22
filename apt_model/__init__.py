@@ -65,12 +65,12 @@ def __getattr__(name):
     """Lazily import heavy submodules only when requested."""
 
     if name == "APTConfig":
-        from apt_model.config.apt_config import APTConfig as _APTConfig
+        from apt.core.config.apt_config import APTConfig as _APTConfig
 
         return _APTConfig
 
     if name == "MultimodalConfig":
-        from apt_model.config.multimodal_config import MultimodalConfig as _MultimodalConfig
+        from apt.core.config.multimodal_config import MultimodalConfig as _MultimodalConfig
 
         return _MultimodalConfig
 

@@ -16,8 +16,8 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from apt_model.optimization import create_virtual_blackwell, VBOptimizedLinear
-from apt_model.optimization.vb_integration import enable_vb_optimization
+from apt.perf.optimization import create_virtual_blackwell, VBOptimizedLinear
+from apt.perf.optimization.vb_integration import enable_vb_optimization
 
 
 # 简单的测试模型
@@ -63,7 +63,7 @@ def test_basic_compression():
     print("测试1: 基础MicroVM压缩")
     print("="*70)
 
-    from apt_model.optimization.microvm_compression import compress, AutoCompressor
+    from apt.perf.optimization.microvm_compression import compress, AutoCompressor
 
     np.random.seed(42)
     W = np.random.randn(512, 2048).astype(np.float32) * 0.02

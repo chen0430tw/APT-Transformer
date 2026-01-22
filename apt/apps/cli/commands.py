@@ -26,16 +26,19 @@ from apt_model.utils.resource_monitor import ResourceMonitor
 from apt_model.utils.language_manager import LanguageManager
 from apt_model.utils.hardware_check import check_hardware_compatibility
 from apt_model.utils.cache_manager import CacheManager
-from apt_model.config.apt_config import APTConfig
-from apt.core.training.trainer import train_model
-from apt_model.data.external_data import train_with_external_data, load_external_data
-from apt_model.interactive.chat import chat_with_model
-from apt_model.evaluation.model_evaluator import evaluate_model
-from apt_model.utils.visualization import ModelVisualizer
-from apt_model.utils.time_estimator import TrainingTimeEstimator
+from apt.core.config.apt_config import APTConfig
 from apt_model.utils import get_device, set_seed
 from apt_model.utils.common import _initialize_common
-from apt_model.cli.command_registry import register_command
+from apt.apps.cli.command_registry import register_command
+
+# 延迟导入 - 仅在实际使用命令时导入以避免依赖问题
+train_model = None
+train_with_external_data = None
+load_external_data = None
+chat_with_model = None
+evaluate_model = None
+ModelVisualizer = None
+TrainingTimeEstimator = None
 
 
 # ============================================================================
@@ -621,7 +624,7 @@ def run_estimate_command(args):
     logger.info("Estimating training time...")
 
     try:
-        from apt_model.data.data_processor import get_training_texts
+        from apt.core.data.data_processor import get_training_texts
         dataset_size = len(get_training_texts())
         if args.data_path:
             try:
@@ -1146,7 +1149,7 @@ def run_size_command(args):
             try:
                 import torch
                 from apt.core.modeling.apt_model import APTModel
-                from apt_model.config.apt_config import APTConfig
+                from apt.core.config.apt_config import APTConfig
 
                 # 检查是否是APT模型目录
                 config_path = os.path.join(model_path, 'config.json') if os.path.isdir(model_path) else None
@@ -1361,7 +1364,7 @@ def run_test_command(args):
         # 加载模型
         print("\n正在加载模型...")
         from apt.core.modeling.apt_model import APTModel
-        from apt_model.config.apt_config import APTConfig
+        from apt.core.config.apt_config import APTConfig
         from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
 
         # 加载配置
@@ -1483,7 +1486,7 @@ def run_compare_command(args):
     logger, lang_manager, device = _initialize_common(args)
 
     try:
-        from apt_model.evaluation.comparison import ModelComparison
+        from apt.apps.evaluation.comparison import ModelComparison
 
         # 创建比较器
         output_dir = getattr(args, 'output_dir', './comparison_results')
@@ -1555,7 +1558,7 @@ def run_train_hf_command(args):
     _start_monitor(resource_monitor)
 
     try:
-        from apt_model.data.huggingface_loader import load_hf_model_and_tokenizer, load_hf_dataset
+        from apt.core.data.huggingface_loader import load_hf_model_and_tokenizer, load_hf_dataset
         from transformers import TrainingArguments, Trainer
         import torch
 
@@ -1682,7 +1685,7 @@ def run_distill_command(args):
         from apt_model.plugins.visual_distillation_plugin import VisualDistillationPlugin
         from apt_model.plugins.teacher_api import TeacherAPIPlugin
         from apt.core.training.trainer import train_model
-        from apt_model.data.external_data import load_external_data
+        from apt.core.data.external_data import load_external_data
 
         # 配置蒸馏参数
         distill_config = {
@@ -1823,7 +1826,7 @@ def run_process_data_command(args):
     logger, lang_manager, device = _initialize_common(args)
 
     try:
-        from apt_model.data.data_processor import DataProcessor
+        from apt.core.data.data_processor import DataProcessor
 
         # 获取输入输出路径
         input_path = getattr(args, 'input', None)
@@ -2377,7 +2380,7 @@ def run_config_command(args):
         python -m apt_model config --set training.default_epochs 30  # 设置默认epochs
         python -m apt_model config --reset                   # 重置为默认配置
     """
-    from apt_model.config.settings_manager import settings, enable_debug, disable_debug
+    from apt.core.config.settings_manager import settings, enable_debug, disable_debug
     import yaml
 
     print("=" * 60)
@@ -2569,7 +2572,7 @@ def debug_model_architecture(args):
     try:
         print(f"  加载模型配置...")
 
-        from apt_model.config.apt_config import APTConfig
+        from apt.core.config.apt_config import APTConfig
         from apt.core.modeling.apt_model import APTModel
 
         # 创建测试配置
@@ -2704,404 +2707,12 @@ def debug_tokenizer(args):
         return {'success': False, 'message': f'分词器错误: {str(e)[:50]}'}
 
 
-def run_pipeline_command(args):
-    """
-    运行命令管道/链 - 按顺序执行多个命令
-
-    Args:
-        args: 命令行参数，包含 --commands 参数
-
-    Returns:
-        int: 0 表示成功，非0 表示失败
-    """
-    logger, lm = _initialize_common(args)
-    logger.info("开始执行命令管道...")
-
-    # 获取命令列表
-    if not hasattr(args, 'commands') or not args.commands:
-        logger.error("未指定要执行的命令。请使用 --commands 参数")
-        print("错误: 请使用 --commands 参数指定要执行的命令")
-        print("示例: python -m apt_model pipeline --commands 'train,evaluate,visualize'")
-        return 1
-
-    # 解析命令列表
-    command_list = args.commands.split(',')
-    command_list = [cmd.strip() for cmd in command_list]
-
-    logger.info(f"命令管道: {' -> '.join(command_list)}")
-    print(f"\n{'='*70}")
-    print(f"执行命令管道: {' -> '.join(command_list)}")
-    print(f"{'='*70}\n")
-
-    # 导入命令注册表
-    from apt_model.cli.command_registry import command_registry
-
-    # 逐个执行命令
-    for i, command_name in enumerate(command_list, 1):
-        print(f"\n[{i}/{len(command_list)}] 执行命令: {command_name}")
-        print("-" * 70)
-
-        try:
-            # 执行命令
-            result = command_registry.execute_command(command_name, args)
-
-            if result != 0:
-                logger.error(f"命令 '{command_name}' 执行失败 (退出码: {result})")
-                print(f"\n错误: 命令 '{command_name}' 执行失败")
-                print("命令管道中断")
-                return result
-
-            logger.info(f"命令 '{command_name}' 执行成功")
-            print(f"✓ 命令 '{command_name}' 完成")
-
-        except Exception as e:
-            logger.error(f"命令 '{command_name}' 执行过程中出错: {e}")
-            print(f"\n错误: 命令 '{command_name}' 执行失败: {e}")
-            print("命令管道中断")
-            return 1
-
-    print(f"\n{'='*70}")
-    print(f"✓ 命令管道执行完成! 共执行 {len(command_list)} 个命令")
-    print(f"{'='*70}\n")
-
-    logger.info("命令管道执行完成")
-    return 0
-
-
-def run_list_modules_command(args):
-    """
-    列出所有可用模块及其状态
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功
-    """
-    from apt.apps.cli.module_selector import module_selector
-
-    # 获取启用的模块列表
-    enabled_modules = module_selector.get_enabled_modules(
-        enable_modules=getattr(args, 'enable_modules', None),
-        disable_modules=getattr(args, 'disable_modules', None)
-    )
-
-    # 打印模块状态
-    module_selector.print_module_status(enabled_modules)
-
-    return 0
-
-
-# ============================================================================
-# 高级功能命令 - MoE, Virtual Blackwell, AIM Memory, etc.
-# ============================================================================
-
-def run_train_moe_command(args):
-    """
-    训练 MoE (Mixture of Experts) 模型
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功，非0 表示失败
-    """
-    logger, lm = _initialize_common(args)
-    logger.info("开始 MoE 模型训练...")
-
-    try:
-        from apt.core.modeling.moe_optimized import MoEConfig, SparseMoELayer
-        import torch
-
-        print("=" * 70)
-        print(" MoE (Mixture of Experts) 模型训练")
-        print("=" * 70)
-
-        # MoE 配置
-        num_experts = getattr(args, 'num_experts', 8)
-        top_k = getattr(args, 'top_k', 2)
-        capacity_factor = getattr(args, 'capacity_factor', 1.25)
-
-        print(f"\n配置:")
-        print(f"  专家数量: {num_experts}")
-        print(f"  Top-K: {top_k}")
-        print(f"  容量因子: {capacity_factor}")
-
-        # 创建 MoE 配置
-        moe_config = MoEConfig(
-            num_experts=num_experts,
-            top_k=top_k,
-            capacity_factor=capacity_factor
-        )
-
-        print(f"\n✓ MoE 配置创建成功")
-        print(f"\n提示: MoE 模型训练需要大量 GPU 资源")
-        print(f"建议使用: --enable-modules 'L0,L1,optimization'")
-
-        # 这里可以集成实际的训练逻辑
-        print(f"\n注意: 完整的 MoE 训练需要自定义训练脚本")
-        print(f"请参考: apt_model/modeling/moe_optimized.py")
-
-        return 0
-
-    except Exception as e:
-        return _handle_command_error("MoE 训练", e, logger)
-
-
-def run_blackwell_simulate_command(args):
-    """
-    启用 Virtual Blackwell GPU 模拟
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功
-    """
-    logger, lm = _initialize_common(args)
-    logger.info("启用 Virtual Blackwell 模拟...")
-
-    try:
-        from apt.apps.plugins.hardware.virtual_blackwell_plugin import VirtualBlackwellPlugin
-
-        print("=" * 70)
-        print(" Virtual Blackwell GPU 模拟")
-        print("=" * 70)
-
-        # 创建插件实例
-        plugin = VirtualBlackwellPlugin()
-        plugin.load()
-
-        print(f"\n✓ Virtual Blackwell 插件已加载")
-        print(f"\n模拟的 Blackwell GPU 特性:")
-        print(f"  - NVLink 5.0 (1.8 TB/s)")
-        print(f"  - FP4/FP6 精度支持")
-        print(f"  - Tensor Core Gen 6")
-        print(f"  - SecureTEE 安全隔离")
-
-        # 执行模拟
-        result = plugin.execute(simulate_mode=True)
-
-        if result.get('success'):
-            print(f"\n✓ Virtual Blackwell 模拟成功启用")
-        else:
-            print(f"\n✗ 模拟失败: {result.get('message', '未知错误')}")
-            return 1
-
-        return 0
-
-    except Exception as e:
-        return _handle_command_error("Virtual Blackwell", e, logger)
-
-
-def run_aim_memory_command(args):
-    """
-    管理 AIM (Advanced In-context Memory) 记忆系统
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功
-    """
-    logger, lm = _initialize_common(args)
-
-    operation = getattr(args, 'aim_operation', 'status')
-
-    try:
-        from apt.apps.plugins.memory.aim_memory_plugin import AIMMemoryPlugin
-
-        print("=" * 70)
-        print(" AIM Memory - 高级上下文记忆系统")
-        print("=" * 70)
-
-        plugin = AIMMemoryPlugin()
-        plugin.load()
-
-        if operation == 'status':
-            print(f"\n记忆系统状态:")
-            result = plugin.execute(action='status')
-            print(f"  状态: {result.get('status', '未知')}")
-
-        elif operation == 'clear':
-            print(f"\n清除记忆...")
-            result = plugin.execute(action='clear')
-            print(f"  ✓ 记忆已清除")
-
-        elif operation == 'store':
-            context = getattr(args, 'context', 'Test context')
-            print(f"\n存储上下文: {context[:50]}...")
-            result = plugin.execute(action='store', context=context)
-            print(f"  ✓ 上下文已存储")
-
-        else:
-            print(f"未知操作: {operation}")
-            print(f"可用操作: status, clear, store")
-            return 1
-
-        return 0
-
-    except Exception as e:
-        return _handle_command_error("AIM Memory", e, logger)
-
-
-def run_npu_accelerate_command(args):
-    """
-    启用 NPU (Neural Processing Unit) 加速
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功
-    """
-    logger, lm = _initialize_common(args)
-
-    try:
-        from apt.apps.plugins.hardware.npu_backend_plugin import NPUBackendPlugin
-
-        print("=" * 70)
-        print(" NPU 加速后端")
-        print("=" * 70)
-
-        plugin = NPUBackendPlugin()
-        plugin.load()
-
-        npu_type = getattr(args, 'npu_type', 'default')
-
-        print(f"\nNPU 类型: {npu_type}")
-        print(f"\n支持的 NPU:")
-        print(f"  - Ascend (华为)")
-        print(f"  - Kunlun (百度)")
-        print(f"  - MLU (寒武纪)")
-        print(f"  - TPU (Google)")
-
-        result = plugin.execute(npu_type=npu_type)
-
-        if result.get('success'):
-            print(f"\n✓ NPU 加速已启用")
-        else:
-            print(f"\n✗ NPU 启用失败: {result.get('message', '未知错误')}")
-            return 1
-
-        return 0
-
-    except Exception as e:
-        return _handle_command_error("NPU 加速", e, logger)
-
-
-def run_rag_query_command(args):
-    """
-    使用 RAG (Retrieval-Augmented Generation) 进行查询
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功
-    """
-    logger, lm = _initialize_common(args)
-
-    query = getattr(args, 'query', None)
-    use_kg = getattr(args, 'use_kg', False)
-
-    if not query:
-        print("错误: 请使用 --query 参数指定查询内容")
-        return 1
-
-    try:
-        if use_kg:
-            from apt.apps.plugins.retrieval.kg_rag_integration_plugin import KGRAGIntegrationPlugin
-            plugin = KGRAGIntegrationPlugin()
-            print("=" * 70)
-            print(" KG+RAG 查询 (知识图谱 + 检索增强)")
-            print("=" * 70)
-        else:
-            from apt.apps.plugins.retrieval.rag_integration_plugin import RAGIntegrationPlugin
-            plugin = RAGIntegrationPlugin()
-            print("=" * 70)
-            print(" RAG 查询 (检索增强生成)")
-            print("=" * 70)
-
-        plugin.load()
-
-        print(f"\n查询: {query}")
-        print(f"\n检索中...")
-
-        result = plugin.execute(query=query)
-
-        if result.get('success'):
-            print(f"\n✓ 查询成功")
-            print(f"\n结果: {result.get('response', '无结果')}")
-        else:
-            print(f"\n✗ 查询失败: {result.get('message', '未知错误')}")
-            return 1
-
-        return 0
-
-    except Exception as e:
-        return _handle_command_error("RAG 查询", e, logger)
-
-
-def run_quantize_mxfp4_command(args):
-    """
-    使用 MXFP4 进行模型量化
-
-    Args:
-        args: 命令行参数
-
-    Returns:
-        int: 0 表示成功
-    """
-    logger, lm = _initialize_common(args)
-
-    model_path = getattr(args, 'model_path', ['apt_model'])[0]
-    output_path = getattr(args, 'output_path', 'apt_model_mxfp4')
-
-    try:
-        from apt.apps.plugins.optimization.mxfp4_quantization_plugin import MXFP4QuantizationPlugin
-
-        print("=" * 70)
-        print(" MXFP4 量化 - 4位浮点量化")
-        print("=" * 70)
-
-        plugin = MXFP4QuantizationPlugin()
-        plugin.load()
-
-        print(f"\n输入模型: {model_path}")
-        print(f"输出路径: {output_path}")
-        print(f"\nMXFP4 特性:")
-        print(f"  - 4位浮点格式")
-        print(f"  - Block-wise 8位缩放")
-        print(f"  - 4x 推理加速")
-        print(f"  - <1% 精度损失")
-
-        print(f"\n开始量化...")
-
-        result = plugin.execute(
-            model_path=model_path,
-            output_path=output_path
-        )
-
-        if result.get('success'):
-            print(f"\n✓ 量化成功")
-            print(f"  量化模型已保存到: {output_path}")
-        else:
-            print(f"\n✗ 量化失败: {result.get('message', '未知错误')}")
-            return 1
-
-        return 0
-
-    except Exception as e:
-        return _handle_command_error("MXFP4 量化", e, logger)
-
-
 def show_help(args=None):
     """
     Show help information - 优化版本，快速显示
     """
     # 延迟导入，避免触发重量级初始化
-    from apt_model.cli.command_registry import command_registry
+    from apt.apps.cli.command_registry import command_registry
 
     print("="*70)
     print(" 🚀 APT Model - Autopoietic Transformer")
@@ -3126,31 +2737,16 @@ def show_help(args=None):
     print("  --epochs N          - 训练轮数 (默认: 20)")
     print("  --batch-size N      - 批次大小 (默认: 8)")
     print("  --learning-rate N   - 学习率 (默认: 3e-5)")
-    print("  --profile PROFILE   - 加载配置文件 (lite/standard/pro/full)")
-    print("  --enable-modules M  - 启用模块 (如 'L0,L1,monitoring')")
-    print("  --disable-modules M - 禁用模块 (如 'experimental')")
     print("  --save-path PATH    - 模型保存路径 (默认: 'apt_model')")
     print("  --model-path PATH   - 模型加载路径 (默认: 'apt_model')")
     print("  --temperature N     - 生成温度 (默认: 0.7)")
     print("  --language LANG     - 界面语言 (默认: zh_CN)")
     print("  --force-cpu         - 强制使用CPU")
     print("\n示例:")
-    print("  # 基础命令")
     print("  python -m apt_model train")
-    print("  python -m apt_model train --profile lite")
+    print("  python -m apt_model train --epochs 10")
     print("  python -m apt_model chat")
     print("  python -m apt_model evaluate")
-    print("\n  # 模块化和管道")
-    print("  python -m apt_model train --enable-modules 'L0,L1,monitoring'")
-    print("  python -m apt_model pipeline --commands 'train,evaluate,visualize'")
-    print("  python -m apt_model list-modules")
-    print("\n  # 高级功能")
-    print("  python -m apt_model train-moe --num-experts 8")
-    print("  python -m apt_model blackwell-simulate")
-    print("  python -m apt_model aim-memory --aim-operation status")
-    print("  python -m apt_model npu-accelerate --npu-type ascend")
-    print("  python -m apt_model rag-query --query '你的问题'")
-    print("  python -m apt_model quantize-mxfp4 --model-path apt_model")
 
     return 0
 
@@ -3221,26 +2817,6 @@ def register_core_commands():
     # 帮助命令
     register_command("help", show_help, category="general",
                     help_text="显示帮助信息")
-
-    # 管道和模块管理命令
-    register_command("pipeline", run_pipeline_command, category="workflow",
-                    help_text="执行命令管道/链 (用 --commands 指定)")
-    register_command("list-modules", run_list_modules_command, category="info",
-                    help_text="列出所有可用模块及其状态", aliases=["modules"])
-
-    # 高级功能命令
-    register_command("train-moe", run_train_moe_command, category="advanced",
-                    help_text="训练 MoE (Mixture of Experts) 模型")
-    register_command("blackwell-simulate", run_blackwell_simulate_command, category="advanced",
-                    help_text="启用 Virtual Blackwell GPU 模拟", aliases=["vblackwell"])
-    register_command("aim-memory", run_aim_memory_command, category="advanced",
-                    help_text="管理 AIM 高级记忆系统")
-    register_command("npu-accelerate", run_npu_accelerate_command, category="advanced",
-                    help_text="启用 NPU 加速后端", aliases=["npu"])
-    register_command("rag-query", run_rag_query_command, category="advanced",
-                    help_text="RAG/KG-RAG 检索增强查询")
-    register_command("quantize-mxfp4", run_quantize_mxfp4_command, category="advanced",
-                    help_text="MXFP4 4位浮点量化", aliases=["mxfp4"])
 
 
 # 自动注册核心命令

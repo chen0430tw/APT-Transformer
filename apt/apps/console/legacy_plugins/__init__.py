@@ -4,7 +4,7 @@ Legacy Plugins Package
 包含适配后的旧版插件，通过LegacyPluginAdapter包装以兼容新的PluginBase系统
 """
 
-from apt_model.console.apt.apps.plugins.adapters import (
+from apt.apps.console.apt.apps.plugins.adapters import (
     create_huggingface_adapter,
     create_cloud_storage_adapter,
     create_ollama_export_adapter,

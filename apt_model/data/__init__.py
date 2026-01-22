@@ -1,45 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Model (自生成变换器) Data Processing Module
-Provides functionality for loading, processing, and managing datasets
+向后兼容代理模块
+
+此模块已迁移至 apt.core.data
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
+
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.core.data import ...
 """
 
-# Export the main data loading functions
-from .external_data import load_external_data, train_with_external_data
-from .huggingface_loader import load_huggingface_dataset
-from .data_processor import get_training_texts
+import warnings
 
-# Export the unified data pipeline (new)
-from .pipeline import DataLoader, DataProcessor, DataPipeline, quick_load
-
-# Export multimodal dataset components
-from .multimodal_dataset import (
-    MultimodalDataset,
-    MultimodalCollator,
-    create_multimodal_dataloader,
-    TextOnlyDataset,
-    VisionOnlyDataset,
-    AudioOnlyDataset
+warnings.warn(
+    f"apt_model.data is deprecated and will be removed in a future version. "
+    f"Please use apt.core.data instead.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-# Define module exports
-__all__ = [
-    # Legacy functions
-    'load_external_data',
-    'train_with_external_data',
-    'load_huggingface_dataset',
-    'get_training_texts',
-    # Unified pipeline
-    'DataLoader',
-    'DataProcessor',
-    'DataPipeline',
-    'quick_load',
-    # Multimodal
-    'MultimodalDataset',
-    'MultimodalCollator',
-    'create_multimodal_dataloader',
-    'TextOnlyDataset',
-    'VisionOnlyDataset',
-    'AudioOnlyDataset',
-]
+# 重导出新位置的所有内容
+from apt.core.data import *  # noqa: F401, F403
+
+try:
+    from apt.core.data import __all__
+except ImportError:
+    pass

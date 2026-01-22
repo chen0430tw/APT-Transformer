@@ -13,10 +13,10 @@ import logging
 import sys
 from typing import TYPE_CHECKING
 
-from apt_model.cli.command_registry import register_command
+from apt.apps.cli.command_registry import register_command
 
 if TYPE_CHECKING:
-    from apt_model.console.core import ConsoleCore
+    from apt.apps.console.core import ConsoleCore
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def register_system_commands(console_core: 'ConsoleCore'):
     def cmd_console_version(args) -> int:
         """显示版本信息"""
         import apt_model
-        import apt_model.console
+        import apt.apps.console
 
         print("\n" + "="*70)
         print(" APT Console Version Information")

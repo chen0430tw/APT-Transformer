@@ -13,7 +13,7 @@ Capabilities: read_metrics, write_metrics
 import logging
 import time
 from typing import Dict, Any, List
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginPriority,

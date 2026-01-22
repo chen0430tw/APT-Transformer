@@ -11,16 +11,16 @@ import sys
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
-from apt_model.console.module_manager import ModuleManager, ModuleStatus
-from apt_model.console.plugin_bus import PluginBus, EventContext
-from apt_model.console.eqi_manager import EQIManager
-from apt_model.console.plugin_standards import PluginBase, PluginManifest
-from apt_model.console.auto_loader import AutoPluginLoader
-from apt_model.console.apx_loader import APXLoader
-from apt_model.console.plugin_loader import PluginLoader
-from apt_model.console.plugin_registry import PluginRegistry
-from apt_model.console.cli_organizer import CLIOrganizer
-from apt_model.cli.command_registry import command_registry
+from apt.apps.console.module_manager import ModuleManager, ModuleStatus
+from apt.apps.console.plugin_bus import PluginBus, EventContext
+from apt.apps.console.eqi_manager import EQIManager
+from apt.apps.console.plugin_standards import PluginBase, PluginManifest
+from apt.apps.console.auto_loader import AutoPluginLoader
+from apt.apps.console.apx_loader import APXLoader
+from apt.apps.console.plugin_loader import PluginLoader
+from apt.apps.console.plugin_registry import PluginRegistry
+from apt.apps.console.cli_organizer import CLIOrganizer
+from apt.apps.cli.command_registry import command_registry
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +182,8 @@ class ConsoleCore:
 
     def _register_console_commands(self):
         """注册控制台相关命令"""
-        from apt_model.console.commands.module_commands import register_module_commands
-        from apt_model.console.commands.system_commands import register_system_commands
+        from apt.apps.console.commands.module_commands import register_module_commands
+        from apt.apps.console.commands.system_commands import register_system_commands
 
         # 注册模块管理命令
         register_module_commands(self.module_manager)
@@ -193,7 +193,7 @@ class ConsoleCore:
 
         # 注册插件管理命令
         try:
-            from apt_model.console.commands.plugin_commands import register_plugin_commands
+            from apt.apps.console.commands.plugin_commands import register_plugin_commands
             register_plugin_commands(self)
         except ImportError:
             logger.debug("Plugin commands not yet implemented")
@@ -396,7 +396,7 @@ class ConsoleCore:
         Returns:
             命令执行结果
         """
-        from apt_model.cli.command_registry import execute_command
+        from apt.apps.cli.command_registry import execute_command
         return execute_command(command_name, *args, **kwargs)
 
     def list_commands(self, category: Optional[str] = None) -> List[str]:
@@ -553,7 +553,7 @@ class ConsoleCore:
 
             # 从模型目录检测能力
             try:
-                from apt_model.tools.apx.detectors import detect_capabilities
+                from apt.apps.tools.apx.detectors import detect_capabilities
                 capabilities = detect_capabilities(model_path)
             except Exception as e:
                 logger.error(f"Failed to detect capabilities: {e}")

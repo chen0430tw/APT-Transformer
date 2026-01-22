@@ -13,17 +13,17 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # 直接导入控制台组件（避免触发 apt_model 的完整初始化）
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginPriority,
     PluginEvent,
     PluginCapability
 )
-from apt_model.console.plugin_bus import PluginBus, EventContext
-from apt_model.console.plugins.grpo_plugin import GRPOPlugin
-from apt_model.console.plugins.eqi_reporter_plugin import EQIReporterPlugin
-from apt_model.console.plugins.route_optimizer_plugin import RouteOptimizerPlugin
+from apt.apps.console.plugin_bus import PluginBus, EventContext
+from apt.apps.console.plugins.grpo_plugin import GRPOPlugin
+from apt.apps.console.plugins.eqi_reporter_plugin import EQIReporterPlugin
+from apt.apps.console.plugins.route_optimizer_plugin import RouteOptimizerPlugin
 
 
 def test_plugin_bus_registration():

@@ -83,7 +83,7 @@ class APXLoader:
         if artifacts_dir.exists():
             try:
                 # Import detector dynamically to avoid circular dependency
-                from apt_model.tools.apx.detectors import detect_capabilities
+                from apt.apps.tools.apx.detectors import detect_capabilities
 
                 detected = detect_capabilities(artifacts_dir)
                 # Merge with manifest capabilities

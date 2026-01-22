@@ -109,6 +109,62 @@ except ImportError:
     TrainingError = None
 
 # ═══════════════════════════════════════════════════════════
+# System, Hardware, and Resources
+# ═══════════════════════════════════════════════════════════
+try:
+    from apt.core.system import (
+        get_device,
+        get_device_info,
+        set_device,
+        set_seed,
+        memory_cleanup,
+        get_memory_info,
+        SystemInitializer,
+        _initialize_common,
+        device,
+    )
+except ImportError:
+    get_device = None
+    get_device_info = None
+    set_device = None
+    set_seed = None
+    memory_cleanup = None
+    get_memory_info = None
+    SystemInitializer = None
+    _initialize_common = None
+    device = None
+
+try:
+    from apt.core.hardware import (
+        estimate_gpu_performance,
+        get_gpu_properties,
+        get_all_gpu_properties,
+        HardwareProfiler,
+        get_hardware_profile,
+        estimate_model_memory,
+        check_hardware_compatibility,
+        get_recommended_batch_size,
+    )
+except ImportError:
+    estimate_gpu_performance = None
+    get_gpu_properties = None
+    get_all_gpu_properties = None
+    HardwareProfiler = None
+    get_hardware_profile = None
+    estimate_model_memory = None
+    check_hardware_compatibility = None
+    get_recommended_batch_size = None
+
+try:
+    from apt.core.resources import (
+        ResourceMonitor,
+        CacheManager,
+    )
+except ImportError:
+    ResourceMonitor = None
+    CacheManager = None
+
+# ═══════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════
 __all__ = [
@@ -140,4 +196,29 @@ __all__ = [
     'ConfigError',
     'ModelError',
     'TrainingError',
+
+    # System
+    'get_device',
+    'get_device_info',
+    'set_device',
+    'device',
+    'set_seed',
+    'memory_cleanup',
+    'get_memory_info',
+    'SystemInitializer',
+    '_initialize_common',
+
+    # Hardware
+    'estimate_gpu_performance',
+    'get_gpu_properties',
+    'get_all_gpu_properties',
+    'HardwareProfiler',
+    'get_hardware_profile',
+    'estimate_model_memory',
+    'check_hardware_compatibility',
+    'get_recommended_batch_size',
+
+    # Resources
+    'ResourceMonitor',
+    'CacheManager',
 ]

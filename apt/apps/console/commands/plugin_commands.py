@@ -14,7 +14,7 @@ Plugin Management Commands (插件管理命令)
 
 import logging
 from typing import Any
-from apt_model.cli.command_registry import register_command
+from apt.apps.cli.command_registry import register_command
 
 logger = logging.getLogger(__name__)
 

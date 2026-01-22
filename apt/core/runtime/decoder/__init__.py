@@ -12,27 +12,27 @@ Provides runtime decoding strategies including:
 - Expert routing in vein subspace
 """
 
-from apt_model.runtime.decoder.halting import (
+from apt.core.runtime.decoder.halting import (
     HaltingUnit,
     MultiCriteriaHalting,
     BudgetedHalting,
 )
 
-from apt_model.runtime.decoder.routing import (
+from apt.core.runtime.decoder.routing import (
     ExpertRouter,
     MiniExpert,
     MoELayer,
     SwitchRouter,
 )
 
-from apt_model.runtime.decoder.structured_reasoner import (
+from apt.core.runtime.decoder.structured_reasoner import (
     StructuredReasoner,
     ChainOfThoughtReasoner,
     SelfConsistencyReasoner,
     TreeOfThoughtsReasoner,
 )
 
-from apt_model.runtime.decoder.reasoning_controller import (
+from apt.core.runtime.decoder.reasoning_controller import (
     ReasoningController,
     BudgetedReasoningController,
     AdaptiveBudgetController,

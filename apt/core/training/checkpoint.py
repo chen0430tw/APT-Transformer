@@ -49,7 +49,7 @@ def load_model(path, device=None):
         tuple: (model, tokenizer, config)
     """
     from transformers import GPT2Tokenizer
-    from apt_model.config.apt_config import APTConfig
+    from apt.core.config.apt_config import APTConfig
     from apt.core.modeling.apt_model import APTLargeModel
     from apt_model.utils import get_device
 
@@ -70,7 +70,7 @@ def load_model(path, device=None):
 def _load_directory_checkpoint(path, device):
     """加载目录格式的模型"""
     from transformers import GPT2Tokenizer
-    from apt_model.config.apt_config import APTConfig
+    from apt.core.config.apt_config import APTConfig
     from apt.core.modeling.apt_model import APTLargeModel
 
     # 加载配置

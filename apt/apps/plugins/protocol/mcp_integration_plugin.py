@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from apt_model.infrastructure.logging import get_progress_logger
+from apt.core.infrastructure.logging import get_progress_logger
 
 logger = get_progress_logger()
 

@@ -1,30 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-预训练模块
+向后兼容代理模块
 
-提供各种自监督学习方法用于模型预训练
+此模块已迁移至 apt.core.pretraining
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
 
-作者: chen0430tw
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.core.pretraining import ...
 """
 
-from .contrastive_pretrain import (
-    ContrastivePretrainer,
-    ContrastiveConfig,
-    create_contrastive_pretrainer
+import warnings
+
+warnings.warn(
+    f"apt_model.pretraining is deprecated and will be removed in a future version. "
+    f"Please use apt.core.pretraining instead.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-from .mlm_pretrain import (
-    MLMPretrainer,
-    MLMConfig,
-    create_mlm_pretrainer
-)
+# 重导出新位置的所有内容
+from apt.core.pretraining import *  # noqa: F401, F403
 
-__all__ = [
-    'ContrastivePretrainer',
-    'ContrastiveConfig',
-    'create_contrastive_pretrainer',
-    'MLMPretrainer',
-    'MLMConfig',
-    'create_mlm_pretrainer',
-]
+try:
+    from apt.core.pretraining import __all__
+except ImportError:
+    pass

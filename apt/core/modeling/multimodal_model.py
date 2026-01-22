@@ -13,7 +13,7 @@ nn = torch.nn
 F = torch.nn.functional
 from typing import Optional, Dict, Tuple, Union, List
 from apt.core.modeling.apt_model import APTLargeModel
-from apt_model.config.multimodal_config import MultimodalConfig
+from apt.core.config.multimodal_config import MultimodalConfig
 from apt.core.modeling.encoders.vision_encoder import VisionEncoder
 from apt.core.modeling.encoders.audio_encoder import AudioEncoder
 from apt.core.modeling.encoders.cross_modal_attention import (

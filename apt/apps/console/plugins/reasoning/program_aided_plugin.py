@@ -28,7 +28,7 @@ from io import StringIO
 from typing import Dict, Any, List, Optional, Tuple
 from contextlib import redirect_stdout, redirect_stderr
 
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginPriority,

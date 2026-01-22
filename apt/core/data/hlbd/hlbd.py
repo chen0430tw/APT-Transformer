@@ -36,10 +36,10 @@ from apt.core.system import set_seed, get_device
 from apt.core.resources import ResourceMonitor
 
 # Infrastructure模块
-from apt_model.infrastructure.logging import setup_colored_logging, LogManager
+from apt.core.infrastructure.logging import setup_colored_logging, LogManager
 
 # Data模块
-from apt_model.data.hlbd.hlbd_adapter import (
+from apt.core.data.hlbd.hlbd_adapter import (
     HLBDDataProcessor,
     HLBDDataset,
     HLBDModelEvaluator,
@@ -49,7 +49,7 @@ from apt_model.data.hlbd.hlbd_adapter import (
 )
 
 # Evaluation模块
-from apt_model.evaluation import UnifiedEvaluator
+from apt.apps.evaluation import UnifiedEvaluator
 
 # 模型和训练模块
 from apt.core.modeling.apt_model import APTModel
@@ -61,7 +61,7 @@ try:
     from apt.core.config import APTConfig
 except ImportError:
     # 回退到旧的配置系统
-    from apt_model.config.apt_config import APTConfig
+    from apt.core.config.apt_config import APTConfig
 
 
 def parse_args():

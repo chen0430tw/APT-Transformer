@@ -1,43 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Console Core Module (控制台核心模块)
+向后兼容代理模块
 
-控制台核心模块负责整合和管理所有 APT 核心模块：
-- 模块注册与发现
-- 模块生命周期管理
-- 模块间通信
-- 控制台命令管理
+此模块已迁移至 apt.apps.console
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
 
-Architecture:
-    Console Core (控制台核心)
-    ├── Module Manager (模块管理器)
-    │   ├── Core Modules (核心模块)
-    │   │   ├── VFT/TVA (Vein-Flow Transformer)
-    │   │   ├── EQI (Evidence Qualitative Inference)
-    │   │   ├── RAG (Retrieval Augmented Generation)
-    │   │   ├── Reasoning Controller (推理控制器)
-    │   │   ├── Codec System (编解码系统)
-    │   │   ├── Plugin System (插件系统)
-    │   │   ├── Multilingual Support (多语言支持)
-    │   │   └── Training System (训练系统)
-    │   └── Runtime Modules (运行时模块)
-    ├── Command System (命令系统)
-    │   ├── Module Commands (模块命令)
-    │   ├── System Commands (系统命令)
-    │   └── Custom Commands (自定义命令)
-    └── Launcher (启动器)
-        ├── CLI Launcher (命令行启动器)
-        ├── Interactive Mode (交互模式)
-        └── Batch Mode (批处理模式)
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.apps.console import ...
 """
 
-__version__ = "1.0.0"
+import warnings
 
-from apt_model.console.core import ConsoleCore
-from apt_model.console.module_manager import ModuleManager
+warnings.warn(
+    f"apt_model.console is deprecated and will be removed in a future version. "
+    f"Please use apt.apps.console instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
-__all__ = [
-    'ConsoleCore',
-    'ModuleManager',
-]
+# 重导出新位置的所有内容
+from apt.apps.console import *  # noqa: F401, F403
+
+try:
+    from apt.apps.console import __all__
+except ImportError:
+    pass

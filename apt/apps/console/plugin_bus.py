@@ -21,13 +21,13 @@ import traceback
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass, field
 
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginEvent,
     PluginCapability
 )
-from apt_model.console.version_checker import VersionChecker
+from apt.apps.console.version_checker import VersionChecker
 
 logger = logging.getLogger(__name__)
 

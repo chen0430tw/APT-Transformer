@@ -22,15 +22,15 @@ import logging
 # 添加项目路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from apt_model.agent import (
+from apt.apps.agent import (
     Tool, ToolDefinition, ToolParameter, ToolType,
     ToolRegistry, ToolExecutor,
     PythonCodeExecutorTool, PythonSandbox,
     register_tool, get_tool_registry, tool
 )
 
-from apt_model.agent.tools.web_search import WebSearchTool, create_web_search_tool
-from apt_model.agent.agent_loop import ReactAgent, create_react_agent, AgentConfig
+from apt.apps.agent.tools.web_search import WebSearchTool, create_web_search_tool
+from apt.apps.agent.agent_loop import ReactAgent, create_react_agent, AgentConfig
 
 # 配置日志
 logging.basicConfig(

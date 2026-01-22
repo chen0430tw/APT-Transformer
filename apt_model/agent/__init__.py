@@ -1,40 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Agent System
+向后兼容代理模块
 
-完整的 Agent 工具调用和决策系统，包括：
-- 工具注册和调用
-- Python 沙盒执行
-- Web 搜索
-- Agent 决策循环
+此模块已迁移至 apt.apps.agent
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
 
-版本: 1.0
-日期: 2026-01-21
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.apps.agent import ...
 """
 
-from .tool_system import (
-    Tool, ToolDefinition, ToolParameter, ToolType,
-    ToolCallRequest, ToolCallResult,
-    ToolRegistry, ToolExecutor,
-    get_tool_registry, register_tool, get_tool,
-    tool  # decorator
+import warnings
+
+warnings.warn(
+    f"apt_model.agent is deprecated and will be removed in a future version. "
+    f"Please use apt.apps.agent instead.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-from .python_sandbox import (
-    PythonSandbox, SandboxConfig,
-    PythonCodeExecutorTool
-)
+# 重导出新位置的所有内容
+from apt.apps.agent import *  # noqa: F401, F403
 
-__all__ = [
-    # Tool system
-    "Tool", "ToolDefinition", "ToolParameter", "ToolType",
-    "ToolCallRequest", "ToolCallResult",
-    "ToolRegistry", "ToolExecutor",
-    "get_tool_registry", "register_tool", "get_tool",
-    "tool",
-
-    # Python sandbox
-    "PythonSandbox", "SandboxConfig",
-    "PythonCodeExecutorTool",
-]
+try:
+    from apt.apps.agent import __all__
+except ImportError:
+    pass

@@ -15,7 +15,7 @@ from typing import Dict, Optional
 from collections import OrderedDict
 
 # 导入MicroVM压缩模块
-from apt_model.optimization.microvm_compression import AutoCompressor
+from apt.perf.optimization.microvm_compression import AutoCompressor
 
 
 # Layer 1: 虚拟GPU网络

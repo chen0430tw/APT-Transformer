@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from apt.core.training.trainer import train_model
 from apt.core.training.checkpoint import CheckpointManager, save_model, load_model
-from apt_model.config.apt_config import APTConfig
+from apt.core.config.apt_config import APTConfig
 
 
 # ============================================================================

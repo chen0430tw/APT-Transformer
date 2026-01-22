@@ -29,11 +29,11 @@ from typing import Optional, List, Dict, Tuple
 
 # 复用现有模块
 from apt.core.training.checkpoint import load_model, save_model
-from apt_model.data.external_data import load_external_data
-from apt_model.generation.generator import generate_natural_text
-from apt_model.generation.evaluator import evaluate_text_quality
+from apt.core.data.external_data import load_external_data
+from apt.core.generation.generator import generate_natural_text
+from apt.core.generation.evaluator import evaluate_text_quality
 from apt_model.utils import get_device, set_seed
-from apt_model.config.settings_manager import settings
+from apt.core.config.settings_manager import settings
 
 
 class FineTuner:

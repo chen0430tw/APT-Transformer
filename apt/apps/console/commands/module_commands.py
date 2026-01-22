@@ -14,8 +14,8 @@ Module Management Commands (模块管理命令)
 
 import logging
 from typing import Any
-from apt_model.cli.command_registry import register_command
-from apt_model.console.module_manager import ModuleManager, ModuleStatus
+from apt.apps.cli.command_registry import register_command
+from apt.apps.console.module_manager import ModuleManager, ModuleStatus
 
 logger = logging.getLogger(__name__)
 

@@ -14,8 +14,8 @@ torch = get_torch()
 nn = torch.nn
 from typing import Optional, Dict, Any
 
-from apt_model.runtime.decoder.routing import MoELayer, ExpertRouter, MiniExpert
-from apt_model.runtime.decoder.halting import HaltingUnit
+from apt.core.runtime.decoder.routing import MoELayer, ExpertRouter, MiniExpert
+from apt.core.runtime.decoder.halting import HaltingUnit
 
 
 class StructuredReasoner(nn.Module):

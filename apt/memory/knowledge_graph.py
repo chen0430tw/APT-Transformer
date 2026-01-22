@@ -19,7 +19,7 @@ from collections import defaultdict
 import torch
 import torch.nn as nn
 
-from apt_model.infrastructure.logging import get_progress_logger
+from apt.core.infrastructure.logging import get_progress_logger
 
 logger = get_progress_logger()
 

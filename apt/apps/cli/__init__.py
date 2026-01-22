@@ -10,8 +10,8 @@ Command-line interface for APT model training and evaluation tool
 - 清晰的公共API
 """
 
-from apt_model.cli.parser import parse_arguments, get_available_commands
-from apt_model.cli.command_registry import (
+from apt.apps.cli.parser import parse_arguments, get_available_commands
+from apt.apps.cli.command_registry import (
     CommandRegistry,
     CommandMetadata,
     command_registry,
@@ -21,11 +21,11 @@ from apt_model.cli.command_registry import (
 )
 
 # 导入命令（自动注册到命令注册中心）
-import apt_model.cli.commands  # noqa: F401
+import apt.apps.cli.commands  # noqa: F401
 
 # Import APX commands and register them
 try:
-    from apt_model.cli.apx_commands import register_apx_commands
+    from apt.apps.cli.apx_commands import register_apx_commands
     register_apx_commands()
 except ImportError as e:
     import logging
@@ -96,7 +96,7 @@ def register_plugin_command(
 # 示例：插件如何注册命令
 # 插件开发者可以在他们的插件模块中这样做：
 #
-# from apt_model.cli import register_plugin_command
+# from apt.apps.cli import register_plugin_command
 #
 # def my_plugin_command(args):
 #     """插件命令实现"""

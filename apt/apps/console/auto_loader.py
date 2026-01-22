@@ -10,8 +10,8 @@ from typing import List, Dict, Optional, Any
 from pathlib import Path
 import logging
 
-from apt_model.console.plugin_standards import PluginBase
-from apt_model.console.capability_plugin_map import (
+from apt.apps.console.plugin_standards import PluginBase
+from apt.apps.console.capability_plugin_map import (
     get_recommended_plugins,
     check_plugin_requirements,
     get_plugin_score,

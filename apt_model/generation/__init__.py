@@ -1,16 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT Model (自生成变换器) - Generation Module
+向后兼容代理模块
 
-This module includes functionality for text generation and quality evaluation
-of the generated text from APT models.
+此模块已迁移至 apt.core.generation
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
+
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.core.generation import ...
 """
 
-from .generator import generate_natural_text
-from .evaluator import evaluate_text_quality
+import warnings
 
-__all__ = [
-    'generate_natural_text',
-    'evaluate_text_quality',
-]
+warnings.warn(
+    f"apt_model.generation is deprecated and will be removed in a future version. "
+    f"Please use apt.core.generation instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
+# 重导出新位置的所有内容
+from apt.core.generation import *  # noqa: F401, F403
+
+try:
+    from apt.core.generation import __all__
+except ImportError:
+    pass

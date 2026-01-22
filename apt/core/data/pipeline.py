@@ -60,7 +60,7 @@ class DataLoader:
         返回:
             list: 文本列表
         """
-        from apt_model.data.external_data import load_external_data
+        from apt.core.data.external_data import load_external_data
 
         try:
             texts = load_external_data(file_path, max_samples)
@@ -91,7 +91,7 @@ class DataLoader:
         返回:
             list: 文本列表
         """
-        from apt_model.data.huggingface_loader import HuggingFaceLoader
+        from apt.core.data.huggingface_loader import HuggingFaceLoader
 
         loader = HuggingFaceLoader(logger=self.logger)
         texts, info = loader.load_dataset(
@@ -112,7 +112,7 @@ class DataLoader:
         返回:
             list: 文本列表
         """
-        from apt_model.data.data_processor import get_training_texts
+        from apt.core.data.data_processor import get_training_texts
 
         texts = get_training_texts()
         self.logger.info(f"加载了 {len(texts)} 条内置文本")

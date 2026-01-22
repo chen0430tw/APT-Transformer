@@ -14,7 +14,7 @@ import yaml
 import shutil
 import logging
 
-from apt_model.console.plugin_standards import PluginBase
+from apt.apps.console.plugin_standards import PluginBase
 
 logger = logging.getLogger(__name__)
 

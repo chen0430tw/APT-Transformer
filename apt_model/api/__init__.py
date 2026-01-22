@@ -1,12 +1,28 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-APT Model REST API
+向后兼容代理模块
 
-FastAPI-based REST API for:
-- Model inference (single and batch)
-- Training monitoring
-- Checkpoint management
+此模块已迁移至 apt.apps.api
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
+
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.apps.api import ...
 """
 
-from .server import create_app, run_server
+import warnings
 
-__all__ = ['create_app', 'run_server']
+warnings.warn(
+    f"apt_model.api is deprecated and will be removed in a future version. "
+    f"Please use apt.apps.api instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
+# 重导出新位置的所有内容
+from apt.apps.api import *  # noqa: F401, F403
+
+try:
+    from apt.apps.api import __all__
+except ImportError:
+    pass

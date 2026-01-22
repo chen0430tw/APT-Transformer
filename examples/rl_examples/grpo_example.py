@@ -11,7 +11,7 @@ GRPO训练示例
 import torch
 import torch.nn as nn
 import logging
-from apt_model.rl import create_grpo_trainer, GRPOConfig
+from apt.apps.rl import create_grpo_trainer, GRPOConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

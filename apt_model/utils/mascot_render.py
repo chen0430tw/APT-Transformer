@@ -19,7 +19,7 @@ from typing import Optional
 
 # 导入设置管理器用于debug模式控制
 try:
-    from apt_model.config.settings_manager import settings
+    from apt.core.config.settings_manager import settings
     HAS_SETTINGS = True
 except ImportError:
     HAS_SETTINGS = False

@@ -483,7 +483,7 @@ def create_hlbd_apt_config(vocab_size: int = 50000):
         APTConfig: 适合HLBD数据的模型配置
     """
     try:
-        from apt_model.config.apt_config import APTConfig
+        from apt.core.config.apt_config import APTConfig
         
         # 使用更适合多语言处理的配置
         config = APTConfig(

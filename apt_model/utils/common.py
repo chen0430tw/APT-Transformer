@@ -4,7 +4,7 @@ from datetime import datetime
 from apt_model.utils import set_seed, get_device
 from apt_model.utils.logging_utils import setup_logging
 from apt_model.utils.language_manager import LanguageManager
-from apt_model.config.settings_manager import settings
+from apt.core.config.settings_manager import settings
 
 def _initialize_common(args):
     """

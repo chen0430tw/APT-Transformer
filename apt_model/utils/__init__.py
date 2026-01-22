@@ -15,7 +15,7 @@ APT Model (自生成变换器) Utils Module
 # 使用try-except避免在缺少torch等依赖时导入失败
 # ============================================================================
 try:
-    from apt_model.core.system import (
+    from apt.core.system import (
         set_seed,
         get_device,
         memory_cleanup,
@@ -33,7 +33,7 @@ except ImportError:
     _initialize_common = None
 
 try:
-    from apt_model.core.hardware import (
+    from apt.core.hardware import (
         check_hardware_compatibility,
         get_hardware_profile,
         HardwareProfiler,
@@ -44,7 +44,7 @@ except ImportError:
     HardwareProfiler = None
 
 try:
-    from apt_model.core.resources import (
+    from apt.core.resources import (
         ResourceMonitor,
         CacheManager,
     )
@@ -56,12 +56,12 @@ except ImportError:
 # 从infrastructure模块导入（向后兼容）
 # ============================================================================
 try:
-    from apt_model.infrastructure.logging import setup_logging
+    from apt.core.infrastructure.logging import setup_logging
 except ImportError:
     setup_logging = None
 
 try:
-    from apt_model.infrastructure.errors import ErrorHandler
+    from apt.core.infrastructure.errors import ErrorHandler
 except ImportError:
     ErrorHandler = None
 

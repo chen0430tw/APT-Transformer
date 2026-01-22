@@ -1,55 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-强化学习模块
+向后兼容代理模块
 
-提供各种RL算法实现
+此模块已迁移至 apt.apps.rl
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
 
-作者: chen0430tw
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.apps.rl import ...
 """
 
-from .reward_model import (
-    RewardModel,
-    RewardModelTrainer,
-    create_reward_model
+import warnings
+
+warnings.warn(
+    f"apt_model.rl is deprecated and will be removed in a future version. "
+    f"Please use apt.apps.rl instead.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-from .rlhf_trainer import (
-    RLHFTrainer,
-    RLHFConfig,
-    create_rlhf_trainer
-)
+# 重导出新位置的所有内容
+from apt.apps.rl import *  # noqa: F401, F403
 
-from .dpo_trainer import (
-    DPOTrainer,
-    DPOConfig,
-    create_dpo_trainer
-)
-
-from .grpo_trainer import (
-    GRPOTrainer,
-    GRPOConfig,
-    create_grpo_trainer
-)
-
-__all__ = [
-    # Reward Model
-    'RewardModel',
-    'RewardModelTrainer',
-    'create_reward_model',
-
-    # RLHF
-    'RLHFTrainer',
-    'RLHFConfig',
-    'create_rlhf_trainer',
-
-    # DPO
-    'DPOTrainer',
-    'DPOConfig',
-    'create_dpo_trainer',
-
-    # GRPO
-    'GRPOTrainer',
-    'GRPOConfig',
-    'create_grpo_trainer',
-]
+try:
+    from apt.apps.rl import __all__
+except ImportError:
+    pass

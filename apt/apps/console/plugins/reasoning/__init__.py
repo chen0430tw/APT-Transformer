@@ -11,9 +11,9 @@ Advanced reasoning techniques implemented as plugins:
 - Least-to-Most: Problem decomposition and progressive solving
 """
 
-from apt_model.console.plugins.reasoning.self_consistency_plugin import SelfConsistencyPlugin
-from apt_model.console.plugins.reasoning.beam_search_plugin import BeamSearchReasoningPlugin
-from apt_model.console.plugins.reasoning.program_aided_plugin import ProgramAidedReasoningPlugin
+from apt.apps.console.plugins.reasoning.self_consistency_plugin import SelfConsistencyPlugin
+from apt.apps.console.plugins.reasoning.beam_search_plugin import BeamSearchReasoningPlugin
+from apt.apps.console.plugins.reasoning.program_aided_plugin import ProgramAidedReasoningPlugin
 
 __all__ = [
     'SelfConsistencyPlugin',

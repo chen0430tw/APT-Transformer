@@ -506,7 +506,7 @@ def train_with_external_data(data_path=None, epochs=10, batch_size=8,
         
         # 获取基础训练数据作为补充
         try:
-            from apt_model.data.base_data import get_training_texts
+            from apt.core.data.base_data import get_training_texts
         except ImportError:
             # 如果找不到特定的base_data模块，尝试从trainer导入
             from apt.core.training.trainer import get_training_texts

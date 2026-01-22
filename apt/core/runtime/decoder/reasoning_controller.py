@@ -13,8 +13,8 @@ torch = get_torch()
 nn = torch.nn
 from typing import Optional, Dict, Any, Tuple
 
-from apt_model.runtime.decoder.structured_reasoner import StructuredReasoner
-from apt_model.runtime.decoder.halting import MultiCriteriaHalting, BudgetedHalting
+from apt.core.runtime.decoder.structured_reasoner import StructuredReasoner
+from apt.core.runtime.decoder.halting import MultiCriteriaHalting, BudgetedHalting
 
 
 class ReasoningController(nn.Module):

@@ -21,11 +21,11 @@ from datetime import datetime
 from apt_model.utils.warning_filter import enable_clean_warnings
 enable_clean_warnings()
 
-from apt_model.cli.parser import parse_arguments
+from apt.apps.cli.parser import parse_arguments
 from apt_model.utils.logging_utils import setup_logging
 from apt_model.utils.language_manager import LanguageManager
 from apt_model.utils import set_seed, get_device
-from apt_model.console.core import initialize_console, get_console
+from apt.apps.console.core import initialize_console, get_console
 
 
 def print_launcher_banner():
@@ -164,13 +164,13 @@ def main():
 
         if args.action in FAST_COMMANDS or args.action == 'help':
             # 直接显示帮助，不初始化控制台
-            from apt_model.cli.commands import show_help
+            from apt.apps.cli.commands import show_help
             show_help(args)
             sys.exit(0)
 
         if not args.action:
             # 没有命令，显示简化的帮助
-            from apt_model.cli.commands import show_help
+            from apt.apps.cli.commands import show_help
             show_help(args)
             sys.exit(0)
 

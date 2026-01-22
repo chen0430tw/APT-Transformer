@@ -12,8 +12,8 @@ import os
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from apt_model.console.core import ConsoleCore, initialize_console
-from apt_model.console.module_manager import ModuleManager, ModuleStatus
+from apt.apps.console.core import ConsoleCore, initialize_console
+from apt.apps.console.module_manager import ModuleManager, ModuleStatus
 
 
 def test_module_manager():

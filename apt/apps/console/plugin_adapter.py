@@ -7,7 +7,7 @@
 from typing import Dict, Any, List, Optional, Callable
 import logging
 
-from apt_model.console.plugin_standards import PluginBase, PluginManifest
+from apt.apps.console.plugin_standards import PluginBase, PluginManifest
 
 logger = logging.getLogger(__name__)
 

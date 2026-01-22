@@ -22,7 +22,7 @@ from apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 
-from apt_model.infrastructure.logging import get_progress_logger
+from apt.core.infrastructure.logging import get_progress_logger
 
 logger = get_progress_logger()
 

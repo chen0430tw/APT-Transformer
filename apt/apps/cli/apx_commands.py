@@ -14,13 +14,13 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from apt_model.tools.apx import (
+from apt.apps.tools.apx import (
     pack_apx,
     detect_framework,
     detect_capabilities,
     APXPackagingError,
 )
-from apt_model.cli.command_registry import register_command
+from apt.apps.cli.command_registry import register_command
 
 logger = logging.getLogger(__name__)
 

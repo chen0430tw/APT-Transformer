@@ -15,8 +15,8 @@ from pathlib import Path
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from apt_model.config.config import APTConfig
-from apt_model.config.multimodal_config import MultimodalConfig
+from apt.core.config.config import APTConfig
+from apt.core.config.multimodal_config import MultimodalConfig
 from apt.core.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
 from apt.core.modeling.encoders.vision_encoder import VisionEncoder, SimpleCNNEncoder
 from apt.core.modeling.encoders.audio_encoder import AudioEncoder, SimpleAudioEncoder

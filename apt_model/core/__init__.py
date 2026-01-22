@@ -1,71 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-核心模块
+向后兼容代理模块
 
-提供系统初始化、设备管理、硬件检测、资源管理等核心功能
+此模块已迁移至 apt.core
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
+
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.core import ...
 """
 
-# ============================================================================
-# 系统模块
-# ============================================================================
-from .system import (
-    get_device,
-    get_device_info,
-    set_device,
-    set_seed,
-    memory_cleanup,
-    get_memory_info,
-    SystemInitializer,
-    _initialize_common,
-    device,
+import warnings
+
+warnings.warn(
+    f"apt_model.core is deprecated and will be removed in a future version. "
+    f"Please use apt.core instead.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-# ============================================================================
-# 硬件模块
-# ============================================================================
-from .hardware import (
-    estimate_gpu_performance,
-    get_gpu_properties,
-    get_all_gpu_properties,
-    HardwareProfiler,
-    get_hardware_profile,
-    estimate_model_memory,
-    check_hardware_compatibility,
-    get_recommended_batch_size,
-)
+# 重导出新位置的所有内容
+from apt.core import *  # noqa: F401, F403
 
-# ============================================================================
-# 资源模块
-# ============================================================================
-from .resources import (
-    ResourceMonitor,
-    CacheManager,
-)
-
-__all__ = [
-    # 系统
-    'get_device',
-    'get_device_info',
-    'set_device',
-    'device',
-    'set_seed',
-    'memory_cleanup',
-    'get_memory_info',
-    'SystemInitializer',
-    '_initialize_common',
-
-    # 硬件
-    'estimate_gpu_performance',
-    'get_gpu_properties',
-    'get_all_gpu_properties',
-    'HardwareProfiler',
-    'get_hardware_profile',
-    'estimate_model_memory',
-    'check_hardware_compatibility',
-    'get_recommended_batch_size',
-
-    # 资源
-    'ResourceMonitor',
-    'CacheManager',
-]
+try:
+    from apt.core import __all__
+except ImportError:
+    pass

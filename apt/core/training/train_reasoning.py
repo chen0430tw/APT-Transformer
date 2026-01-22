@@ -18,8 +18,8 @@ Dataset = torch.utils.data.Dataset
 
 from apt.core.system import get_device, set_seed
 from apt.core.resources import ResourceMonitor
-from apt_model.infrastructure.logging import get_progress_logger
-from apt_model.runtime.decoder import ReasoningController, BudgetedReasoningController
+from apt.core.infrastructure.logging import get_progress_logger
+from apt.core.runtime.decoder import ReasoningController, BudgetedReasoningController
 
 logger = get_progress_logger()
 

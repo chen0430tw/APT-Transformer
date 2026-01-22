@@ -12,7 +12,7 @@ Capabilities: route_suggest, read_metrics
 
 import logging
 from typing import Dict, Any, List
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginPriority,

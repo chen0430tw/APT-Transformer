@@ -13,7 +13,7 @@ Capabilities: write_metrics, read_state
 import logging
 from typing import Dict, Any, Optional
 import torch
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginPriority,
@@ -33,7 +33,7 @@ def _import_grpo():
     global _grpo_trainer, _GRPOConfig
     if _grpo_trainer is None:
         try:
-            from apt_model.rl.grpo_trainer import GRPOTrainer, GRPOConfig
+            from apt.apps.rl.grpo_trainer import GRPOTrainer, GRPOConfig
             _grpo_trainer = GRPOTrainer
             _GRPOConfig = GRPOConfig
         except ImportError as e:

@@ -14,10 +14,10 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from apt_model.optimization.microvm_compression import (
+from apt.perf.optimization.microvm_compression import (
     compress, AutoCompressor, _compress_v4, _compress_v5, _compress_v7, _CacheManager
 )
-from apt_model.optimization.virtual_blackwell_adapter import create_virtual_blackwell
+from apt.perf.optimization.virtual_blackwell_adapter import create_virtual_blackwell
 
 
 def test_compression_accuracy():

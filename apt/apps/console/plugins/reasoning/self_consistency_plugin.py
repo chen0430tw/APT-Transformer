@@ -25,7 +25,7 @@ import re
 from typing import Dict, Any, List, Tuple, Optional
 from collections import Counter
 
-from apt_model.console.plugin_standards import (
+from apt.apps.console.plugin_standards import (
     PluginBase,
     PluginManifest,
     PluginPriority,

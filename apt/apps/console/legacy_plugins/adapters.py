@@ -8,12 +8,12 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from apt_model.console.plugin_adapter import LegacyPluginAdapter
-from apt_model.console.plugin_standards import PluginPriority
+from apt.apps.console.plugin_adapter import LegacyPluginAdapter
+from apt.apps.console.plugin_standards import PluginPriority
 
 # 添加 plugins 目录到 Python 路径
-# 从 apt/apps/console/legacy_plugins/adapters.py 向上4级到根，再到 apt/apps/plugins
-LEGACY_PLUGINS_DIR = Path(__file__).parent.parent.parent / "plugins"
+# 从 apt_model/console/legacy_plugins/adapters.py 向上3级到根，再到 apt/apps/plugins
+LEGACY_PLUGINS_DIR = Path(__file__).parent.parent.parent.parent / "apt" / "apps" / "plugins"
 
 
 def create_huggingface_adapter(config: Optional[Dict[str, Any]] = None) -> LegacyPluginAdapter:

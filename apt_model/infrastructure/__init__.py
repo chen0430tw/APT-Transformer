@@ -1,38 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-基础设施模块
+向后兼容代理模块
 
-提供日志、错误处理、监控等基础设施功能
+此模块已迁移至 apt.core.infrastructure
+为保持向后兼容性，此代理模块会重导出新位置的所有内容
+
+警告: 此导入路径已废弃，请更新代码使用新路径：
+    from apt.core.infrastructure import ...
 """
 
-from .logging import (
-    setup_logging,
-    setup_colored_logging,
-    get_progress_logger,
-    LogManager,
-    ColoredFormatter,
+import warnings
+
+warnings.warn(
+    f"apt_model.infrastructure is deprecated and will be removed in a future version. "
+    f"Please use apt.core.infrastructure instead.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-from .errors import (
-    ErrorHandler,
-    memory_cleanup,
-    safe_execute,
-    with_error_handling,
-    ErrorContext,
-)
+# 重导出新位置的所有内容
+from apt.core.infrastructure import *  # noqa: F401, F403
 
-__all__ = [
-    # 日志
-    'setup_logging',
-    'setup_colored_logging',
-    'get_progress_logger',
-    'LogManager',
-    'ColoredFormatter',
-    # 错误处理
-    'ErrorHandler',
-    'memory_cleanup',
-    'safe_execute',
-    'with_error_handling',
-    'ErrorContext',
-]
+try:
+    from apt.core.infrastructure import __all__
+except ImportError:
+    pass

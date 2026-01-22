@@ -14,11 +14,11 @@ from torch.utils.data import Dataset, DataLoader
 
 from apt_model.utils import set_seed
 from apt_model.utils import get_device, device
-from apt_model.config.apt_config import APTConfig
+from apt.core.config.apt_config import APTConfig
 from apt.core.modeling.apt_model import APTModel, APTLargeModel
-from apt_model.generation.generator import generate_natural_text
-from apt_model.generation.evaluator import evaluate_text_quality
-from apt_model.config.settings_manager import settings
+from apt.core.generation.generator import generate_natural_text
+from apt.core.generation.evaluator import evaluate_text_quality
+from apt.core.config.settings_manager import settings
 from apt.core.training.training_guard import TrainingGuard, EarlyStopping
 
 # 导入中文分词器相关函数

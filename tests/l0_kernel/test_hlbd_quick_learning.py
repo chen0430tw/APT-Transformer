@@ -25,8 +25,8 @@ from apt.core.modeling.apt_model import (
     DBCDAC_Optimizer,
     create_gradient_stabilizer_hook
 )
-from apt_model.generation.generator import generate_natural_text
-from apt_model.generation.evaluator import evaluate_text_quality
+from apt.core.generation.generator import generate_natural_text
+from apt.core.generation.evaluator import evaluate_text_quality
 
 
 class SimpleCharTokenizer_BACKUP:
