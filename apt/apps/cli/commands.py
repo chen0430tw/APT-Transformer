@@ -2704,6 +2704,94 @@ def debug_tokenizer(args):
         return {'success': False, 'message': f'分词器错误: {str(e)[:50]}'}
 
 
+def run_pipeline_command(args):
+    """
+    运行命令管道/链 - 按顺序执行多个命令
+
+    Args:
+        args: 命令行参数，包含 --commands 参数
+
+    Returns:
+        int: 0 表示成功，非0 表示失败
+    """
+    logger, lm = _initialize_common(args)
+    logger.info("开始执行命令管道...")
+
+    # 获取命令列表
+    if not hasattr(args, 'commands') or not args.commands:
+        logger.error("未指定要执行的命令。请使用 --commands 参数")
+        print("错误: 请使用 --commands 参数指定要执行的命令")
+        print("示例: python -m apt_model pipeline --commands 'train,evaluate,visualize'")
+        return 1
+
+    # 解析命令列表
+    command_list = args.commands.split(',')
+    command_list = [cmd.strip() for cmd in command_list]
+
+    logger.info(f"命令管道: {' -> '.join(command_list)}")
+    print(f"\n{'='*70}")
+    print(f"执行命令管道: {' -> '.join(command_list)}")
+    print(f"{'='*70}\n")
+
+    # 导入命令注册表
+    from apt_model.cli.command_registry import command_registry
+
+    # 逐个执行命令
+    for i, command_name in enumerate(command_list, 1):
+        print(f"\n[{i}/{len(command_list)}] 执行命令: {command_name}")
+        print("-" * 70)
+
+        try:
+            # 执行命令
+            result = command_registry.execute_command(command_name, args)
+
+            if result != 0:
+                logger.error(f"命令 '{command_name}' 执行失败 (退出码: {result})")
+                print(f"\n错误: 命令 '{command_name}' 执行失败")
+                print("命令管道中断")
+                return result
+
+            logger.info(f"命令 '{command_name}' 执行成功")
+            print(f"✓ 命令 '{command_name}' 完成")
+
+        except Exception as e:
+            logger.error(f"命令 '{command_name}' 执行过程中出错: {e}")
+            print(f"\n错误: 命令 '{command_name}' 执行失败: {e}")
+            print("命令管道中断")
+            return 1
+
+    print(f"\n{'='*70}")
+    print(f"✓ 命令管道执行完成! 共执行 {len(command_list)} 个命令")
+    print(f"{'='*70}\n")
+
+    logger.info("命令管道执行完成")
+    return 0
+
+
+def run_list_modules_command(args):
+    """
+    列出所有可用模块及其状态
+
+    Args:
+        args: 命令行参数
+
+    Returns:
+        int: 0 表示成功
+    """
+    from apt.apps.cli.module_selector import module_selector
+
+    # 获取启用的模块列表
+    enabled_modules = module_selector.get_enabled_modules(
+        enable_modules=getattr(args, 'enable_modules', None),
+        disable_modules=getattr(args, 'disable_modules', None)
+    )
+
+    # 打印模块状态
+    module_selector.print_module_status(enabled_modules)
+
+    return 0
+
+
 def show_help(args=None):
     """
     Show help information - 优化版本，快速显示
@@ -2734,6 +2822,9 @@ def show_help(args=None):
     print("  --epochs N          - 训练轮数 (默认: 20)")
     print("  --batch-size N      - 批次大小 (默认: 8)")
     print("  --learning-rate N   - 学习率 (默认: 3e-5)")
+    print("  --profile PROFILE   - 加载配置文件 (lite/standard/pro/full)")
+    print("  --enable-modules M  - 启用模块 (如 'L0,L1,monitoring')")
+    print("  --disable-modules M - 禁用模块 (如 'experimental')")
     print("  --save-path PATH    - 模型保存路径 (默认: 'apt_model')")
     print("  --model-path PATH   - 模型加载路径 (默认: 'apt_model')")
     print("  --temperature N     - 生成温度 (默认: 0.7)")
@@ -2741,7 +2832,10 @@ def show_help(args=None):
     print("  --force-cpu         - 强制使用CPU")
     print("\n示例:")
     print("  python -m apt_model train")
-    print("  python -m apt_model train --epochs 10")
+    print("  python -m apt_model train --profile lite")
+    print("  python -m apt_model train --enable-modules 'L0,L1,monitoring'")
+    print("  python -m apt_model pipeline --commands 'train,evaluate,visualize'")
+    print("  python -m apt_model list-modules")
     print("  python -m apt_model chat")
     print("  python -m apt_model evaluate")
 
@@ -2814,6 +2908,12 @@ def register_core_commands():
     # 帮助命令
     register_command("help", show_help, category="general",
                     help_text="显示帮助信息")
+
+    # 管道和模块管理命令
+    register_command("pipeline", run_pipeline_command, category="workflow",
+                    help_text="执行命令管道/链 (用 --commands 指定)")
+    register_command("list-modules", run_list_modules_command, category="info",
+                    help_text="列出所有可用模块及其状态", aliases=["modules"])
 
 
 # 自动注册核心命令

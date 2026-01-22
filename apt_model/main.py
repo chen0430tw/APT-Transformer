@@ -125,13 +125,39 @@ def main():
 
     启动器流程：
     1. 解析命令行参数
-    2. 快速命令直接执行（help等）
-    3. 其他命令初始化控制台核心
-    4. 分发命令
+    2. 应用 profile 配置（如果指定）
+    3. 应用模块选择（如果指定）
+    4. 快速命令直接执行（help等）
+    5. 其他命令初始化控制台核心
+    6. 分发命令
     """
     try:
         # 解析命令行参数
         args = parse_arguments()
+
+        # 应用 profile 配置（如果指定）
+        if hasattr(args, 'profile') and args.profile:
+            from apt.apps.cli.profile_loader import apply_profile_to_args
+            args = apply_profile_to_args(args)
+            print(f"✓ 已加载配置: {args.profile}")
+
+        # 处理模块列表命令（快速命令，不需要初始化）
+        if hasattr(args, 'list_modules') and args.list_modules:
+            from apt.apps.cli.commands import run_list_modules_command
+            exit_code = run_list_modules_command(args)
+            sys.exit(exit_code)
+
+        # 应用模块选择（如果指定）
+        if hasattr(args, 'enable_modules') or hasattr(args, 'disable_modules'):
+            from apt.apps.cli.module_selector import module_selector
+            enabled_modules = module_selector.get_enabled_modules(
+                enable_modules=getattr(args, 'enable_modules', None),
+                disable_modules=getattr(args, 'disable_modules', None)
+            )
+            # 将启用的模块列表附加到 args
+            args.enabled_modules = enabled_modules
+            if getattr(args, 'enable_modules', None) or getattr(args, 'disable_modules', None):
+                print(f"✓ 已应用模块选择: {len(enabled_modules)} 个模块已启用")
 
         # 快速命令 - 不需要初始化控制台（提升性能）
         FAST_COMMANDS = {'help', 'version', '--help', '-h', '--version', '-v'}

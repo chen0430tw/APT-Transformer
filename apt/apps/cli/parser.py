@@ -40,22 +40,50 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Basic commands
   python -m apt_model train                    - Train model with default parameters
   python -m apt_model train --epochs 10        - Train for 10 epochs
-  python -m apt_model train --force-cpu        - Force CPU training
-  python -m apt_model train --language zh      - Train with Chinese language
-  python -m apt_model train --tokenizer-type chinese-char  - Use Chinese character tokenizer
-  python -m apt_model test                     - Test model
   python -m apt_model chat                     - Interactive chat with model
-  python -m apt_model chat --temperature 0.9   - Chat with higher temperature
-  python -m apt_model train --language en_US   - Use English interface
   python -m apt_model evaluate                 - Evaluate model performance
+
+  # Profile usage
+  python -m apt_model train --profile lite     - Train with lite profile
+  python -m apt_model train --profile pro      - Train with pro profile
+
+  # Module selection
+  python -m apt_model --list-modules           - List all available modules
+  python -m apt_model train --enable-modules "L0,L1,monitoring"  - Train with specific modules
+  python -m apt_model train --disable-modules "experimental"     - Train without experimental modules
+
+  # Pipeline commands (chain multiple commands)
+  python -m apt_model pipeline --commands "train,evaluate,visualize"  - Run command chain
+
+  # Other options
+  python -m apt_model train --force-cpu        - Force CPU training
+  python -m apt_model chat --temperature 0.9   - Chat with higher temperature
 """,
         add_help=True
     )
 
     # Add version argument using argparse's built-in support
     parser.add_argument('--version', action='version', version='APT Model 1.0.0')
+
+    # Profile argument (加载预定义配置)
+    parser.add_argument('--profile', type=str, default=None,
+                        choices=['lite', 'standard', 'pro', 'full'],
+                        help='Load predefined configuration profile (lite/standard/pro/full)')
+
+    # Module selection arguments (模块化选择)
+    parser.add_argument('--enable-modules', type=str, default=None,
+                        help='Enable specific modules (comma-separated, e.g., "L0,L1,monitoring,rl")')
+    parser.add_argument('--disable-modules', type=str, default=None,
+                        help='Disable specific modules (comma-separated)')
+    parser.add_argument('--list-modules', action='store_true',
+                        help='List all available modules and their status')
+
+    # Pipeline arguments (命令管道)
+    parser.add_argument('--commands', type=str, default=None,
+                        help='Comma-separated list of commands for pipeline execution (e.g., "train,evaluate,visualize")')
 
     # Language related arguments
     parser.add_argument('--language', type=str, default="zh_CN",
