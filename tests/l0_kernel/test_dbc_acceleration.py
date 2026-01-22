@@ -10,7 +10,7 @@ import torch.optim as optim
 # 添加路径
 sys.path.insert(0, '/home/user/APT-Transformer')
 
-from apt_model.modeling.apt_model import DBCDAC_Optimizer, create_gradient_stabilizer_hook
+from apt.apt_model.modeling.apt_model import DBCDAC_Optimizer, create_gradient_stabilizer_hook
 
 # 直接实现注册函数，避免导入复杂依赖
 def register_dbc_dac_hooks(model):

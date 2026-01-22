@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from apt.core.config.config import APTConfig
 from apt.core.config.multimodal_config import MultimodalConfig
-from apt_model.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
+from apt.apt_model.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

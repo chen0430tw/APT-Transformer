@@ -7,7 +7,7 @@ EQI 插件（Evidence Qualitative Inference）
 - 若检测到 PuLP/HiGHS 则走 LP；否则用近似启发式（可跑通 & 可审计）
 
 用法（Python）：
-from apt_model.plugins.eqi import EQIConfig, eqi_decide
+from apt.apt_model.plugins.eqi import EQIConfig, eqi_decide
 
 cfg = EQIConfig()
 result = eqi_decide(L,I,Q,w,A,c, cfg=cfg, B=None,d=None, lower=None, upper=None)

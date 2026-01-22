@@ -83,7 +83,7 @@ def test_moe_optimized():
     print("=" * 70)
 
     try:
-        from apt_model.modeling.moe_optimized import (
+        from apt.apt_model.modeling.moe_optimized import (
             MoELayerOptimized,
             MoEConfig,
             create_moe_layer

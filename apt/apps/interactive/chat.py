@@ -105,7 +105,7 @@ def chat_with_model(
         # 尝试加载模型，如果指定了分词器类型则使用指定的分词器
         if tokenizer_type:
             try:
-                from apt_model.modeling.chinese_tokenizer_integration import get_tokenizer
+                from apt.apt_model.modeling.chinese_tokenizer_integration import get_tokenizer
                 # 先加载模型
                 model, _, config = load_model(
                     model_path, load_tokenizer=False, device=device)
@@ -124,7 +124,7 @@ def chat_with_model(
         else:
             # 尝试检测保存的模型使用的是哪种类型的分词器
             try:
-                from apt_model.modeling.chinese_tokenizer_integration import load_tokenizer
+                from apt.apt_model.modeling.chinese_tokenizer_integration import load_tokenizer
                 # 首先检查是否有保存的分词器配置
                 tokenizer_dir = os.path.join(
                     os.path.dirname(model_path), "tokenizer")

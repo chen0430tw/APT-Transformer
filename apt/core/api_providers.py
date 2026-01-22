@@ -16,7 +16,7 @@
 - 其他需要外部模型的场景
 """
 
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 from typing import Optional, Dict, Any, List
 import time
@@ -546,7 +546,7 @@ print(f"成本: ${api.stats['total_cost']:.6f}")  # 约 $0.00003
 
     usage_scenarios = '''
 # 场景1: 知识蒸馏
-from apt_model.plugins.teacher_api import create_api_teacher_model
+from apt.apt_model.plugins.teacher_api import create_api_teacher_model
 
 teacher = create_api_teacher_model(
     provider='siliconflow',
@@ -556,7 +556,7 @@ teacher = create_api_teacher_model(
 )
 
 # 场景2: RAG增强 (将来支持)
-from apt_model.modeling.kg_rag_integration import KGRAGWrapper
+from apt.apt_model.modeling.kg_rag_integration import KGRAGWrapper
 
 rag = KGRAGWrapper(
     base_model=model,
@@ -566,7 +566,7 @@ rag = KGRAGWrapper(
 )
 
 # 场景3: 知识图谱构建 (将来支持)
-from apt_model.modeling.knowledge_graph import KnowledgeGraph
+from apt.apt_model.modeling.knowledge_graph import KnowledgeGraph
 
 kg = KnowledgeGraph()
 kg.build_from_text_with_api(

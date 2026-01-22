@@ -22,7 +22,7 @@ from typing import Optional, Dict, Any, List
 from collections import defaultdict
 from pathlib import Path
 
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 
 # 可选依赖

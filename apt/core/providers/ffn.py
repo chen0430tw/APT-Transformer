@@ -8,7 +8,7 @@ Defines the interface for FFN implementations.
 
 from abc import abstractmethod
 from typing import Dict, Any, Optional
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 

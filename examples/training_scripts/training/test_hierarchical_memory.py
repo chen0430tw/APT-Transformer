@@ -403,7 +403,7 @@ def test_dynamic_embeddings():
 
     try:
         import torch
-        from apt_model.modeling.embeddings import TokenEmbedding, ImageEmbedding
+        from apt.apt_model.modeling.embeddings import TokenEmbedding, ImageEmbedding
 
         # 1. 测试 TokenEmbedding 动态扩充
         print("\n[TokenEmbedding] 动态词表扩充测试:")

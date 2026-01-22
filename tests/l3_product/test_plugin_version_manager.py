@@ -12,7 +12,7 @@ import pytest
 import tempfile
 from pathlib import Path
 
-from apt_model.plugins.version_manager import (
+from apt.apt_model.plugins.version_manager import (
     Version,
     PluginDependency,
     PluginMetadata,

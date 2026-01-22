@@ -48,7 +48,7 @@ from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
+from apt.apt_model.modeling.apt_model import APTModel, APTModelConfiguration
 
 
 # ============================================================================

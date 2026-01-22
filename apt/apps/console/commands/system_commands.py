@@ -55,7 +55,7 @@ def register_system_commands(console_core: 'ConsoleCore'):
     )
     def cmd_console_version(args) -> int:
         """显示版本信息"""
-        import apt_model
+        import apt.apt_model
         import apt.apps.console
 
         print("\n" + "="*70)

@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 # 导入可视化蒸馏插件
 import sys
 sys.path.append('..')
-from apt_model.plugins.visual_distillation_plugin import (
+from apt.apt_model.plugins.visual_distillation_plugin import (
     VisualDistillationPlugin,
     quick_visual_distill
 )
@@ -215,8 +215,8 @@ def example_training_integration():
     code_example = '''
 # 完整训练流程示例
 
-from apt_model.training.checkpoint import load_model
-from apt_model.plugins.visual_distillation_plugin import quick_visual_distill
+from apt.apt_model.training.checkpoint import load_model
+from apt.apt_model.plugins.visual_distillation_plugin import quick_visual_distill
 
 # 1. 加载教师模型（大模型）
 teacher_model, tokenizer, config = load_model("apt_model_large")
@@ -276,7 +276,7 @@ def main():
     else:
         print("\n运行快速演示...\n")
         # 运行插件自带的演示
-        from apt_model.plugins.visual_distillation_plugin import VisualDistillationPlugin
+        from apt.apt_model.plugins.visual_distillation_plugin import VisualDistillationPlugin
 
         config = {
             'temperature': 4.0,

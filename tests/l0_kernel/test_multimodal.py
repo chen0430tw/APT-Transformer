@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from apt.core.config.config import APTConfig
 from apt.core.config.multimodal_config import MultimodalConfig
-from apt_model.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
-from apt_model.modeling.encoders.vision_encoder import VisionEncoder, SimpleCNNEncoder
-from apt_model.modeling.encoders.audio_encoder import AudioEncoder, SimpleAudioEncoder
-from apt_model.modeling.encoders.cross_modal_attention import (
+from apt.apt_model.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
+from apt.apt_model.modeling.encoders.vision_encoder import VisionEncoder, SimpleCNNEncoder
+from apt.apt_model.modeling.encoders.audio_encoder import AudioEncoder, SimpleAudioEncoder
+from apt.apt_model.modeling.encoders.cross_modal_attention import (
     CrossModalAttention,
     BiDirectionalCrossAttention,
     MultiModalFusionLayer,

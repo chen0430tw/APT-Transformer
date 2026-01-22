@@ -219,7 +219,7 @@ class GraphRAGPlugin:
         将轻量级KG的三元组导入到GraphRAG
 
         Args:
-            kg: KnowledgeGraph实例 (from apt_model.modeling.knowledge_graph)
+            kg: KnowledgeGraph实例 (from apt.apt_model.modeling.knowledge_graph)
         """
         logger.info("[GraphRAG] 与轻量级KG集成...")
 

@@ -196,7 +196,7 @@ def test_preparation_code_integration():
 
         if torch_available:
             # Check gradient monitor has export_for_webui
-            from apt_model.training.gradient_monitor import GradientMonitor
+            from apt.apt_model.training.gradient_monitor import GradientMonitor
 
             # Check method exists
             assert hasattr(GradientMonitor, 'export_for_webui')

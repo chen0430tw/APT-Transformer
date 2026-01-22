@@ -46,7 +46,7 @@ except ImportError:
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
+from apt.apt_model.modeling.apt_model import APTModel, APTModelConfiguration
 from train_hlbd_playground import DynamicTagTokenizer, HLBDPlaygroundDataset, collate_fn
 
 

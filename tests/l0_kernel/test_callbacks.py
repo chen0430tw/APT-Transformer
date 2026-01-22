@@ -13,7 +13,7 @@ import sys
 import math
 sys.path.insert(0, '/home/user/APT-Transformer')
 
-from apt_model.training.callbacks import (
+from apt.apt_model.training.callbacks import (
     lerp,
     cosine_anneal,
     ScheduleExecutor,

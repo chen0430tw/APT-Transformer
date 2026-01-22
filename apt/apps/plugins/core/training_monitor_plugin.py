@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 
 # 导入SOSA核心
-from apt_model.training import (
+from apt.apt_model.training import (
     SOSATrainingWrapper,
     TrainingMonitor,
     ErrorType,
@@ -257,7 +257,7 @@ def integrate_with_apt_trainer(
         包装后的trainer
 
     Example:
-        >>> from apt_model.training.trainer import Trainer
+        >>> from apt.apt_model.training.trainer import Trainer
         >>> trainer = Trainer(model, config)
         >>> trainer = integrate_with_apt_trainer(trainer, {
         ...     'auto_fix': True

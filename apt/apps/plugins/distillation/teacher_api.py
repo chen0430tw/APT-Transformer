@@ -338,7 +338,7 @@ def create_api_teacher_model(
         ... )
         >>>
         >>> # 直接用于蒸馏
-        >>> from apt_model.plugins.visual_distillation_plugin import quick_visual_distill
+        >>> from apt.apt_model.plugins.visual_distillation_plugin import quick_visual_distill
         >>> quick_visual_distill(
         ...     student_model=student,
         ...     teacher_model=teacher,
@@ -426,8 +426,8 @@ if __name__ == "__main__":
     usage_example = '''
 # 完整蒸馏流程
 
-from apt_model.plugins.teacher_api import create_api_teacher_model
-from apt_model.plugins.visual_distillation_plugin import quick_visual_distill
+from apt.apt_model.plugins.teacher_api import create_api_teacher_model
+from apt.apt_model.plugins.visual_distillation_plugin import quick_visual_distill
 from transformers import AutoTokenizer
 
 # 1. 创建API教师模型

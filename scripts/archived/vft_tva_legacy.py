@@ -9,7 +9,7 @@ The VFT/TVA implementation has been refactored and moved to:
     apt_model/modeling/blocks/
 
 New imports:
-    from apt_model.modeling.blocks import (
+    from apt.apt_model.modeling.blocks import (
         VeinProjector,           # Vein subspace projector
         VeinSubspaceShared,      # Alias for backward compatibility
         TVAAttention,            # TVA attention in vein space
@@ -19,7 +19,7 @@ New imports:
         create_vft_block,        # Factory function
     )
 
-For new code, please use the refactored modules from apt_model.modeling.blocks.
+For new code, please use the refactored modules from apt.apt_model.modeling.blocks.
 
 Original implementation below (for reference):
 ===============================================================

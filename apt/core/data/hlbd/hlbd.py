@@ -20,9 +20,9 @@ import argparse
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 DataLoader = torch.utils.data.DataLoader
 
@@ -52,9 +52,9 @@ from apt.core.data.hlbd.hlbd_adapter import (
 from apt.apps.evaluation import UnifiedEvaluator
 
 # 模型和训练模块
-from apt_model.modeling.apt_model import APTModel
-from apt_model.training.checkpoint import CheckpointManager
-from apt_model.training.optimizer import create_optimizer_and_scheduler
+from apt.apt_model.modeling.apt_model import APTModel
+from apt.apt_model.training.checkpoint import CheckpointManager
+from apt.apt_model.training.optimizer import create_optimizer_and_scheduler
 
 # Config模块 - 使用新的APTConfig
 try:

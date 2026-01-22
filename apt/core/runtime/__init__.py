@@ -9,6 +9,6 @@ Provides runtime components for inference and generation:
 - Adaptive computation (halting, budgeting)
 """
 
-from apt_model.runtime import decoder
+from apt.apt_model.runtime import decoder
 
 __all__ = ['decoder']

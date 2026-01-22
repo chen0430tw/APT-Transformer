@@ -16,8 +16,8 @@ from dataclasses import dataclass
 
 from apt.core.registry import registry
 from apt.core.system import get_device
-from apt_model.modeling.rag_integration import RAGWrapper, RAGConfig
-from apt_model.modeling.knowledge_graph import KnowledgeGraph
+from apt.apt_model.modeling.rag_integration import RAGWrapper, RAGConfig
+from apt.apt_model.modeling.knowledge_graph import KnowledgeGraph
 from apt.core.infrastructure.logging import get_progress_logger
 
 logger = get_progress_logger()

@@ -16,7 +16,7 @@ import numpy as np
 from ..utils.visualization import ModelVisualizer
 from .model_evaluator import ModelEvaluator, evaluate_model
 from ..utils.cache_manager import CacheManager
-from apt_model.training.checkpoint import load_model
+from apt.apt_model.training.checkpoint import load_model
 
 
 class ModelComparison:

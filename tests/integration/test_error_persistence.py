@@ -18,7 +18,7 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from apt_model.utils.error_persistence import (
+from apt.apt_model.utils.error_persistence import (
     ErrorPersistence,
     log_training_error,
     get_global_error_persistence
@@ -464,7 +464,7 @@ class TestConvenienceFunctions:
     def test_log_training_error(self, temp_db):
         """测试log_training_error便捷函数"""
         # 使用全局单例需要覆盖数据库路径
-        import apt_model.utils.error_persistence as ep_module
+        import apt.apt_model.utils.error_persistence as ep_module
         ep_module._global_error_persistence = ErrorPersistence(db_path=str(temp_db))
 
         try:
@@ -494,7 +494,7 @@ class TestConvenienceFunctions:
 
     def test_global_error_persistence_singleton(self, temp_db):
         """测试全局单例模式"""
-        import apt_model.utils.error_persistence as ep_module
+        import apt.apt_model.utils.error_persistence as ep_module
 
         # 重置全局实例
         if hasattr(ep_module, '_global_error_persistence'):

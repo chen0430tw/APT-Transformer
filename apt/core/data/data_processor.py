@@ -14,7 +14,7 @@ from typing import List, Dict, Union, Tuple, Optional, Any, Callable
 from collections import Counter, defaultdict
 import unicodedata
 
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 import numpy as np
 from tqdm import tqdm

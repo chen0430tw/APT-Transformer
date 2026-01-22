@@ -498,7 +498,7 @@ def train_with_external_data(data_path=None, epochs=10, batch_size=8,
         
         # 如果没有提供分词器，使用自动检测
         if not tokenizer:
-            from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+            from apt.apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
             tokenizer, detected_language = get_appropriate_tokenizer(external_texts, language=language)
             local_logger.info(f"使用{detected_language}语言分词器: {type(tokenizer).__name__}")
             print(f"使用{detected_language}语言分词器: {type(tokenizer).__name__}")
@@ -509,7 +509,7 @@ def train_with_external_data(data_path=None, epochs=10, batch_size=8,
             from apt.core.data.base_data import get_training_texts
         except ImportError:
             # 如果找不到特定的base_data模块，尝试从trainer导入
-            from apt_model.training.trainer import get_training_texts
+            from apt.apt_model.training.trainer import get_training_texts
             
         base_texts = get_training_texts()
         local_logger.info(f"使用 {len(base_texts)} 条基础训练样本作为补充")
@@ -519,7 +519,7 @@ def train_with_external_data(data_path=None, epochs=10, batch_size=8,
         local_logger.info(f"最终训练数据集大小: {len(train_texts)} 条文本样本")
         
         # 开始训练
-        from apt_model.training.trainer import train_model
+        from apt.apt_model.training.trainer import train_model
         return train_model(
             texts=train_texts,
             epochs=epochs,

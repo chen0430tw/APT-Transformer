@@ -253,8 +253,8 @@ def test_integration_with_rope_and_smooth():
         return
 
     try:
-        from apt_model.modeling.advanced_rope import create_rope, RoPEConfig
-        from apt_model.modeling.memory_augmented_smooth import (
+        from apt.apt_model.modeling.advanced_rope import create_rope, RoPEConfig
+        from apt.apt_model.modeling.memory_augmented_smooth import (
             create_memory_augmented_smooth,
             MemoryConfig as SmoothMemoryConfig
         )

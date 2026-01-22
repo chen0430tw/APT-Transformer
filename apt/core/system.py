@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Tuple, Optional
 import logging
 
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 import numpy as np
 
@@ -390,7 +390,7 @@ class SystemInitializer:
         # 初始化语言管理器
         lang_manager = None
         if init_language:
-            from apt_model.utils.language_manager import LanguageManager
+            from apt.apt_model.utils.language_manager import LanguageManager
             lang_manager = LanguageManager(
                 getattr(args, 'language', 'zh_CN'),
                 getattr(args, 'language_file', None)

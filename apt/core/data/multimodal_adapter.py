@@ -5,9 +5,9 @@
 统一 MultimodalDataset 和各训练器的接口
 """
 
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 from typing import Dict, Optional, Any, List

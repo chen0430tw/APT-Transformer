@@ -10,9 +10,9 @@ Simple but accurate baseline for RAG.
 import os
 import pickle
 from typing import Dict, Any, Optional, List, Tuple
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
-from apt_model.utils.fake_torch import get_torch
+from apt.apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
