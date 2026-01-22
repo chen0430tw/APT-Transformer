@@ -1,8 +1,8 @@
 # APT-Transformer Plugin Catalog
 
-**Last Updated**: 2026-01-21
-**Total Plugins**: 17
-**Categories**: 8
+**Last Updated**: 2026-01-22
+**Total Plugins**: 25
+**Categories**: 12
 
 ---
 
@@ -132,6 +132,83 @@
 
 ---
 
+### 9. Optimization Plugins (1) ✨ NEW - Tier 2
+**Location**: `apt/apps/plugins/optimization/`
+**Description**: 性能优化插件
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `mxfp4_quantization_plugin.py` | MXFP4量化 - Microsoft-OpenAI 4位浮点格式 | ✅ Active |
+
+**Features**:
+- 4-bit floating point quantization
+- Block-wise 8-bit scaling
+- 4x inference speedup with <1% accuracy loss
+- Dynamic range support
+
+---
+
+### 10. RL Plugins (4) ✨ NEW - Tier 2
+**Location**: `apt/apps/plugins/rl/`
+**Description**: 强化学习插件 - 可选的对齐训练方法
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `rlhf_trainer_plugin.py` | RLHF训练 - 基于人类反馈的强化学习 | ✅ Active |
+| `dpo_trainer_plugin.py` | DPO训练 - 直接偏好优化 | ✅ Active |
+| `grpo_trainer_plugin.py` | GRPO训练 - 组相对策略优化 | ✅ Active |
+| `reward_model_plugin.py` | 奖励模型 - RLHF训练工具 | ✅ Active |
+
+**Features**:
+- Multiple alignment training methods (RLHF, DPO, GRPO)
+- Reward model for scoring responses
+- Value head for response evaluation
+- Preference-based training
+- Compatible with transformers and trl libraries
+
+---
+
+### 11. Protocol Plugins (1) ✨ NEW - Tier 2
+**Location**: `apt/apps/plugins/protocol/`
+**Description**: 协议集成插件 - 外部协议支持
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `mcp_integration_plugin.py` | MCP协议集成 - Model Context Protocol | ✅ Active |
+
+**Features**:
+- Async/streaming retrieval support
+- AsyncRetrievalWorker for non-blocking operations
+- StreamingRetrieverAdapter for interface compatibility
+- Integration with FAISS/Annoy/ExactCosine providers
+- Bridges GPT-5's StreamingRetriever with APT infrastructure
+
+---
+
+### 12. Retrieval Plugins (2) ✨ NEW - Tier 2
+**Location**: `apt/apps/plugins/retrieval/`
+**Description**: 检索增强插件 - 可选的RAG功能
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `rag_integration_plugin.py` | RAG集成 - 检索增强生成 | ✅ Active |
+| `kg_rag_integration_plugin.py` | KG+RAG融合 - 知识图谱+检索增强 | ✅ Active |
+
+**Features**:
+- **RAG Integration**:
+  - Wraps language models with retrieval capabilities
+  - Index building and caching
+  - Multiple retrieval providers (FAISS, Annoy, Exact)
+  - Layer-wise injection of retrieved context
+
+- **KG+RAG Integration**:
+  - Combines structured knowledge graphs with unstructured retrieval
+  - Fusion strategies (weighted, concatenation, gated)
+  - Multi-hop reasoning support
+  - Dual retrieval system
+
+---
+
 ## 🚀 Usage
 
 ### Loading Plugins
@@ -180,47 +257,60 @@ visualization:
 
 ## 📊 Plugin Statistics
 
-| Category | Count | Status |
-|----------|-------|--------|
-| Core | 3 | Stable |
-| Integration | 3 | Stable |
-| Distillation | 2 | Stable |
-| Experimental | 3 | Beta |
-| Monitoring | 2 | Stable ✨ |
-| Visualization | 1 | Stable ✨ |
-| Evaluation | 2 | Stable ✨ |
-| Infrastructure | 1 | Stable ✨ |
-| **Total** | **17** | - |
+| Category | Count | Status | Tier |
+|----------|-------|--------|------|
+| Core | 3 | Stable | Pre-existing |
+| Integration | 3 | Stable | Pre-existing |
+| Distillation | 2 | Stable | Pre-existing |
+| Experimental | 3 | Beta | Pre-existing |
+| Monitoring | 2 | Stable ✨ | Tier 1 |
+| Visualization | 1 | Stable ✨ | Tier 1 |
+| Evaluation | 2 | Stable ✨ | Tier 1 |
+| Infrastructure | 1 | Stable ✨ | Tier 1 |
+| Optimization | 1 | Stable ✨ | Tier 2 |
+| RL | 4 | Stable ✨ | Tier 2 |
+| Protocol | 1 | Stable ✨ | Tier 2 |
+| Retrieval | 2 | Stable ✨ | Tier 2 |
+| **Total** | **25** | - | - |
 
 ---
 
-## 🔮 Upcoming Plugins (Tier 2)
+## ✅ Tier 2 Complete!
+
+All Tier 2 plugins have been successfully converted:
+- ✅ Optimization (1): MXFP4 Quantization
+- ✅ RL (4): RLHF, DPO, GRPO, Reward Model
+- ✅ Protocol (1): MCP Integration
+- ✅ Retrieval (2): RAG Integration, KG+RAG Integration
+
+**Note**: APX Converter and Data Processor/Pipeline were **intentionally excluded** - they should remain as tools and core modules respectively.
+
+---
+
+## 🔮 Upcoming Plugins (Tier 3)
+
+**Tier 3** focuses on complex research features and hardware-specific optimizations:
 
 ### Planned Categories:
 
-1. **Export Plugins** (1 module)
-   - APX Converter
+1. **Hardware Emulation** (3 modules)
+   - Virtual Blackwell Stack - GPU feature simulation
+   - NPU Backend - NPU acceleration support
+   - Cloud NPU Adapter - Cloud NPU adaptation
 
-2. **Optimization Plugins** (1 module)
-   - MXFP4 Quantization
+2. **Advanced Optimization** (4 modules)
+   - GPU Flash Optimization - Triton kernel optimization
+   - Extreme Scale Training - Large-scale distributed training
+   - MicroVM Compression - Micro-VM compression
+   - vGPU Stack - Virtual GPU management
 
-3. **RL Plugins** (4 modules)
-   - RLHF Trainer
-   - DPO Trainer
-   - GRPO Trainer
-   - Reward Model
+3. **Knowledge Systems** (4 modules)
+   - AIM Memory System - Hierarchical memory system
+   - GraphRAG System - Graph retrieval system
+   - Knowledge Graph - Knowledge graph management
+   - External Data Loader - External data loading
 
-4. **Data Plugins** (2 modules)
-   - Data Processor
-   - Data Pipeline
-
-5. **Protocol Plugins** (1 module)
-   - MCP Integration
-
-6. **Retrieval Plugins** (1 module)
-   - RAG Integration
-
-**Total Tier 2**: 10 modules
+**Note**: Tier 3 modules are complex and require careful architectural planning
 
 ---
 
