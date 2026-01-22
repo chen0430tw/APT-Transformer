@@ -76,18 +76,10 @@ TIER1_CONVERSIONS = {
 }
 
 # ========== Tier 2: 中期转换 (高价值，中等成本) ==========
+# 注意: 只转换真正应该是插件的模块
+# - APX转换器是打包工具，应保持为工具
+# - 数据处理/管道是核心功能，应保持为模块
 TIER2_CONVERSIONS = {
-    "export": {
-        "desc": "导出和转换插件",
-        "modules": [
-            {
-                "name": "apx_converter",
-                "src": "apt_model/tools/apx/converter.py",
-                "dst": "apx_export_plugin.py",
-                "reason": "APX格式导出 - 可选部署格式",
-            },
-        ],
-    },
     "optimization": {
         "desc": "性能优化插件",
         "modules": [
@@ -95,12 +87,12 @@ TIER2_CONVERSIONS = {
                 "name": "mxfp4_quantization",
                 "src": "apt/perf/optimization/mxfp4_quantization.py",
                 "dst": "mxfp4_quantization_plugin.py",
-                "reason": "MXFP4量化 - 可选优化",
+                "reason": "MXFP4量化 - 可选优化技术",
             },
         ],
     },
     "rl": {
-        "desc": "强化学习插件",
+        "desc": "强化学习插件 - 可选的对齐训练方法",
         "modules": [
             {
                 "name": "rlhf_trainer",
@@ -124,49 +116,53 @@ TIER2_CONVERSIONS = {
                 "name": "reward_model",
                 "src": "apt/apps/rl/reward_model.py",
                 "dst": "reward_model_plugin.py",
-                "reason": "奖励模型 - RL工具",
-            },
-        ],
-    },
-    "data": {
-        "desc": "数据处理插件",
-        "modules": [
-            {
-                "name": "data_processor",
-                "src": "apt/core/data/data_processor.py",
-                "dst": "data_processor_plugin.py",
-                "reason": "数据处理 - 可选增强",
-            },
-            {
-                "name": "pipeline",
-                "src": "apt/core/data/pipeline.py",
-                "dst": "data_pipeline_plugin.py",
-                "reason": "数据管道 - 工作流抽象",
+                "reason": "奖励模型 - RL训练工具",
             },
         ],
     },
     "protocol": {
-        "desc": "协议集成插件",
+        "desc": "协议集成插件 - 外部协议支持",
         "modules": [
             {
                 "name": "mcp_integration",
                 "src": "apt_model/modeling/mcp_integration.py",
                 "dst": "mcp_integration_plugin.py",
-                "reason": "MCP协议 - 外部集成",
+                "reason": "MCP协议 - 外部协议集成",
             },
         ],
     },
     "retrieval": {
-        "desc": "检索增强插件",
+        "desc": "检索增强插件 - 可选的RAG功能",
         "modules": [
             {
                 "name": "rag_integration",
                 "src": "apt_model/modeling/rag_integration.py",
                 "dst": "rag_integration_plugin.py",
-                "reason": "RAG集成 - 可选检索",
+                "reason": "RAG集成 - 可选检索增强",
+            },
+            {
+                "name": "kg_rag_integration",
+                "src": "apt_model/modeling/kg_rag_integration.py",
+                "dst": "kg_rag_integration_plugin.py",
+                "reason": "KG+RAG融合 - 可选知识图谱检索",
             },
         ],
     },
+}
+
+# ========== 不应转换为插件的模块 ==========
+# 这些应该保持为模块/工具
+NOT_PLUGINS = {
+    "tools": [
+        "apt_model/tools/apx/converter.py",  # 打包工具，不是插件
+    ],
+    "core_modules": [
+        "apt/core/data/data_processor.py",  # 核心数据处理
+        "apt/core/data/pipeline.py",  # 核心数据管道
+    ],
+    "infrastructure": [
+        # 某些基础设施应该保持在 apt/perf 或 apt/core
+    ],
 }
 
 

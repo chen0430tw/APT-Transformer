@@ -23,9 +23,11 @@
 | Tier | 描述 | 模块数 | 状态 | 完成度 |
 |------|------|-------|------|--------|
 | Tier 1 | 高价值，低成本 | 6 | ✅ Complete | 100% |
-| Tier 2 | 高价值，中成本 | 10 | 📋 Planned | 0% |
-| Tier 3 | 复杂研究特性 | 17 | 🔮 Future | 0% |
-| **Total** | - | **33** | - | **18%** |
+| Tier 2 | 高价值，中成本 | 8 | 📋 Planned | 0% |
+| Tier 3 | 复杂研究特性 | TBD | 🔮 Future | 0% |
+| **Total** | - | **14+** | - | **43%** |
+
+**注**: 从原33个候选模块中，移除了不该做插件的（工具、核心模块等）
 
 ### 插件生态增长
 
@@ -67,18 +69,11 @@ Final Target:         44 plugins across 14+ categories
 
 ---
 
-## 📋 Tier 2: 计划中 (0/10)
+## 📋 Tier 2: 计划中 (0/8)
 
-### Export Plugins (0/1)
-
-| Module | Source | Target | Priority | Estimated Effort |
-|--------|--------|--------|----------|-----------------|
-| APX Converter | `apt_model/tools/apx/converter.py` | `export/apx_export_plugin.py` | High | 4h |
-
-**依赖**: zipfile, json
-**测试需求**: APX格式验证、Modelfile生成
-
----
+**重要**: 不是所有模块都该做插件！
+- ❌ APX Converter - 这是打包**工具**，不是插件
+- ❌ Data Processor/Pipeline - 核心功能，应保持为**模块**
 
 ### Optimization Plugins (0/1)
 
@@ -105,18 +100,6 @@ Final Target:         44 plugins across 14+ categories
 
 ---
 
-### Data Plugins (0/2)
-
-| Module | Source | Target | Priority | Estimated Effort |
-|--------|--------|--------|----------|-----------------|
-| Data Processor | `apt/core/data/data_processor.py` | `data/data_processor_plugin.py` | Medium | 6h |
-| Pipeline | `apt/core/data/pipeline.py` | `data/data_pipeline_plugin.py` | Medium | 6h |
-
-**依赖**: numpy, pandas (optional)
-**测试需求**: 数据处理正确性、性能测试
-
----
-
 ### Protocol Plugins (0/1)
 
 | Module | Source | Target | Priority | Estimated Effort |
@@ -128,21 +111,23 @@ Final Target:         44 plugins across 14+ categories
 
 ---
 
-### Retrieval Plugins (0/1)
+### Retrieval Plugins (0/2)
 
 | Module | Source | Target | Priority | Estimated Effort |
 |--------|--------|--------|----------|-----------------|
 | RAG Integration | `apt_model/modeling/rag_integration.py` | `retrieval/rag_integration_plugin.py` | Medium | 8h |
+| KG+RAG Integration | `apt_model/modeling/kg_rag_integration.py` | `retrieval/kg_rag_integration_plugin.py` | Medium | 10h |
 
-**依赖**: faiss, torch
-**测试需求**: 检索质量、性能基准
+**依赖**: faiss, torch, networkx
+**测试需求**: 检索质量、融合效果、性能基准
 
 ---
 
 ### Tier 2 总计
-- **总模块数**: 10
-- **总工时估算**: 62小时
-- **优先级分布**: 6 High, 4 Medium
+- **总模块数**: 8 (修正: 从10减少到8)
+- **总工时估算**: 56小时
+- **优先级分布**: 4 High, 4 Medium
+- **移除项**: APX Converter (工具), Data Processor/Pipeline (核心模块)
 
 ---
 
@@ -331,8 +316,11 @@ checklist = {
 
 **Next Steps**:
 1. ✅ Complete Tier 1 validation
-2. 📋 Plan Tier 2 sprint (Week 1-3)
-3. 🚀 Execute Tier 2 conversion
-4. 🔮 Design Tier 3 architecture
+2. ✅ 修正Tier 2计划（移除不该做插件的模块）
+3. 📋 Review plugin vs module principles
+4. 🚀 Execute Tier 2 conversion (8 modules)
+5. 🔮 Design Tier 3 architecture
 
-**Progress**: 6/33 modules converted (18%) | 4/14+ categories created
+**Progress**: 6/14+ modules converted (43%) | 4/10+ categories created
+
+**Key Learning**: 不是所有模块都该做插件！工具保持为工具，核心模块保持为模块。
