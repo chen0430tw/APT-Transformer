@@ -66,7 +66,7 @@ def patch_apt_models(verbose: bool = True):
                     return
 
                 # 替换Linear层为VGPUStackLinear
-                from apt.perf.optimization.vgpu_stack import VGPUStackLinear
+                from apt.vgpu.runtime.vgpu_stack import VGPUStackLinear
 
                 layer_count = 0
                 for name, module in list(self.named_modules()):
@@ -121,7 +121,7 @@ def patch_apt_models(verbose: bool = True):
                     return
 
                 # 替换Linear层为VGPUStackLinear
-                from apt.perf.optimization.vgpu_stack import VGPUStackLinear
+                from apt.vgpu.runtime.vgpu_stack import VGPUStackLinear
                 import torch
 
                 layer_count = 0

@@ -20,39 +20,43 @@ from apt.perf.optimization.microvm_compression import (
     CompressedLinear
 )
 
-from apt.perf.optimization.virtual_blackwell_adapter import (
-    VirtualBlackwellAdapter,
-    create_virtual_blackwell
+# ⚠️ Virtual Blackwell已迁移到apt.vgpu域
+# 为保持向后兼容，从新位置重导出
+import warnings
+
+warnings.warn(
+    "Importing Virtual Blackwell from apt.perf.optimization is deprecated. "
+    "Please use apt.vgpu instead:\n"
+    "  OLD: from apt.perf.optimization import VirtualBlackwellAdapter\n"
+    "  NEW: from apt.vgpu.runtime import VirtualBlackwellAdapter",
+    DeprecationWarning,
+    stacklevel=2
 )
 
-# PyTorch集成模块
-from apt.perf.optimization.vb_integration import (
+from apt.vgpu.runtime import (
+    VirtualBlackwellAdapter,
+    create_virtual_blackwell,
     VBOptimizedLinear,
     VBModelWrapper,
     enable_vb_optimization,
-    TORCH_AVAILABLE as VB_TORCH_AVAILABLE
-)
-
-# VGPU堆叠技术（最新）
-from apt.perf.optimization.vgpu_stack import (
     VGPUStack,
     VGPULevel,
     VGPUStackLinear,
-    create_vgpu_stack
+    create_vgpu_stack,
 )
-
-# VGPU资源评估器
-from apt.perf.optimization.vgpu_estimator import (
+from apt.vgpu.scheduler import (
     VGPUResourceEstimator,
     ModelConfig,
     MemoryEstimate,
     VGPUConfig,
-    quick_estimate
+    quick_estimate,
 )
 
-# VGPU全局启用器（最简单的方式）
-from apt.perf.optimization import vb_global
-from apt.perf.optimization import vb_autopatch
+# 暂时保留旧导入方式（用于gradual migration）
+try:
+    from apt.vgpu.runtime.vb_integration import TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+except ImportError:
+    VB_TORCH_AVAILABLE = False
 
 # NPU/XPU/HPU后端适配器（统一多厂商加速器接口）
 from apt.perf.optimization.npu_backend import (

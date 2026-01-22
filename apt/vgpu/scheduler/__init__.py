@@ -8,8 +8,21 @@ GPU任务调度：
 - Priority management
 - Load balancing
 - Resource allocation
-
-将在PR-2中迁移
+- VGPU resource estimation
 """
 
-__all__ = []
+from apt.vgpu.scheduler.vgpu_estimator import (
+    VGPUResourceEstimator,
+    ModelConfig,
+    MemoryEstimate,
+    VGPUConfig,
+    quick_estimate,
+)
+
+__all__ = [
+    'VGPUResourceEstimator',
+    'ModelConfig',
+    'MemoryEstimate',
+    'VGPUConfig',
+    'quick_estimate',
+]

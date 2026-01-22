@@ -8,8 +8,19 @@ Distributed Training
 - FSDP (Fully Sharded Data Parallel)
 - DeepSpeed integration
 - Multi-node training utilities
-
-将在PR-3中从apt.apt_model.training迁移
+- Extreme scale training (100K+ GPUs)
 """
 
-__all__ = []
+from apt.trainops.distributed.extreme_scale_training import (
+    ExtremeScaleTrainer,
+    ParallelismConfig,
+    NetworkTopology,
+    create_extreme_scale_trainer,
+)
+
+__all__ = [
+    'ExtremeScaleTrainer',
+    'ParallelismConfig',
+    'NetworkTopology',
+    'create_extreme_scale_trainer',
+]

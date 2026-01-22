@@ -25,5 +25,29 @@ Virtual Blackwell特性：
 
 __version__ = '2.0.0-alpha'
 
-# 此模块将在PR-2中从现有虚拟GPU实现迁移内容
-__all__ = []
+# 主要模块导出
+from apt.vgpu.runtime import (
+    VirtualBlackwellAdapter,
+    create_virtual_blackwell,
+    VGPUStack,
+    create_vgpu_stack,
+    VBOptimizedLinear,
+    enable_vb_optimization,
+)
+from apt.vgpu.scheduler import (
+    VGPUResourceEstimator,
+    quick_estimate,
+)
+
+__all__ = [
+    # Runtime
+    'VirtualBlackwellAdapter',
+    'create_virtual_blackwell',
+    'VGPUStack',
+    'create_vgpu_stack',
+    'VBOptimizedLinear',
+    'enable_vb_optimization',
+    # Scheduler
+    'VGPUResourceEstimator',
+    'quick_estimate',
+]

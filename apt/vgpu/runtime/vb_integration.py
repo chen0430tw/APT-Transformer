@@ -15,7 +15,7 @@ except ImportError:
 
 if TORCH_AVAILABLE:
     from typing import Optional, Dict
-    from apt.perf.optimization.virtual_blackwell_adapter import create_virtual_blackwell
+    from apt.vgpu.runtime.virtual_blackwell_adapter import create_virtual_blackwell
 
 
     class VBOptimizedLinear(nn.Module):

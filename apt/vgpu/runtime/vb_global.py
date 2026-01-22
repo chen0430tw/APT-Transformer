@@ -24,8 +24,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 虚拟Blackwell组件
-from apt.perf.optimization.vgpu_stack import VGPUStack, create_vgpu_stack
-from apt.perf.optimization.vgpu_estimator import VGPUResourceEstimator, ModelConfig
+from apt.vgpu.runtime.vgpu_stack import VGPUStack, create_vgpu_stack
+from apt.vgpu.scheduler.vgpu_estimator import VGPUResourceEstimator, ModelConfig
 from apt.perf.optimization.npu_backend import (
     get_accelerator_type,
     is_cuda_available,
@@ -175,7 +175,7 @@ def enable(use_fp4: bool = False,
 
     # 创建VGPU Stack
     if vgpu_config:
-        from apt.perf.optimization.vgpu_stack import VGPUStack
+        from apt.vgpu.runtime.vgpu_stack import VGPUStack
         _vb_stack = VGPUStack(vgpu_config)
     else:
         _vb_stack = create_vgpu_stack()
