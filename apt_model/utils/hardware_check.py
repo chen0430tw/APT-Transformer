@@ -12,8 +12,15 @@ import platform
 import logging
 from typing import Dict, List, Any, Optional, Tuple, Union
 
-import torch
-import numpy as np
+# 使用fake torch模块，当真实torch未安装时提供基本接口
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+
+# numpy使用try-except
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 # 尝试导入 psutil (CPU/内存检测)
 try:
@@ -140,11 +147,10 @@ def estimate_gpu_performance(gpu_name: str) -> float:
 def get_cuda_device_properties():
     """
     Get CUDA device properties for all available GPUs.
-    
+
     Returns:
         List of dicts containing GPU properties
     """
-    import torch
     if not torch.cuda.is_available():
         return []
     
@@ -173,7 +179,7 @@ def get_cuda_device_properties():
 def get_hardware_profile() -> Dict[str, Union[str, int, float, List]]:
     """
     Get detailed hardware profile information.
-    
+
     Returns:
         Dict: Hardware profile information
     """
@@ -681,7 +687,7 @@ class TrainingTimeEstimator:
     def __init__(self, model_config, dataset_size, batch_size, epochs, logger=None):
         """
         Initialize the training time estimator.
-        
+
         Args:
             model_config: Model configuration object
             dataset_size (int): Number of samples in the dataset
@@ -694,7 +700,7 @@ class TrainingTimeEstimator:
         self.dataset_size = dataset_size
         self.batch_size = batch_size
         self.epochs = epochs
-        
+
         # Detect hardware configuration
         self.gpu_available = torch.cuda.is_available()
         self.gpu_count = torch.cuda.device_count() if self.gpu_available else 0
@@ -703,7 +709,7 @@ class TrainingTimeEstimator:
             torch.cuda.get_device_properties(0).total_memory / (1024**3)
             if self.gpu_available and self.gpu_count > 0 else 0
         )
-        
+
         # Estimate GPU performance (TFLOPS)
         self.estimated_tflops = self._estimate_gpu_performance()
     

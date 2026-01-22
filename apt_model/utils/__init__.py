@@ -12,38 +12,69 @@ APT Model (自生成变换器) Utils Module
 
 # ============================================================================
 # 从core模块导入（向后兼容）
+# 使用try-except避免在缺少torch等依赖时导入失败
 # ============================================================================
-from apt_model.core.system import (
-    set_seed,
-    get_device,
-    memory_cleanup,
-    device,
-    SystemInitializer,
-    _initialize_common,
-)
+try:
+    from apt_model.core.system import (
+        set_seed,
+        get_device,
+        memory_cleanup,
+        device,
+        SystemInitializer,
+        _initialize_common,
+    )
+except ImportError:
+    # 如果torch等依赖缺失，提供占位符
+    set_seed = None
+    get_device = None
+    memory_cleanup = None
+    device = None
+    SystemInitializer = None
+    _initialize_common = None
 
-from apt_model.core.hardware import (
-    check_hardware_compatibility,
-    get_hardware_profile,
-    HardwareProfiler,
-)
+try:
+    from apt_model.core.hardware import (
+        check_hardware_compatibility,
+        get_hardware_profile,
+        HardwareProfiler,
+    )
+except ImportError:
+    check_hardware_compatibility = None
+    get_hardware_profile = None
+    HardwareProfiler = None
 
-from apt_model.core.resources import (
-    ResourceMonitor,
-    CacheManager,
-)
+try:
+    from apt_model.core.resources import (
+        ResourceMonitor,
+        CacheManager,
+    )
+except ImportError:
+    ResourceMonitor = None
+    CacheManager = None
 
 # ============================================================================
 # 从infrastructure模块导入（向后兼容）
 # ============================================================================
-from apt_model.infrastructure.logging import setup_logging
-from apt_model.infrastructure.errors import ErrorHandler
+try:
+    from apt_model.infrastructure.logging import setup_logging
+except ImportError:
+    setup_logging = None
+
+try:
+    from apt_model.infrastructure.errors import ErrorHandler
+except ImportError:
+    ErrorHandler = None
 
 # ============================================================================
 # 保留的utils模块
 # ============================================================================
-from .language_manager import LanguageManager
-from .hardware_check import check_hardware_compatibility
+try:
+    from .language_manager import LanguageManager
+except ImportError:
+    LanguageManager = None
+
+# 注意：check_hardware_compatibility 已从 apt_model.core.hardware 导入
+# 这里不需要重复从 hardware_check 导入
 # Optional utilities that rely on heavy visualization dependencies may not be
 # available in lightweight environments. Import them lazily so the rest of the
 # training stack can function without matplotlib/plotly.
