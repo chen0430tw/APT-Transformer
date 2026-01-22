@@ -427,7 +427,7 @@ def prepare_hlbd_tokenizer(hlbd_samples_or_path, vocab_size: int = 50000, extra_
     
     # 使用已实现的SentencePiece集成
     try:
-        from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+        from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
         
         logger.info("使用SentencePiece创建多语言分词器")
         

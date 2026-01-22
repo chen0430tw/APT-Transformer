@@ -11,8 +11,8 @@ import torch
 import torch.nn as nn
 from typing import List
 
-from apt.core.modeling.gpt5_model import GPT5Model
-from apt.core.modeling.mcp_integration import (
+from apt_model.modeling.gpt5_model import GPT5Model
+from apt_model.modeling.mcp_integration import (
     create_mcp_retriever,
     upgrade_gpt5_with_mcp,
     MCPConfig
@@ -205,7 +205,7 @@ def demo_custom_config():
     print(f"  Cache: {config.enable_cache} (size={config.cache_size})")
 
     # Create retriever with custom config
-    from apt.core.modeling.mcp_integration import MCPRetriever
+    from apt_model.modeling.mcp_integration import MCPRetriever
 
     corpus = ["Doc 1", "Doc 2", "Doc 3"]
     retriever = MCPRetriever(config)

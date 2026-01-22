@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple, Union, Iterable
 
 from transformers import GPT2Tokenizer, PreTrainedTokenizer
-from apt.core.modeling.chinese_tokenizer import ChineseTokenizer
+from apt_model.modeling.chinese_tokenizer import ChineseTokenizer
 
 def integrate_chinese_tokenizer(*args, **kwargs) -> PreTrainedTokenizer:
     """

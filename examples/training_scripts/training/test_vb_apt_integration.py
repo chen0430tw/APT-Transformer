@@ -18,7 +18,7 @@ import time
 from typing import Dict
 
 # APT模型
-from apt.core.modeling.apt_model import (
+from apt_model.modeling.apt_model import (
     APTModel,
     APTLargeModel,
     APTModelConfiguration

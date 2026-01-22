@@ -50,7 +50,7 @@ def load_model(path, device=None):
     """
     from transformers import GPT2Tokenizer
     from apt.core.config.apt_config import APTConfig
-    from apt.core.modeling.apt_model import APTLargeModel
+    from apt_model.modeling.apt_model import APTLargeModel
     from apt_model.utils import get_device
 
     if device is None:
@@ -71,7 +71,7 @@ def _load_directory_checkpoint(path, device):
     """加载目录格式的模型"""
     from transformers import GPT2Tokenizer
     from apt.core.config.apt_config import APTConfig
-    from apt.core.modeling.apt_model import APTLargeModel
+    from apt_model.modeling.apt_model import APTLargeModel
 
     # 加载配置
     config_path = os.path.join(path, "config.json")
@@ -100,7 +100,7 @@ def _load_directory_checkpoint(path, device):
 
 def _load_single_file_checkpoint(path, device):
     """加载单文件 checkpoint (HLBD 格式)"""
-    from apt.core.modeling.apt_model import APTModel, APTModelConfiguration
+    from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
 
     # 加载 checkpoint
     checkpoint = torch.load(path, map_location=device)

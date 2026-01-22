@@ -86,7 +86,7 @@ def test_dbc_integration():
         plugin_code = f.read()
 
     # 检查是否导入了DBC相关类
-    if "from apt.core.modeling.apt_model import DBCDAC_Optimizer" in plugin_code:
+    if "from apt_model.modeling.apt_model import DBCDAC_Optimizer" in plugin_code:
         print("✅ 压缩插件导入 DBCDAC_Optimizer")
     else:
         print("❌ 压缩插件未导入 DBCDAC_Optimizer")

@@ -37,7 +37,7 @@ from typing import Dict, Optional
 import os
 
 # APT模型
-from apt.core.modeling.apt_model import (
+from apt_model.modeling.apt_model import (
     APTLargeModel,
     APTModelConfiguration
 )

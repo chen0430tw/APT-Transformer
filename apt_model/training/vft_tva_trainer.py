@@ -17,8 +17,8 @@ from typing import Optional, Dict, List, Any
 from tqdm import tqdm
 import os
 
-from apt.core.modeling.vft_tva_model import VFTTVAModel, create_vft_tva_model
-from apt.core.training.training_guard import TrainingGuard, EarlyStopping
+from apt_model.modeling.vft_tva_model import VFTTVAModel, create_vft_tva_model
+from apt_model.training.training_guard import TrainingGuard, EarlyStopping
 
 
 class VFTTVADataset(Dataset):

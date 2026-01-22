@@ -15,7 +15,7 @@ from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 
 from apt.core.base_provider import BaseProvider
-from apt.core.modeling.knowledge_graph import KnowledgeGraph, Triple
+from apt_model.modeling.knowledge_graph import KnowledgeGraph, Triple
 
 
 class KGRetriever(nn.Module):

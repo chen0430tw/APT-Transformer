@@ -19,7 +19,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.insert(0, project_root)
 
-from apt.core.modeling.apt_model import (
+from apt_model.modeling.apt_model import (
     APTModel,
     APTModelConfiguration,
     DBCDAC_Optimizer,

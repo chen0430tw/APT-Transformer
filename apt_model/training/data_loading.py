@@ -10,9 +10,13 @@ import json
 import random
 from typing import List, Dict, Tuple, Optional, Union, Callable
 
-import torch
-from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+Dataset = torch.utils.data.Dataset
+DataLoader = torch.utils.data.DataLoader
+pad_sequence = torch.nn.utils.rnn.pad_sequence
 import numpy as np
 from tqdm import tqdm
 

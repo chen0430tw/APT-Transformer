@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from typing import Dict, List
 
-from apt.core.modeling.claude4_model import (
+from apt_model.modeling.claude4_model import (
     Claude4Model,
     GraphConnectivityAnalyzer,
     ShortestPathReflection,

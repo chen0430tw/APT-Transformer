@@ -4,7 +4,7 @@ from apt_model.utils.fake_torch import get_torch
 torch = get_torch()
 def register_dbc_dac_hooks(model) -> list:
     try:
-        from apt.core.modeling.apt_model import DBCDAC_Optimizer, create_gradient_stabilizer_hook
+        from apt_model.modeling.apt_model import DBCDAC_Optimizer, create_gradient_stabilizer_hook
     except Exception:
         return []
     opt = DBCDAC_Optimizer()

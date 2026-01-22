@@ -24,7 +24,7 @@ from typing import Optional, Tuple, Dict, List
 from collections import deque
 
 # 导入 GPT-4o 的组件
-from apt.core.modeling.gpt4o_model import (
+from apt_model.modeling.gpt4o_model import (
     DynamicTau,
     VeinSubspaceShared,
     FastPathScheduler,

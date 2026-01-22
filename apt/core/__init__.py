@@ -57,17 +57,17 @@ except ImportError:
 # Core Models (从迁移的 modeling/ 导入)
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.modeling.apt_model import APTLargeModel as APTModel
+    from apt_model.modeling.apt_model import APTLargeModel as APTModel
 except ImportError:
     APTModel = None
 
 try:
-    from apt.core.modeling.multimodal_model import MultimodalAPTModel
+    from apt_model.modeling.multimodal_model import MultimodalAPTModel
 except ImportError:
     MultimodalAPTModel = None
 
 try:
-    from apt.core.modeling.embeddings import APTEmbedding
+    from apt_model.modeling.embeddings import APTEmbedding
 except ImportError:
     APTEmbedding = None
 
@@ -75,7 +75,7 @@ except ImportError:
 # Training System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.training.trainer import train_model
+    from apt_model.training.trainer import train_model
 except ImportError:
     train_model = None
 

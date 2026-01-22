@@ -113,7 +113,7 @@ class WebUIState:
             return False, "PyTorch not available"
 
         try:
-            from apt.core.modeling.apt_model import APTLargeModel, APTConfig
+            from apt_model.modeling.apt_model import APTLargeModel, APTConfig
 
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
 

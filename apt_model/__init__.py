@@ -75,12 +75,12 @@ def __getattr__(name):
         return _MultimodalConfig
 
     if name == "APTLargeModel":
-        from apt.core.modeling.apt_model import APTLargeModel as _APTLargeModel
+        from apt_model.modeling.apt_model import APTLargeModel as _APTLargeModel
 
         return _APTLargeModel
 
     if name == "MultimodalAPTModel":
-        from apt.core.modeling.multimodal_model import (
+        from apt_model.modeling.multimodal_model import (
             MultimodalAPTModel as _MultimodalAPTModel,
         )
 
@@ -88,7 +88,7 @@ def __getattr__(name):
 
     if name == "train_model":
         try:
-            from apt.core.training.trainer import train_model as _train_model
+            from apt_model.training.trainer import train_model as _train_model
         except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
             raise ImportError(
                 "train_model requires optional training dependencies to be installed"

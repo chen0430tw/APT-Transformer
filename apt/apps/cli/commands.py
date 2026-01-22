@@ -80,7 +80,7 @@ def _get_tokenizer_with_detection(texts, args):
     """
     from apt_model.codecs import get_codec_for_language
     from apt_model.codecs.compat import CodecTokenizerWrapper
-    from apt.core.modeling.chinese_tokenizer_integration import detect_language
+    from apt_model.modeling.chinese_tokenizer_integration import detect_language
 
     # 自动检测语言
     detected_language = args.model_language or detect_language(texts)
@@ -95,7 +95,7 @@ def _get_tokenizer_with_detection(texts, args):
         print(f"Codec系统失败，回退到旧分词器: {e}")
 
     # 回退到旧系统
-    from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+    from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
     return get_appropriate_tokenizer(
         texts,
         tokenizer_type=args.tokenizer_type,
@@ -197,7 +197,7 @@ def run_train_custom_command(args):
             except FileNotFoundError:
                 logger.warning(f"未找到数据文件: {args.data_path}，将使用预设训练数据")
                 print(f"未找到数据文件: {args.data_path}，将使用预设训练数据")
-                from apt.core.training.trainer import get_training_texts
+                from apt_model.training.trainer import get_training_texts
                 custom_texts = get_training_texts()
                 print(f"使用预设数据，共 {len(custom_texts)} 条文本")
 
@@ -363,7 +363,7 @@ def run_visualize_command(args):
         model = None
         try:
             print(f"尝试加载模型: {model_path}")
-            from apt.core.training.checkpoint import load_model
+            from apt_model.training.checkpoint import load_model
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"模型路径不存在: {model_path}")
             model, tokenizer, config = load_model(model_path)
@@ -1148,7 +1148,7 @@ def run_size_command(args):
             # 尝试加载模型并计算参数量
             try:
                 import torch
-                from apt.core.modeling.apt_model import APTModel
+                from apt_model.modeling.apt_model import APTModel
                 from apt.core.config.apt_config import APTConfig
 
                 # 检查是否是APT模型目录
@@ -1363,9 +1363,9 @@ def run_test_command(args):
 
         # 加载模型
         print("\n正在加载模型...")
-        from apt.core.modeling.apt_model import APTModel
+        from apt_model.modeling.apt_model import APTModel
         from apt.core.config.apt_config import APTConfig
-        from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+        from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
 
         # 加载配置
         config = APTConfig.from_pretrained(model_path)
@@ -1684,7 +1684,7 @@ def run_distill_command(args):
     try:
         from apt_model.plugins.visual_distillation_plugin import VisualDistillationPlugin
         from apt_model.plugins.teacher_api import TeacherAPIPlugin
-        from apt.core.training.trainer import train_model
+        from apt_model.training.trainer import train_model
         from apt.core.data.external_data import load_external_data
 
         # 配置蒸馏参数
@@ -1758,8 +1758,8 @@ def run_train_reasoning_command(args):
 
     try:
         # Import reasoning training
-        from apt.core.training.train_reasoning import train_reasoning_model, load_reasoning_dataset
-        from apt.core.modeling.gpt4o_model import VeinSubspaceShared
+        from apt_model.training.train_reasoning import train_reasoning_model, load_reasoning_dataset
+        from apt_model.modeling.gpt4o_model import VeinSubspaceShared
 
         # Load base model (placeholder - should load actual model)
         logger.info("加载基础模型...")
@@ -2287,7 +2287,7 @@ def run_fine_tune_command(args):
     _start_monitor(resource_monitor)
 
     try:
-        from apt.core.training.finetuner import fine_tune_model
+        from apt_model.training.finetuner import fine_tune_model
 
         # 检查模型路径
         if not os.path.exists(args.model_path):
@@ -2573,7 +2573,7 @@ def debug_model_architecture(args):
         print(f"  加载模型配置...")
 
         from apt.core.config.apt_config import APTConfig
-        from apt.core.modeling.apt_model import APTModel
+        from apt_model.modeling.apt_model import APTModel
 
         # 创建测试配置
         config = APTConfig(
@@ -2670,7 +2670,7 @@ def debug_tokenizer(args):
     try:
         print(f"  测试分词器...")
 
-        from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+        from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
 
         test_texts = ["人工智能", "深度学习", "自然语言处理"]
 

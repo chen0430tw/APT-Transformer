@@ -14,7 +14,7 @@ Training Events System - 为WebUI和监控系统预留接口
 
 使用示例：
     # 在训练器中发射事件
-    from apt.core.training.training_events import training_emitter
+    from apt_model.training.training_events import training_emitter
 
     training_emitter.emit('epoch_start', epoch=1, total_epochs=10)
     training_emitter.emit('batch_end', batch_idx=100, loss=2.5, lr=0.0001)

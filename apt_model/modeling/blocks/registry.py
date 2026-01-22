@@ -8,7 +8,9 @@ Allows runtime selection via config: --attn.impl tva --ffn.impl vft
 """
 
 from typing import Dict, Callable, Any, Optional
-import torch.nn as nn
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 
 
 # ============================================================================
@@ -161,7 +163,7 @@ def register_standard_blocks():
     """Register standard attention and FFN implementations."""
 
     # Import here to avoid circular dependency
-    from apt.core.modeling.blocks.vft_tva import TVAAttention, VFTFeedForward
+    from apt_model.modeling.blocks.vft_tva import TVAAttention, VFTFeedForward
 
     # Register TVA variants
     register_attn("tva")(TVAAttention)
@@ -199,7 +201,6 @@ def register_standard_blocks():
             v = self.v_proj(x).view(B, T, self.n_heads, self.d_head).transpose(1, 2)
 
             import math
-            import torch
             scale = 1.0 / math.sqrt(self.d_head)
             scores = torch.matmul(q, k.transpose(-2, -1)) * scale
             if attn_mask is not None:

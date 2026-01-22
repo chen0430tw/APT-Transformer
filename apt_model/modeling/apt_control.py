@@ -9,7 +9,7 @@ APT Non-Autopoietic Control Version
 - 研究autopoietic attention的贡献度
 
 使用方法：
-    from apt.core.modeling.apt_control import create_control_model, create_autopoietic_model
+    from apt_model.modeling.apt_control import create_control_model, create_autopoietic_model
 
     # 创建对照组模型 (无自生成机制)
     control_model = create_control_model(vocab_size=2000, d_model=512)

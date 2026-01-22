@@ -556,7 +556,7 @@ teacher = create_api_teacher_model(
 )
 
 # 场景2: RAG增强 (将来支持)
-from apt.core.modeling.kg_rag_integration import KGRAGWrapper
+from apt_model.modeling.kg_rag_integration import KGRAGWrapper
 
 rag = KGRAGWrapper(
     base_model=model,
@@ -566,7 +566,7 @@ rag = KGRAGWrapper(
 )
 
 # 场景3: 知识图谱构建 (将来支持)
-from apt.core.modeling.knowledge_graph import KnowledgeGraph
+from apt_model.modeling.knowledge_graph import KnowledgeGraph
 
 kg = KnowledgeGraph()
 kg.build_from_text_with_api(

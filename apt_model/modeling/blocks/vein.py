@@ -7,8 +7,11 @@ Low-rank subspace projection for VFT/TVA architecture.
 Based on the original vft_tva.py implementation.
 """
 
-import torch
-import torch.nn as nn
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 
 
 class VeinProjector(nn.Module):

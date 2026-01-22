@@ -1098,7 +1098,7 @@ def evaluate_model(model_path: str,
             logger.info("强制使用CPU进行评估")
         
         # 加载模型
-        from apt.core.training.checkpoint import load_model
+        from apt_model.training.checkpoint import load_model
         model, tokenizer, config = load_model(model_path, device=device)
         model.eval()
         

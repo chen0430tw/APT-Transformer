@@ -22,7 +22,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.insert(0, project_root)
 
-from apt.core.modeling.apt_model import DBCDAC_Optimizer
+from apt_model.modeling.apt_model import DBCDAC_Optimizer
 
 
 def svd_low_rank_approx(A: torch.Tensor, rank_ratio: float) -> Tuple[torch.Tensor, float]:

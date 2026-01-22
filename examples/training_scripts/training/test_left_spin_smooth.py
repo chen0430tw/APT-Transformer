@@ -24,12 +24,12 @@ import os
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from apt.core.modeling.left_spin_smooth import (
+from apt_model.modeling.left_spin_smooth import (
     LeftSpinStep,
     LeftSpinResidual,
     LeftSpinMonitor
 )
-from apt.core.modeling.apt_model import (
+from apt_model.modeling.apt_model import (
     APTModel,
     APTModelConfiguration
 )

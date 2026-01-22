@@ -180,7 +180,7 @@ import mlflow
 import mlflow.pytorch
 
 # 导入APT模型
-from apt.core.modeling.apt_model import APTModel, APTModelConfiguration
+from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
 from train_hlbd_playground import DynamicTagTokenizer, HLBDPlaygroundDataset, collate_fn
 
 
