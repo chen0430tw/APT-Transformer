@@ -9,11 +9,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, Union, List
-from apt_model.modeling.apt_model import APTLargeModel
+from apt.core.modeling.apt_model import APTLargeModel
 from apt_model.config.multimodal_config import MultimodalConfig
-from apt_model.modeling.encoders.vision_encoder import VisionEncoder
-from apt_model.modeling.encoders.audio_encoder import AudioEncoder
-from apt_model.modeling.encoders.cross_modal_attention import (
+from apt.core.modeling.encoders.vision_encoder import VisionEncoder
+from apt.core.modeling.encoders.audio_encoder import AudioEncoder
+from apt.core.modeling.encoders.cross_modal_attention import (
     CrossModalAttention,
     BiDirectionalCrossAttention,
     MultiModalFusionLayer,

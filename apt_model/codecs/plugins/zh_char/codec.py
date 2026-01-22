@@ -13,7 +13,7 @@ import logging
 
 from apt.core.codecs import Codec, CodecConfig
 from apt.core.codecs.unicode_norm import nfc
-from apt_model.modeling.chinese_tokenizer import ChineseTokenizer
+from apt.core.modeling.chinese_tokenizer import ChineseTokenizer
 
 logger = logging.getLogger(__name__)
 

@@ -6,9 +6,12 @@ Halting Mechanisms for Reasoning
 Provides learned halting signals for adaptive computation in reasoning loops.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
+F = torch.nn.functional
 from typing import Optional, Dict, Any
 
 

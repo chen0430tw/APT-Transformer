@@ -31,7 +31,7 @@ def diagnose_tokenizer():
     # 2. 测试分词器初始化
     print("\n2. 初始化分词器...")
     
-    from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+    from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
     
     try:
         tokenizer, lang = get_appropriate_tokenizer(

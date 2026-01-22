@@ -7,8 +7,11 @@ Implements one step of structured reasoning using vein subspace projection,
 expert routing, and learned halting.
 """
 
-import torch
-import torch.nn as nn
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 from typing import Optional, Dict, Any
 
 from apt_model.runtime.decoder.routing import MoELayer, ExpertRouter, MiniExpert

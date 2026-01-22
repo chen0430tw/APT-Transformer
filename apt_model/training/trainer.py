@@ -15,14 +15,14 @@ from torch.utils.data import Dataset, DataLoader
 from apt_model.utils import set_seed
 from apt_model.utils import get_device, device
 from apt_model.config.apt_config import APTConfig
-from apt_model.modeling.apt_model import APTModel, APTLargeModel
+from apt.core.modeling.apt_model import APTModel, APTLargeModel
 from apt_model.generation.generator import generate_natural_text
 from apt_model.generation.evaluator import evaluate_text_quality
 from apt_model.config.settings_manager import settings
-from apt_model.training.training_guard import TrainingGuard, EarlyStopping
+from apt.core.training.training_guard import TrainingGuard, EarlyStopping
 
 # 导入中文分词器相关函数
-from apt_model.modeling.chinese_tokenizer_integration import (
+from apt.core.modeling.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,
     is_chinese_text
@@ -326,7 +326,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     #print("================================")
 
     # 优化器和学习率调度器设置
-    from apt_model.training.optimizer import create_optimizer_and_scheduler
+    from apt.core.training.optimizer import create_optimizer_and_scheduler
     optimizer, scheduler = create_optimizer_and_scheduler(
         model, learning_rate, len(dataloader), epochs
     )
@@ -366,7 +366,7 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
         debug_print("未安装tensorboard，将不使用tensorboard记录训练过程")
     
     # 保存函数
-    from apt_model.training.checkpoint import save_model
+    from apt.core.training.checkpoint import save_model
     
     # 保存训练前的模型用于比较
     untrained_model = APTLargeModel(config).to(device)

@@ -49,9 +49,9 @@ from apt_model.data.hlbd.hlbd_adapter import (
 from apt_model.evaluation import UnifiedEvaluator
 
 # 模型和训练模块
-from apt_model.modeling.apt_model import APTModel
-from apt_model.training.checkpoint import CheckpointManager
-from apt_model.training.optimizer import create_optimizer_and_scheduler
+from apt.core.modeling.apt_model import APTModel
+from apt.core.training.checkpoint import CheckpointManager
+from apt.core.training.optimizer import create_optimizer_and_scheduler
 
 # Config模块 - 使用新的APTConfig
 try:

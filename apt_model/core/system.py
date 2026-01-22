@@ -21,7 +21,8 @@ from datetime import datetime
 from typing import Tuple, Optional
 import logging
 
-import torch
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
 import numpy as np
 
 

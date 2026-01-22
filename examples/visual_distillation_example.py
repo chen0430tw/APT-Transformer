@@ -215,7 +215,7 @@ def example_training_integration():
     code_example = '''
 # 完整训练流程示例
 
-from apt_model.training.checkpoint import load_model
+from apt.core.training.checkpoint import load_model
 from apt_model.plugins.visual_distillation_plugin import quick_visual_distill
 
 # 1. 加载教师模型（大模型）

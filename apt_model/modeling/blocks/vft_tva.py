@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from apt_model.modeling.blocks.vein import VeinProjector
+from apt.core.modeling.blocks.vein import VeinProjector
 
 
 # --------------------------- utilities ---------------------------

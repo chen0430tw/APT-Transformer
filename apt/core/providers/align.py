@@ -8,8 +8,11 @@ Defines the interface for bistate alignment implementations.
 
 from abc import abstractmethod
 from typing import Dict, Any, Optional, Tuple
-import torch
-import torch.nn as nn
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 
 from apt.core.registry import Provider
 

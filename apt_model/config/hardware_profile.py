@@ -1,6 +1,7 @@
 ### `apt_model/config/hardware_profile.py`
 from dataclasses import dataclass
-import torch
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
 
 try:
     import psutil

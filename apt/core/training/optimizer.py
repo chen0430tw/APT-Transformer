@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """Optimizer and learning rate scheduler for APT model"""
 
-import torch
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
 from transformers import get_cosine_schedule_with_warmup
 
 def create_optimizer_and_scheduler(model, learning_rate, steps_per_epoch, epochs):

@@ -48,7 +48,7 @@ except ImportError as e:
 
 # 新增：GPU优化MoE
 try:
-    from apt_model.modeling.moe_optimized import (
+    from apt.core.modeling.moe_optimized import (
         MoELayerOptimized,
         MoELayerFast,
         MoEConfig
@@ -143,7 +143,7 @@ def enable(use_fp4: bool = False,
         >>> vb.enable_extreme_scale_mode(total_gpus=100000)
         >>>
         >>> # 之后所有APT模型都会自动优化
-        >>> from apt_model.modeling.apt_model import APTLargeModel
+        >>> from apt.core.modeling.apt_model import APTLargeModel
         >>> model = APTLargeModel(config)  # 自动应用VGPU优化
     """
     global _vb_enabled, _vb_stack, _vb_config, _extreme_scale_trainer
@@ -599,7 +599,7 @@ if __name__ == "__main__":
     print("vb.enable(use_fp4=True, use_flash_attn=True)")
     print("")
     print("# 之后所有APT模型都会自动优化")
-    print("from apt_model.modeling.apt_model import APTLargeModel")
+    print("from apt.core.modeling.apt_model import APTLargeModel")
     print("model = APTLargeModel(config)  # 自动应用VGPU优化")
     print("")
     print("# 查看统计")

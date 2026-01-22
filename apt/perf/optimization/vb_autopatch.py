@@ -12,7 +12,7 @@
     import apt_model.optimization.vb_autopatch  # 自动patch
 
     # 之后所有APTModel/APTLargeModel都会自动优化
-    from apt_model.modeling.apt_model import APTLargeModel
+    from apt.core.modeling.apt_model import APTLargeModel
     model = APTLargeModel(config)  # 已经是VGPU优化版本
 """
 
@@ -41,7 +41,7 @@ def patch_apt_models(verbose: bool = True):
 
     try:
         # 导入原始类
-        from apt_model.modeling.apt_model import APTModel, APTLargeModel
+        from apt.core.modeling.apt_model import APTModel, APTLargeModel
         from apt_model.optimization import vb_global
 
         # 保存原始类
@@ -161,7 +161,7 @@ def patch_apt_models(verbose: bool = True):
                     print(f"✓ 自动优化模型: {layer_count} 个线性层")
 
         # 替换模块中的类
-        import apt_model.modeling.apt_model as apt_module
+        import apt.core.modeling.apt_model as apt_module
         apt_module.APTModel = VBAPTModel
         apt_module.APTLargeModel = VBAPTLargeModel
 
@@ -197,7 +197,7 @@ def unpatch_apt_models(verbose: bool = True):
 
     try:
         # 恢复原始类
-        import apt_model.modeling.apt_model as apt_module
+        import apt.core.modeling.apt_model as apt_module
         apt_module.APTModel = _original_classes['APTModel']
         apt_module.APTLargeModel = _original_classes['APTLargeModel']
 
@@ -244,6 +244,6 @@ if __name__ == "__main__":
     print("# export ENABLE_VIRTUAL_BLACKWELL=1")
     print("")
     print("# 之后所有APT模型都会自动优化")
-    print("from apt_model.modeling.apt_model import APTLargeModel")
+    print("from apt.core.modeling.apt_model import APTLargeModel")
     print("model = APTLargeModel(config)  # 已自动应用VGPU优化")
     print("```")

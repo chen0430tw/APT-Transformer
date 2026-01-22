@@ -5,10 +5,14 @@
 统一 MultimodalDataset 和各训练器的接口
 """
 
-import torch
-import torch.nn as nn
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 from typing import Dict, Optional, Any, List
-from torch.utils.data import Dataset, DataLoader
+Dataset = torch.utils.data.Dataset
+DataLoader = torch.utils.data.DataLoader
 
 
 class MultimodalDataAdapter(Dataset):

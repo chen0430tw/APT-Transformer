@@ -5,7 +5,7 @@ Test script for VFT/TVA module
 """
 
 import torch
-from apt_model.modeling.blocks import (
+from apt.core.modeling.blocks import (
     VeinProjector,
     TVAAttention,
     VFTFeedForward,

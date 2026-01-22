@@ -15,8 +15,12 @@ import re
 import traceback
 from typing import List, Dict, Tuple, Optional, Union, Any
 
-import torch
-from torch.utils.data import Dataset, DataLoader
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+Dataset = torch.utils.data.Dataset
+DataLoader = torch.utils.data.DataLoader
 
 # 设置日志记录器
 logger = logging.getLogger("apt_model.hlbd")
@@ -423,7 +427,7 @@ def prepare_hlbd_tokenizer(hlbd_samples_or_path, vocab_size: int = 50000, extra_
     
     # 使用已实现的SentencePiece集成
     try:
-        from apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+        from apt.core.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
         
         logger.info("使用SentencePiece创建多语言分词器")
         

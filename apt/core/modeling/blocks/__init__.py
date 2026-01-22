@@ -6,12 +6,12 @@ VFT/TVA Blocks Module
 Refactored VFT/TVA implementation from original vft_tva.py.
 """
 
-from apt_model.modeling.blocks.vein import (
+from apt.core.modeling.blocks.vein import (
     VeinProjector,
     VeinSubspaceShared,  # Alias for backward compatibility
 )
 
-from apt_model.modeling.blocks.vft_tva import (
+from apt.core.modeling.blocks.vft_tva import (
     TVAAttention,
     VFTFeedForward,
     NormalCompensator,

@@ -27,8 +27,8 @@ import json
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from apt_model.training.trainer import train_model
-from apt_model.training.checkpoint import CheckpointManager, save_model, load_model
+from apt.core.training.trainer import train_model
+from apt.core.training.checkpoint import CheckpointManager, save_model, load_model
 from apt_model.config.apt_config import APTConfig
 
 
@@ -541,7 +541,7 @@ class TestDistributedReadiness:
             mgr = CheckpointManager(save_dir=temp_dir / "outputs")
 
             # 创建新模型实例
-            from apt_model.modeling.apt_model import APTLargeModel
+            from apt.core.modeling.apt_model import APTLargeModel
             new_model = APTLargeModel(config)
 
             # 加载checkpoint

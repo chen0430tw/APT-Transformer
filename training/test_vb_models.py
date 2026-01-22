@@ -237,7 +237,7 @@ class ModelTester:
 
 def test_apt_model(tester):
     """测试APT模型"""
-    from apt_model.modeling.apt_model import APTLargeModel
+    from apt.core.modeling.apt_model import APTLargeModel
     from apt_model.config.apt_config import APTConfig
 
     def create_model():
@@ -257,7 +257,7 @@ def test_apt_model(tester):
 def test_gpt5_model(tester):
     """测试GPT-5模型"""
     try:
-        from apt_model.modeling.gpt5_model import GPT5Model, GPT5Config
+        from apt.core.modeling.gpt5_model import GPT5Model, GPT5Config
 
         def create_model():
             config = GPT5Config(
@@ -279,7 +279,7 @@ def test_gpt5_model(tester):
 def test_claude4_model(tester):
     """测试Claude4模型"""
     try:
-        from apt_model.modeling.claude4_model import Claude4Model, Claude4Config
+        from apt.core.modeling.claude4_model import Claude4Model, Claude4Config
 
         def create_model():
             config = Claude4Config(
@@ -301,7 +301,7 @@ def test_claude4_model(tester):
 def test_multimodal_model(tester):
     """测试多模态模型"""
     try:
-        from apt_model.modeling.multimodal_model import MultimodalAPTModel
+        from apt.core.modeling.multimodal_model import MultimodalAPTModel
         from apt_model.config.multimodal_config import MultimodalConfig
 
         def create_model():

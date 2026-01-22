@@ -15,11 +15,14 @@ Complexity: O(B * H * T² * r) instead of O(B * H * T² * d)
 from __future__ import annotations
 from typing import Optional, Tuple, Dict, Any
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
+F = torch.nn.functional
 
-from apt_model.modeling.blocks.vein import VeinProjector
+from apt.core.modeling.blocks.vein import VeinProjector
 
 
 # --------------------------- utilities ---------------------------

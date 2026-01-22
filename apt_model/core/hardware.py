@@ -17,7 +17,8 @@ import platform
 import logging
 from typing import Dict, List, Any, Optional, Union
 
-import torch
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
 
 # 可选依赖
 try:

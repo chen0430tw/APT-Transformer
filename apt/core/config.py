@@ -354,7 +354,8 @@ class HardwareProfile:
         gpu_memory = 0
 
         try:
-            import torch
+            from apt_model.utils.fake_torch import get_torch
+            torch = get_torch()
             if torch.cuda.is_available():
                 gpu_count = torch.cuda.device_count()
                 if gpu_count > 0:

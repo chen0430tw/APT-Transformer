@@ -33,7 +33,7 @@ def test_generate_fix() -> bool:
 
     # 2. 初始化分词器
     print("\n2. 初始化分词器...")
-    from apt_model.modeling.chinese_tokenizer_integration import (
+    from apt.core.modeling.chinese_tokenizer_integration import (
         get_appropriate_tokenizer,
     )
 
@@ -48,7 +48,7 @@ def test_generate_fix() -> bool:
 
     # 3. 创建模型
     print("\n3. 创建模型...")
-    from apt_model.modeling.apt_model import APTModel, APTModelConfiguration
+    from apt.core.modeling.apt_model import APTModel, APTModelConfiguration
 
     config = APTModelConfiguration(
         vocab_size=tokenizer.vocab_size,

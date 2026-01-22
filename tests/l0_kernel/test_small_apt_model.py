@@ -11,7 +11,7 @@ from torch.utils.data import TensorDataset, DataLoader
 # 添加路径
 sys.path.insert(0, '/home/user/APT-Transformer')
 
-from apt_model.modeling.apt_model import (
+from apt.core.modeling.apt_model import (
     APTModel,
     APTModelConfiguration,
     DBCDAC_Optimizer,

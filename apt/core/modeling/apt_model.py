@@ -9,16 +9,19 @@ APT核心模型集成实现
 import os
 # 检查是否应该屏蔽自创生变换器的警告
 SUPPRESS_APT_WARNINGS = os.environ.get('SUPPRESS_APT_WARNINGS', 'False').lower() in ('true', '1', 'yes')
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
+F = torch.nn.functional
 import math
 import warnings
 import sys
 from typing import Optional, Tuple, List, Dict, Union
 
 # 导入左旋平滑模块
-from apt_model.modeling.left_spin_smooth import (
+from apt.core.modeling.left_spin_smooth import (
     LeftSpinStep,
     LeftSpinResidual,
     AdaptiveLeftSpinStep

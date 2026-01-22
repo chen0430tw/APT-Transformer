@@ -100,6 +100,64 @@ class FakeTorch:
             def load_state_dict(self, state_dict):
                 pass
 
+        class functional:
+            """Fake functional module"""
+            @staticmethod
+            def relu(x, inplace=False):
+                return x
+
+            @staticmethod
+            def gelu(x):
+                return x
+
+            @staticmethod
+            def softmax(x, dim=-1):
+                return x
+
+            @staticmethod
+            def log_softmax(x, dim=-1):
+                return x
+
+            @staticmethod
+            def dropout(x, p=0.5, training=True, inplace=False):
+                return x
+
+            @staticmethod
+            def linear(input, weight, bias=None):
+                return FakeTorch.Tensor()
+
+            @staticmethod
+            def embedding(input, weight, padding_idx=None):
+                return FakeTorch.Tensor()
+
+            @staticmethod
+            def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
+                return input
+
+            @staticmethod
+            def cross_entropy(input, target, weight=None, ignore_index=-100, reduction='mean'):
+                return FakeTorch.Tensor()
+
+            @staticmethod
+            def mse_loss(input, target, reduction='mean'):
+                return FakeTorch.Tensor()
+
+            @staticmethod
+            def binary_cross_entropy(input, target, weight=None, reduction='mean'):
+                return FakeTorch.Tensor()
+
+            @staticmethod
+            def pad(input, pad, mode='constant', value=0):
+                return input
+
+            @staticmethod
+            def interpolate(input, size=None, scale_factor=None, mode='nearest'):
+                return input
+
+            @staticmethod
+            def normalize(input, p=2, dim=1, eps=1e-12):
+                return input
+
     class optim:
         """Fake optim module"""
         class Adam:

@@ -7,8 +7,12 @@ Multimodal dataset and data loaders for text, image, and audio data
 
 import os
 import json
-import torch
-from torch.utils.data import Dataset, DataLoader
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+Dataset = torch.utils.data.Dataset
+DataLoader = torch.utils.data.DataLoader
 from typing import Dict, List, Optional, Union, Tuple, Any
 from pathlib import Path
 import warnings
