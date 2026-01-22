@@ -32,7 +32,7 @@ except ImportError:
     print("⚠️  PyTorch not available, skipping integration tests")
 
 # Import memory system
-from apt_model.memory.context_composer import (
+from apt.memory.context_composer import (
     create_context_composer,
     MemoryConfig,
     SavedMemory,

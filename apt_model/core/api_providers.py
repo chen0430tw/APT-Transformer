@@ -477,7 +477,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     openai_example = '''
-from apt_model.core.api_providers import create_api_provider
+from apt.core.api_providers import create_api_provider
 
 # 创建OpenAI提供商
 api = create_api_provider(
@@ -514,7 +514,7 @@ print(api.get_stats())
     print("=" * 60)
 
     siliconflow_example = '''
-from apt_model.core.api_providers import create_api_provider
+from apt.core.api_providers import create_api_provider
 
 # 创建硅基流动提供商
 api = create_api_provider(

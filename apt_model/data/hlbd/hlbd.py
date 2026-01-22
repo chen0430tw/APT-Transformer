@@ -29,8 +29,8 @@ sys.path.insert(0, str(project_root))
 
 # === 使用重构后的架构模块 ===
 # Core模块
-from apt_model.core.system import set_seed, get_device
-from apt_model.core.resources import ResourceMonitor
+from apt.core.system import set_seed, get_device
+from apt.core.resources import ResourceMonitor
 
 # Infrastructure模块
 from apt_model.infrastructure.logging import setup_colored_logging, LogManager

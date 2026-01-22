@@ -32,7 +32,7 @@ def test_abc_tier_storage():
     print("测试 1: A/B/C 档分层存储")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     memory = create_hierarchical_memory()
 
@@ -89,7 +89,7 @@ def test_anchor_directives():
     print("测试 2: 锚点指令解析（【封存·原文】等）")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     memory = create_hierarchical_memory()
 
@@ -130,7 +130,7 @@ def test_versioning_and_retrieval():
     print("测试 3: 版本化 + Key控检索")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     memory = create_hierarchical_memory()
 
@@ -176,7 +176,7 @@ def test_anti_drift_validation():
     print("测试 4: 防漂移验证（一致性检查）")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     memory = create_hierarchical_memory()
 
@@ -236,7 +236,7 @@ def test_skeleton_and_detail_layers():
     print("测试 5: 两层存储（骨架卡 + 细节仓）")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     memory = create_hierarchical_memory()
 
@@ -275,7 +275,7 @@ def test_context_composition():
     print("测试 6: 上下文组合（骨架卡 + 细节检索）")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     memory = create_hierarchical_memory()
 
@@ -321,7 +321,7 @@ def test_unified_composer():
     print("测试 7: 统一组合器（基础 + 分层）")
     print("="*70)
 
-    from apt_model.memory.context_composer import create_hierarchical_composer
+    from apt.memory.context_composer import create_hierarchical_composer
 
     composer = create_hierarchical_composer()
 
@@ -358,7 +358,7 @@ def test_persistence():
     print("测试 8: 持久化（JSON 保存/加载）")
     print("="*70)
 
-    from apt_model.memory.hierarchical_memory import create_hierarchical_memory
+    from apt.memory.hierarchical_memory import create_hierarchical_memory
 
     # 创建临时文件
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:

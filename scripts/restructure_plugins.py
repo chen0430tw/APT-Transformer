@@ -6,13 +6,13 @@ APT-Transformer Plugins 重构脚本
 - apt/plugins/         (插件框架)
 - apt/apps/plugins/    (具体插件)
 - apt_model/plugins/   (重复文件)
-- legacy_plugins/      (遗留插件)
+- apt.apps.plugins/      (遗留插件)
 
 重构方案：
 1. apt/plugins/ → apt/apps/plugin_system/ (框架层属于 L3)
 2. apt/apps/plugins/ 保留 (具体插件实现)
 3. 删除 apt_model/plugins/ (完全重复)
-4. legacy_plugins/ → archived/legacy_plugins/ (归档)
+4. apt.apps.plugins/ → archived/apt.apps.plugins/ (归档)
 """
 
 import shutil
@@ -60,23 +60,23 @@ def restructure_plugins(dry_run=False):
         print("⚠️  apt_model/plugins/ 不存在，跳过删除")
 
     # ========== 3. 归档遗留插件 ==========
-    legacy = ROOT / "legacy_plugins"
-    archived_legacy = ROOT / "archived" / "legacy_plugins"
+    legacy = ROOT / "apt.apps.plugins"
+    archived_legacy = ROOT / "archived" / "apt.apps.plugins"
 
     if legacy.exists():
         archived_legacy.parent.mkdir(exist_ok=True)
 
         if archived_legacy.exists():
-            print("⚠️  归档目标已存在: archived/legacy_plugins/")
+            print("⚠️  归档目标已存在: archived/apt.apps.plugins/")
             print("    跳过归档")
         else:
             actions.append((
                 "归档遗留插件",
                 lambda: shutil.move(str(legacy), str(archived_legacy)),
-                f"legacy_plugins/ → archived/legacy_plugins/"
+                f"apt.apps.plugins/ → archived/apt.apps.plugins/"
             ))
     else:
-        print("⚠️  legacy_plugins/ 不存在，跳过归档")
+        print("⚠️  apt.apps.plugins/ 不存在，跳过归档")
 
     print()
     print("=" * 60)
@@ -115,7 +115,7 @@ def restructure_plugins(dry_run=False):
     print("新的插件结构:")
     print("  apt/apps/plugin_system/  - 插件系统框架 (base, manager, hooks)")
     print("  apt/apps/plugins/        - 具体插件实现 (8个插件)")
-    print("  archived/legacy_plugins/ - 遗留插件归档")
+    print("  archived/apt.apps.plugins/ - 遗留插件归档")
     print()
     print("apt_model/plugins/ 已删除 (重复)")
 

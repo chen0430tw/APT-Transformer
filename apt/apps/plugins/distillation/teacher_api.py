@@ -10,7 +10,7 @@
 - 自定义API接口
 
 注意: 此模块专门用于知识蒸馏场景
-     通用的API配置请使用 apt_model.core.api_providers
+     通用的API配置请使用 apt.core.api_providers
 """
 
 import torch
@@ -18,7 +18,7 @@ import torch.nn as nn
 from typing import Optional, Dict, Any, List, Union
 
 # 导入通用API提供商
-from apt_model.core.api_providers import (
+from apt.core.api_providers import (
     APIProviderInterface,
     OpenAIProvider,
     AnthropicProvider,
@@ -362,7 +362,7 @@ def create_api_teacher_model(
 
 if __name__ == "__main__":
     print("【教师模型API接口演示】\n")
-    print("[提示] 此模块已重构为使用通用API配置 (apt_model.core.api_providers)\n")
+    print("[提示] 此模块已重构为使用通用API配置 (apt.core.api_providers)\n")
 
     # 示例1: OpenAI API
     print("=" * 60)
@@ -471,10 +471,10 @@ print(f"总成本: ${teacher_model.api.stats['total_cost']:.4f}")
     print("""
 teacher_api.py (本模块)
   ├─ 专门用于知识蒸馏场景
-  ├─ 继承自 apt_model.core.api_providers
+  ├─ 继承自 apt.core.api_providers
   └─ 添加了蒸馏特有的功能 (get_logits, APITeacherModel)
 
-apt_model.core.api_providers
+apt.core.api_providers
   ├─ 通用API配置模块
   ├─ 可被多个组件共享使用
   │  ├─ 知识蒸馏 (teacher_api.py)

@@ -177,7 +177,7 @@ class ModuleManager:
             name="hardware",
             version="1.0.0",
             description="Hardware Detection and Resource Management",
-            module_path="apt_model.core.hardware",
+            module_path="apt.core.hardware",
             dependencies=[],
             category="infrastructure",
             auto_load=True,

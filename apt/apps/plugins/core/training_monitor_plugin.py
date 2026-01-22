@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 
 # 导入SOSA核心
-from apt_model.core.training import (
+from apt.core.training import (
     SOSATrainingWrapper,
     TrainingMonitor,
     ErrorType,

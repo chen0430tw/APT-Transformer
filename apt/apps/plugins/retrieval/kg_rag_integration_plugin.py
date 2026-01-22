@@ -15,7 +15,7 @@ from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 
 from apt.core.registry import registry
-from apt_model.core.system import get_device
+from apt.core.system import get_device
 from apt_model.modeling.rag_integration import RAGWrapper, RAGConfig
 from apt_model.modeling.knowledge_graph import KnowledgeGraph
 from apt_model.infrastructure.logging import get_progress_logger

@@ -34,7 +34,7 @@ from apt_model.optimization.npu_backend import (
 )
 
 # 设备管理
-from apt_model.core.system import get_device, get_device_info, memory_cleanup
+from apt.core.system import get_device, get_device_info, memory_cleanup
 
 # Virtual Blackwell
 import apt_model.optimization.vb_global as vb

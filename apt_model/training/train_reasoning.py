@@ -12,8 +12,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from apt_model.core.system import get_device, set_seed
-from apt_model.core.resources import ResourceMonitor
+from apt.core.system import get_device, set_seed
+from apt.core.resources import ResourceMonitor
 from apt_model.infrastructure.logging import get_progress_logger
 from apt_model.runtime.decoder import ReasoningController, BudgetedReasoningController
 

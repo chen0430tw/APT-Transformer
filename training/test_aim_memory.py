@@ -30,7 +30,7 @@ def test_basic_write_and_read():
     print("测试 1: 基础写入和读取")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     # 创建 AIM-Memory
     config = AIMConfig(
@@ -77,7 +77,7 @@ def test_inertial_routing():
     print("测试 2: 惯性路由机制（连续查询）")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     # 降低写入阈值以确保能写入
     config = AIMConfig(write_threshold=0.3)
@@ -133,7 +133,7 @@ def test_temporal_mirror_decay():
     print("测试 3: 时间镜像衰减（权重衰减）")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     config = AIMConfig(
         weight_decay_gamma=0.8,
@@ -177,7 +177,7 @@ def test_anchor_correction():
     print("测试 4: 锚点纠错（数字、专名准确匹配）")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     config = AIMConfig(write_threshold=0.3)  # 降低写入门槛确保记忆被写入
     aim = create_aim_memory(config=config)
@@ -215,7 +215,7 @@ def test_evidence_refill():
     print("测试 5: 按需证据回灌（严格模式）")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     config = AIMConfig(write_threshold=0.3)  # 降低写入门槛
     aim = create_aim_memory(config=config)
@@ -255,7 +255,7 @@ def test_answer_generation():
     print("测试 6: 完整回答生成流程")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     config = AIMConfig(write_threshold=0.3)  # 降低写入门槛
     aim = create_aim_memory(config=config)
@@ -295,7 +295,7 @@ def test_persistence():
     print("测试 7: 持久化（保存/加载）")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     # 创建临时文件
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -342,7 +342,7 @@ def test_end_to_end_scenario():
     print("测试 8: 端到端场景（多轮对话）")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     config = AIMConfig(write_threshold=0.3)  # 降低写入门槛
     aim = create_aim_memory(config=config)
@@ -386,7 +386,7 @@ def test_statistics():
     print("测试 9: 统计信息")
     print("="*70)
 
-    from apt_model.memory.aim_memory import create_aim_memory, AIMConfig
+    from apt.memory.aim_memory import create_aim_memory, AIMConfig
 
     config = AIMConfig(write_threshold=0.3)  # 降低写入门槛
     aim = create_aim_memory(config=config)

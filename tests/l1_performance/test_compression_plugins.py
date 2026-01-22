@@ -9,8 +9,8 @@ import torch.nn as nn
 # 添加路径
 sys.path.insert(0, '/home/user/APT-Transformer')
 
-from legacy_plugins.batch1.model_pruning_plugin import ModelPruningPlugin
-from legacy_plugins.batch1.model_distillation_plugin import ModelDistillationPlugin
+from apt.apps.plugins.batch1.model_pruning_plugin import ModelPruningPlugin
+from apt.apps.plugins.batch1.model_distillation_plugin import ModelDistillationPlugin
 
 
 class TestModel(nn.Module):

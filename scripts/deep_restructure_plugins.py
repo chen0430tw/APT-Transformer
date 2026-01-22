@@ -72,7 +72,7 @@ def deep_restructure_plugins(dry_run=False):
     print("=" * 80)
     print()
 
-    archived = ROOT / "archived" / "legacy_plugins"
+    archived = ROOT / "archived" / "apt.apps.plugins"
     current_plugins = ROOT / "apt" / "apps" / "plugins"
     experimental = current_plugins / "experimental"
 
@@ -218,7 +218,7 @@ def deep_restructure_plugins(dry_run=False):
         ├── plugin_7_data_processors.py
         └── plugin_6_multimodal_training.py
 
-    archived/legacy_plugins/  ✅ 归档 (重复插件保持不变)
+    archived/apt.apps.plugins/  ✅ 归档 (重复插件保持不变)
     """)
 
 

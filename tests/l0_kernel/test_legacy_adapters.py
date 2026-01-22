@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from apt_model.console.core import ConsoleCore
-from apt_model.console.legacy_plugins.adapters import (
+from apt_model.console.apt.apps.plugins.adapters import (
     get_all_legacy_adapters,
     get_adapter,
     LEGACY_ADAPTERS

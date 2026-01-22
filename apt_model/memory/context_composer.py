@@ -627,7 +627,7 @@ def create_hierarchical_composer(config: Optional[MemoryConfig] = None):
     2. HierarchicalMemoryManager（分层记忆）：精确控制，防漂移
 
     Example:
-        >>> from apt_model.memory.context_composer import create_hierarchical_composer
+        >>> from apt.memory.context_composer import create_hierarchical_composer
         >>>
         >>> composer = create_hierarchical_composer()
         >>>
@@ -646,7 +646,7 @@ def create_hierarchical_composer(config: Optional[MemoryConfig] = None):
         >>> print(context['full_context'])
     """
     try:
-        from apt_model.memory.hierarchical_memory import (
+        from apt.memory.hierarchical_memory import (
             create_hierarchical_memory,
             HierarchicalMemoryConfig
         )

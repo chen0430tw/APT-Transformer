@@ -17,7 +17,7 @@ from apt_model.modeling.apt_model import (
     DBCDAC_Optimizer,
     create_gradient_stabilizer_hook
 )
-from legacy_plugins.batch1.model_pruning_plugin import ModelPruningPlugin
+from apt.apps.plugins.batch1.model_pruning_plugin import ModelPruningPlugin
 
 
 def create_small_apt_config():

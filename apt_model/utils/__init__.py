@@ -13,7 +13,7 @@ APT Model (自生成变换器) Utils Module
 # ============================================================================
 # 从core模块导入（向后兼容）
 # ============================================================================
-from apt_model.core.system import (
+from apt.core.system import (
     set_seed,
     get_device,
     memory_cleanup,
@@ -22,13 +22,13 @@ from apt_model.core.system import (
     _initialize_common,
 )
 
-from apt_model.core.hardware import (
+from apt.core.hardware import (
     check_hardware_compatibility,
     get_hardware_profile,
     HardwareProfiler,
 )
 
-from apt_model.core.resources import (
+from apt.core.resources import (
     ResourceMonitor,
     CacheManager,
 )

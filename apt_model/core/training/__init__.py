@@ -30,10 +30,15 @@ from .training_monitor import (
     TrainingSnapshot
 )
 
-from .apt_integration import (
-    SOSATrainingWrapper,
-    create_monitored_training_loop
-)
+try:
+    from .apt_integration import (
+        SOSATrainingWrapper,
+        create_monitored_training_loop
+    )
+except ImportError:
+    # Fallback for when apt_integration is not available
+    SOSATrainingWrapper = None
+    create_monitored_training_loop = None
 
 __all__ = [
     # SOSA核心

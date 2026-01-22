@@ -16,7 +16,7 @@ import tempfile
 # 添加路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from apt_model.memory.aim_memory_nc import (
+from apt.memory.aim_memory_nc import (
     create_aim_memory_nc, AIMNCConfig, NGramIndex, LinkGraph, TrieLM
 )
 

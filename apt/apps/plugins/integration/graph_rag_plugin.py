@@ -21,7 +21,7 @@ from typing import Dict, List, Any, Optional
 import logging
 
 # 导入GraphRAG核心
-from apt_model.core.graph_rag import (
+from apt.core.graph_rag import (
     GraphRAGManager,
     GeneralizedGraph,
     HodgeLaplacian,
@@ -69,7 +69,7 @@ class GraphRAGPlugin:
     def _init_api_provider(self):
         """初始化API提供商"""
         try:
-            from apt_model.core.api_providers import create_api_provider
+            from apt.core.api_providers import create_api_provider
 
             self.api_provider = create_api_provider(
                 provider=self.config['api_provider'],

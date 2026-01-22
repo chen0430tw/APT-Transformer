@@ -17,13 +17,18 @@ logging.basicConfig(
 )
 
 # 导入模块
-sys.path.insert(0, '/mnt/user-data/outputs')
-from apt_graph_rag import (
-    GeneralizedGraph,
-    HodgeLaplacian,
-    GraphBrainEngine,
-    GraphRAGManager
-)
+# Note: This is a demo file. The actual GraphRAG implementation is in the plugins.
+
+try:
+    # Try importing from the new structure
+    from apt.memory.graph_rag.generalized_graph import GeneralizedGraph
+    from apt.memory.graph_rag.hodge_laplacian import HodgeLaplacian
+    from apt.memory.graph_rag.graph_brain import GraphBrainEngine
+    from apt.memory.graph_rag.manager import GraphRAGManager
+except ImportError as e:
+    print(f"Warning: GraphRAG modules not found: {e}")
+    print("This is a demo file. Please ensure GraphRAG is properly installed.")
+    sys.exit(1)
 
 print("=" * 80)
 print("APT GraphRAG - 完整功能演示")
