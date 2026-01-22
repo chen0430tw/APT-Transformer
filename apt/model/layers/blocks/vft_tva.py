@@ -22,7 +22,7 @@ torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 
-from apt.apt_model.modeling.blocks.vein import VeinProjector
+from apt.model.layers.blocks.vein import VeinProjector
 
 
 # --------------------------- utilities ---------------------------

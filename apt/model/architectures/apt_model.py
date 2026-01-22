@@ -21,7 +21,7 @@ import sys
 from typing import Optional, Tuple, List, Dict, Union
 
 # 导入左旋平滑模块
-from apt.apt_model.modeling.left_spin_smooth import (
+from apt.model.layers.left_spin_smooth import (
     LeftSpinStep,
     LeftSpinResidual,
     AdaptiveLeftSpinStep

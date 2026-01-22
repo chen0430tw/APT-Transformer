@@ -1,75 +1,40 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-APT 训练模块
+APT 训练模块 (DEPRECATED)
 
-包含所有APT模型的训练相关功能：
-- 训练器（Trainer）
-- 微调器（Finetuner）
-- 各种训练回调和监控
+⚠️  此模块已废弃，将在APT 3.0中移除
+
+旧路径: from apt.apt_model.training import Trainer
+新路径: from apt.trainops.engine import Trainer
+
+此兼容层提供6个月的迁移期（至2026-07-22）
 """
 
-# 主训练函数
-from apt.apt_model.training.trainer import train_model, Trainer
+import warnings
 
-# 微调
-from apt.apt_model.training.finetuner import Finetuner
-
-# 特定训练器
-from apt.apt_model.training.claude_trainer import ClaudeTrainer
-from apt.apt_model.training.gpt_trainer import GPTTrainer
-from apt.apt_model.training.vft_tva_trainer import VFTTVATrainer
-
-# 训练组件
-from apt.apt_model.training.callbacks import (
-    TrainingCallback,
-    EarlyStopping,
-    ModelCheckpoint,
-    LearningRateScheduler,
+warnings.warn(
+    "apt.apt_model.training is deprecated and will be removed in version 3.0. "
+    "Please update your imports:\n"
+    "  OLD: from apt.apt_model.training import Trainer\n"
+    "  NEW: from apt.trainops.engine import Trainer\n"
+    "Migration guide: https://apt-transformer.readthedocs.io/migration/2.0/",
+    DeprecationWarning,
+    stacklevel=2
 )
-from apt.apt_model.training.checkpoint import CheckpointManager
-from apt.apt_model.training.gradient_monitor import GradientMonitor
-from apt.apt_model.training.training_events import TrainingEventManager
-from apt.apt_model.training.training_guard import TrainingGuard
-from apt.apt_model.training.training_monitor import TrainingMonitor
 
-# 优化器和混合精度
-from apt.apt_model.training.optimizer import APTOptimizer
-from apt.apt_model.training.mixed_precision import MixedPrecisionTrainer
+# 重导出所有训练组件（保持向后兼容）
+from apt.trainops.engine import *  # noqa: F401, F403
+from apt.trainops.data import *  # noqa: F401, F403
+from apt.trainops.checkpoints import *  # noqa: F401, F403
+from apt.trainops.eval import *  # noqa: F401, F403
 
-# 特殊训练
-from apt.apt_model.training.train_reasoning import train_reasoning
-from apt.apt_model.training.apt_integration import APTIntegration
-from apt.apt_model.training.sosa_core import SOSACore
-
-__all__ = [
-    # 主训练
-    'train_model',
-    'Trainer',
-    'Finetuner',
-
-    # 特定训练器
-    'ClaudeTrainer',
-    'GPTTrainer',
-    'VFTTVATrainer',
-
-    # 训练组件
-    'TrainingCallback',
-    'EarlyStopping',
-    'ModelCheckpoint',
-    'LearningRateScheduler',
-    'CheckpointManager',
-    'GradientMonitor',
-    'TrainingEventManager',
-    'TrainingGuard',
-    'TrainingMonitor',
-
-    # 优化器和混合精度
-    'APTOptimizer',
-    'MixedPrecisionTrainer',
-
-    # 特殊训练
-    'train_reasoning',
-    'APTIntegration',
-    'SOSACore',
-]
+# 导出__all__
+try:
+    from apt.trainops.engine import __all__ as _engine_all
+    from apt.trainops.data import __all__ as _data_all
+    from apt.trainops.checkpoints import __all__ as _ckpt_all
+    from apt.trainops.eval import __all__ as _eval_all
+    __all__ = _engine_all + _data_all + _ckpt_all + _eval_all
+except ImportError:
+    __all__ = []

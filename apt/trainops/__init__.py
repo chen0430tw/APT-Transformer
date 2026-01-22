@@ -21,5 +21,25 @@ APT TrainOps Domain
 
 __version__ = '2.0.0-alpha'
 
-# 此模块将在PR-3中从apt.apt_model.training迁移内容
-__all__ = []
+# 主要模块导出
+from apt.trainops.engine import Trainer, Finetuner, train_model
+from apt.trainops.data import create_dataloader, APTDataLoader
+from apt.trainops.checkpoints import CheckpointManager, save_checkpoint, load_checkpoint
+from apt.trainops.eval import TrainingMonitor, TrainingGuard
+
+__all__ = [
+    # Engine
+    'Trainer',
+    'Finetuner',
+    'train_model',
+    # Data
+    'create_dataloader',
+    'APTDataLoader',
+    # Checkpoints
+    'CheckpointManager',
+    'save_checkpoint',
+    'load_checkpoint',
+    # Eval
+    'TrainingMonitor',
+    'TrainingGuard',
+]

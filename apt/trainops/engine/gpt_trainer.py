@@ -347,7 +347,7 @@ def train_gpt4o(
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 ):
     """便捷函数：训练GPT-4o模型"""
-    from apt.apt_model.modeling.gpt4o_model import GPT4oModel
+    from apt.model.architectures.gpt4o_model import GPT4oModel
     from transformers import GPT2Tokenizer
 
     # 初始化模型和tokenizer
@@ -394,7 +394,7 @@ def train_gpto3(
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 ):
     """便捷函数：训练GPTo3模型"""
-    from apt.apt_model.modeling.gpto3_model import GPTo3Model
+    from apt.model.architectures.gpto3_model import GPTo3Model
     from transformers import GPT2Tokenizer
 
     # 初始化模型和tokenizer

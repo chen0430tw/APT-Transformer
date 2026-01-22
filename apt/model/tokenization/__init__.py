@@ -7,8 +7,18 @@ Tokenization
 - ChineseTokenizer: 中文分词器
 - Tokenizer integration utilities
 - Language detection
-
-将在PR-4中从apt.apt_model.modeling迁移
 """
 
-__all__ = []
+from apt.model.tokenization.chinese_tokenizer import ChineseTokenizer
+from apt.model.tokenization.chinese_tokenizer_integration import (
+    integrate_chinese_tokenizer,
+    detect_language,
+    get_appropriate_tokenizer,
+)
+
+__all__ = [
+    'ChineseTokenizer',
+    'integrate_chinese_tokenizer',
+    'detect_language',
+    'get_appropriate_tokenizer',
+]

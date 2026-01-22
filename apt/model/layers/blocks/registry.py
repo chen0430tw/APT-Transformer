@@ -163,7 +163,7 @@ def register_standard_blocks():
     """Register standard attention and FFN implementations."""
 
     # Import here to avoid circular dependency
-    from apt.apt_model.modeling.blocks.vft_tva import TVAAttention, VFTFeedForward
+    from apt.model.layers.blocks.vft_tva import TVAAttention, VFTFeedForward
 
     # Register TVA variants
     register_attn("tva")(TVAAttention)

@@ -7,7 +7,7 @@ gpt5_model.py  —  All-in-one (CPU-friendly)
 - Bi-state precision align (vein subspace)
 - Composite feedback (entropy, ΔKL)
 
-Refactored to use unified VFT/TVA modules from apt.apt_model.modeling.blocks
+Refactored to use unified VFT/TVA modules from apt.model.layers.blocks
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ nn = torch.nn
 F = torch.nn.functional
 
 # Use refactored VeinProjector from blocks module
-from apt.apt_model.modeling.blocks import VeinProjector
+from apt.model.layers.blocks import VeinProjector
 
 
 # ========================= utils =========================
@@ -180,7 +180,7 @@ class PrecisionAligner:
 
 
 # ================== embed =================
-# Note: VeinProjector now imported from apt.apt_model.modeling.blocks
+# Note: VeinProjector now imported from apt.model.layers.blocks
 
 class ToyEmbed(nn.Module):
     def __init__(self, vocab_size: int, d_model: int, max_len: int = 4096):

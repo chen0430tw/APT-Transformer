@@ -8,8 +8,14 @@ Evaluation and Validation
 - Validation loops
 - Benchmark utilities
 - Performance monitoring
-
-将在PR-3中从apt.apps.evaluation迁移
 """
 
-__all__ = []
+from apt.trainops.eval.training_monitor import TrainingMonitor
+from apt.trainops.eval.training_guard import TrainingGuard
+from apt.trainops.eval.gradient_monitor import GradientMonitor
+
+__all__ = [
+    'TrainingMonitor',
+    'TrainingGuard',
+    'GradientMonitor',
+]

@@ -8,8 +8,20 @@ Training Data
 - Dataset implementations
 - Data preprocessing pipelines
 - Data augmentation
-
-将在PR-3中从apt.core.data迁移
 """
 
-__all__ = []
+from apt.trainops.data.data_loading import (
+    create_dataloader,
+    APTDataLoader,
+    PretrainingDataset,
+    FinetuningDataset,
+    create_dataset,
+)
+
+__all__ = [
+    'create_dataloader',
+    'APTDataLoader',
+    'PretrainingDataset',
+    'FinetuningDataset',
+    'create_dataset',
+]

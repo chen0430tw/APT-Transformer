@@ -14,8 +14,16 @@ Model Extensions
 - 编译时集成
 - 深度访问内部API
 - 核心团队维护
-
-将在PR-4中从现有模块迁移
 """
 
-__all__ = []
+from apt.model.extensions.rag_integration import RAGIntegration
+from apt.model.extensions.knowledge_graph import KnowledgeGraph
+from apt.model.extensions.kg_rag_integration import KGRAGIntegration
+from apt.model.extensions.mcp_integration import MCPIntegration
+
+__all__ = [
+    'RAGIntegration',
+    'KnowledgeGraph',
+    'KGRAGIntegration',
+    'MCPIntegration',
+]

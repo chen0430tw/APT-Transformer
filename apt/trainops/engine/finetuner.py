@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 
 # 复用现有模块
-from apt.apt_model.training.checkpoint import load_model, save_model
+from apt.trainops.checkpoints.checkpoint import load_model, save_model
 from apt.core.data.external_data import load_external_data
 from apt.core.generation.generator import generate_natural_text
 from apt.core.generation.evaluator import evaluate_text_quality

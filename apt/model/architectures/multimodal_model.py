@@ -12,11 +12,11 @@ torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 from typing import Optional, Dict, Tuple, Union, List
-from apt.apt_model.modeling.apt_model import APTLargeModel
+from apt.model.architectures.apt_model import APTLargeModel
 from apt.core.config.multimodal_config import MultimodalConfig
-from apt.apt_model.modeling.encoders.vision_encoder import VisionEncoder
-from apt.apt_model.modeling.encoders.audio_encoder import AudioEncoder
-from apt.apt_model.modeling.encoders.cross_modal_attention import (
+from apt.model.layers.encoders.vision_encoder import VisionEncoder
+from apt.model.layers.encoders.audio_encoder import AudioEncoder
+from apt.model.layers.encoders.cross_modal_attention import (
     CrossModalAttention,
     BiDirectionalCrossAttention,
     MultiModalFusionLayer,

@@ -19,13 +19,13 @@ import os
 from datetime import datetime
 import logging
 
-from apt.apt_model.modeling.claude4_model import ClaudeUnifiedModel, create_claude_unified
+from apt.model.architectures.claude4_model import ClaudeUnifiedModel, create_claude_unified
 from apt.apt_model.utils import get_device
-from apt.apt_model.modeling.chinese_tokenizer_integration import (
+from apt.model.architectures.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,
 )
-from apt.apt_model.training.training_guard import TrainingGuard, EarlyStopping
+from apt.trainops.eval.training_guard import TrainingGuard, EarlyStopping
 
 # 创建 logger
 logger = logging.getLogger(__name__)

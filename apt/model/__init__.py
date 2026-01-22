@@ -21,5 +21,45 @@ APT Model Domain
 
 __version__ = '2.0.0-alpha'
 
-# 此模块将在后续PR中从apt_model迁移内容
-__all__ = []
+# 主要模块导出
+try:
+    from apt.model.architectures import APTLargeModel, MultimodalAPTModel
+except ImportError as e:
+    # 如果导入失败，定义占位符
+    APTLargeModel = None
+    MultimodalAPTModel = None
+
+try:
+    from apt.model.tokenization import ChineseTokenizer
+except ImportError:
+    ChineseTokenizer = None
+
+try:
+    from apt.model.layers import PositionalEncoding, TokenEmbedding, AdvancedRoPE
+except ImportError:
+    PositionalEncoding = None
+    TokenEmbedding = None
+    AdvancedRoPE = None
+
+try:
+    from apt.model.extensions import RAGIntegration, KnowledgeGraph, MCPIntegration
+except ImportError:
+    RAGIntegration = None
+    KnowledgeGraph = None
+    MCPIntegration = None
+
+__all__ = [
+    # Architectures
+    'APTLargeModel',
+    'MultimodalAPTModel',
+    # Tokenization
+    'ChineseTokenizer',
+    # Layers
+    'PositionalEncoding',
+    'TokenEmbedding',
+    'AdvancedRoPE',
+    # Extensions
+    'RAGIntegration',
+    'KnowledgeGraph',
+    'MCPIntegration',
+]
