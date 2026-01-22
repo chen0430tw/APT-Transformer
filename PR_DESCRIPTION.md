@@ -1,39 +1,37 @@
-# Pull Request: 完整目录结构重组 - 模型实现在apt_model/
+# Pull Request: 完整目录结构重组 - 统一的apt包架构
 
 ## 📋 摘要
 
 完成APT-Transformer项目的完整目录结构重组，解决了以下核心问题：
 1. **根目录混乱** - 移除不该存在的目录（bert/, training/, data/等）
 2. **apt_model/臃肿** - 23个子目录重新组织到合理位置
-3. **模型位置错误** - **将模型实现移回apt_model/（符合包名语义）**
+3. **包结构优化** - **将apt_model/移入apt/统一管理**
 
 ## 🎯 核心架构改进
 
-### 最重要的改进：apt_model/ 现在包含模型实现
+### 最重要的改进：统一的apt包结构，根目录超级整洁
 
 **之前的问题**：
-- 模型从 apt_model/ 迁移到了 apt/core/
-- 不符合包名 "apt_model" 的语义
+- 根目录有多个顶层目录（apt/, apt_model/, bert/, training/, data/等）
+- 包结构分散，不够统一
 
 **现在的结构**：
 ```
-apt_model/          # APT模型包（模型和训练实现）
-├── modeling/       # 所有APT模型（18个文件）
-│   ├── apt_model.py, multimodal_model.py
-│   ├── claude4_model.py, gpt5_model.py等
-│   ├── encoders/, blocks/
-│   └── ...
-├── training/       # 所有训练功能（18个文件）
-│   ├── trainer.py, finetuner.py
-│   ├── callbacks.py, checkpoint.py
-│   └── ...
-└── utils/          # 工具函数
-
-apt/                # 框架层（从apt_model导入）
-├── core/           # L0 - 内核层（重导出apt_model）
-├── apps/           # L3 - 应用层（CLI, API, WebUI等）
-├── perf/           # L1 - 性能层
-└── memory/         # L2 - 内存层
+APT-Transformer/    # 根目录整洁
+├── apt/            # 统一的包（所有代码都在这里）
+│   ├── apt_model/  # APT模型实现
+│   │   ├── modeling/   # 所有模型（18个文件）
+│   │   ├── training/   # 所有训练（18个文件）
+│   │   └── utils/      # 工具函数
+│   ├── apps/       # L3 - 应用层（CLI, API, WebUI等）
+│   ├── core/       # L0 - 内核层
+│   ├── perf/       # L1 - 性能层
+│   └── memory/     # L2 - 内存层
+├── datasets/       # 数据集
+├── resources/      # 资源文件
+├── examples/       # 示例代码
+├── docs/           # 文档
+└── tests/          # 测试
 ```
 
 ## 📊 详细变更
@@ -95,30 +93,32 @@ apt/                # 框架层（从apt_model导入）
 
 | 指标 | 数量 |
 |------|------|
-| 总修改文件 | 400+ |
+| 总修改文件 | 600+ |
 | 迁移的目录 | 40+ |
 | 创建的代理 | 19个 |
-| 移回apt_model的模型 | 36个文件 |
-| 提交数 | 3个 |
+| apt_model文件数 | 100+ |
+| 提交数 | 4个 |
 
 ## 🔗 相关提交
 
 1. `1cee01d` - docs: 创建目录结构清理计划
 2. `d3bd1cf` - refactor: 完成完整目录结构重组
 3. `a49e208` - refactor: 将模型和训练实现移回apt_model/
+4. `0d23326` - refactor: 将apt_model移入apt/目录，优化根目录结构
 
 ## 📝 架构说明
 
-**apt_model/** 是APT模型包：
-- 包含所有模型实现（modeling/）
-- 包含所有训练功能（training/）
-- 包含工具函数（utils/）
-- 是项目的**核心内容**
+**apt/** 是统一的包：
+- **apt/apt_model/** - APT模型实现（modeling, training, utils）
+- **apt/apps/** - 应用层（CLI, API, WebUI等）
+- **apt/core/** - 核心层（从apt_model导入）
+- **apt/perf/** - 性能优化层
+- **apt/memory/** - 内存管理层
 
-**apt/** 是框架层：
-- 提供L0/L1/L2/L3分层架构
-- 从apt_model导入实现
-- 提供应用层功能（CLI, API等）
+**根目录超级整洁**：
+- 只有apt/作为主要代码目录
+- datasets/, resources/, examples/, docs/, tests/ 各司其职
+- 没有混乱的临时文件和目录
 
 ## 🚀 后续工作
 
