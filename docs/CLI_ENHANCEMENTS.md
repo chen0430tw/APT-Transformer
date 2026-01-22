@@ -413,10 +413,43 @@ python -m apt_model pipeline --verbose --commands "train,evaluate"
 
 ## 📚 相关文档
 
+- **高级 CLI 命令**: `docs/ADVANCED_CLI_COMMANDS.md` ⭐ **NEW**
 - **CLI 命令参考**: `docs/CLI_REFERENCE.md`
 - **配置文件指南**: `docs/CONFIGURATION_GUIDE.md`
 - **插件开发指南**: `docs/product/PLUGIN_SYSTEM_GUIDE.md`
 - **贡献指南**: `CONTRIBUTING.md`
+
+---
+
+## 🎯 高级功能命令
+
+除了本文档介绍的基础 CLI 增强功能外，APT-Transformer 还提供了以下高级功能命令：
+
+### 新增高级命令 (2026-01-22)
+
+1. **`train-moe`** - MoE (Mixture of Experts) 模型训练
+2. **`blackwell-simulate`** - Virtual Blackwell GPU 模拟
+3. **`aim-memory`** - AIM 高级记忆系统管理
+4. **`npu-accelerate`** - NPU 加速后端
+5. **`rag-query`** - RAG/KG-RAG 检索增强查询
+6. **`quantize-mxfp4`** - MXFP4 4位浮点量化
+
+**详细文档**: 请查看 `docs/ADVANCED_CLI_COMMANDS.md`
+
+**快速示例**:
+```bash
+# MoE 训练
+python -m apt_model train-moe --num-experts 8
+
+# Virtual Blackwell 模拟
+python -m apt_model blackwell-simulate
+
+# RAG 查询
+python -m apt_model rag-query --query "你的问题"
+
+# MXFP4 量化
+python -m apt_model quantize-mxfp4
+```
 
 ---
 

@@ -310,6 +310,41 @@ Examples:
                             choices=['io', 'model', 'data', 'tokenizer', 'all'],
                             help='Type of debug check to run (default: all)')
 
+    # ===============================
+    #  Advanced features arguments
+    # ===============================
+    advanced_group = parser.add_argument_group('Advanced Features Options')
+
+    # MoE arguments
+    advanced_group.add_argument('--num-experts', type=int, default=8,
+                               help='Number of experts for MoE (default: 8)')
+    advanced_group.add_argument('--top-k', type=int, default=2,
+                               help='Top-K experts to use (default: 2)')
+    advanced_group.add_argument('--capacity-factor', type=float, default=1.25,
+                               help='Capacity factor for MoE (default: 1.25)')
+
+    # AIM Memory arguments
+    advanced_group.add_argument('--aim-operation', type=str, default='status',
+                               choices=['status', 'clear', 'store'],
+                               help='AIM memory operation (default: status)')
+    advanced_group.add_argument('--context', type=str, default=None,
+                               help='Context to store in AIM memory')
+
+    # NPU arguments
+    advanced_group.add_argument('--npu-type', type=str, default='default',
+                               choices=['default', 'ascend', 'kunlun', 'mlu', 'tpu'],
+                               help='NPU type (default: default)')
+
+    # RAG arguments
+    advanced_group.add_argument('--query', type=str, default=None,
+                               help='Query for RAG retrieval')
+    advanced_group.add_argument('--use-kg', action='store_true',
+                               help='Use Knowledge Graph with RAG')
+
+    # Quantization arguments
+    advanced_group.add_argument('--output-path', type=str, default=None,
+                               help='Output path for quantized model')
+
     return parser.parse_args()
 
 
