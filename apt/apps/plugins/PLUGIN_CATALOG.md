@@ -1,8 +1,8 @@
 # APT-Transformer Plugin Catalog
 
 **Last Updated**: 2026-01-22
-**Total Plugins**: 25
-**Categories**: 12
+**Total Plugins**: 31
+**Categories**: 15
 
 ---
 
@@ -271,7 +271,10 @@ visualization:
 | RL | 4 | Stable ✨ | Tier 2 |
 | Protocol | 1 | Stable ✨ | Tier 2 |
 | Retrieval | 2 | Stable ✨ | Tier 2 |
-| **Total** | **25** | - | - |
+| Hardware | 3 | Stable ✨ | Tier 3 |
+| Deployment | 2 | Stable ✨ | Tier 3 |
+| Memory | 1 | Stable ✨ | Tier 3 |
+| **Total** | **31** | - | - |
 
 ---
 
@@ -287,30 +290,102 @@ All Tier 2 plugins have been successfully converted:
 
 ---
 
-## 🔮 Upcoming Plugins (Tier 3)
+### 13. Hardware Plugins (3) ✨ NEW - Tier 3
+**Location**: `apt/apps/plugins/hardware/`
+**Description**: 硬件模拟和适配插件
 
-**Tier 3** focuses on complex research features and hardware-specific optimizations:
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `virtual_blackwell_plugin.py` | 虚拟Blackwell - GPU特性模拟 | ✅ Active |
+| `npu_backend_plugin.py` | NPU后端 - Neural Processing Unit加速 | ✅ Active |
+| `cloud_npu_adapter_plugin.py` | 云NPU适配器 - 云环境NPU支持 | ✅ Active |
 
-### Planned Categories:
+**Features**:
+- Virtual GPU feature simulation (Blackwell architecture)
+- NPU hardware acceleration support
+- Cloud NPU adaptation for cloud environments
+- Hardware abstraction layer
 
-1. **Hardware Emulation** (3 modules)
-   - Virtual Blackwell Stack - GPU feature simulation
-   - NPU Backend - NPU acceleration support
-   - Cloud NPU Adapter - Cloud NPU adaptation
+---
 
-2. **Advanced Optimization** (4 modules)
-   - GPU Flash Optimization - Triton kernel optimization
-   - Extreme Scale Training - Large-scale distributed training
-   - MicroVM Compression - Micro-VM compression
-   - vGPU Stack - Virtual GPU management
+### 14. Deployment Plugins (2) ✨ NEW - Tier 3
+**Location**: `apt/apps/plugins/deployment/`
+**Description**: 部署和虚拟化插件
 
-3. **Knowledge Systems** (4 modules)
-   - AIM Memory System - Hierarchical memory system
-   - GraphRAG System - Graph retrieval system
-   - Knowledge Graph - Knowledge graph management
-   - External Data Loader - External data loading
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `microvm_compression_plugin.py` | MicroVM压缩 - 微虚拟机部署优化 | ✅ Active |
+| `vgpu_stack_plugin.py` | vGPU Stack - 虚拟GPU管理 | ✅ Active |
 
-**Note**: Tier 3 modules are complex and require careful architectural planning
+**Features**:
+- MicroVM compression for lightweight deployment
+- Virtual GPU resource management
+- Container and cloud environment optimization
+- vGPU allocation and scheduling
+
+---
+
+### 15. Memory Plugins (1) ✨ NEW - Tier 3
+**Location**: `apt/apps/plugins/memory/`
+**Description**: 高级记忆系统插件
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| `aim_memory_plugin.py` | AIM Memory - Advanced In-context Memory System | ✅ Active |
+
+**Features**:
+- Hierarchical memory organization
+- Advanced in-context memory management
+- Context composition and retrieval
+- Long-term memory support
+
+---
+
+## 🎉 Tier 3 Complete!
+
+All Tier 3 plugins have been successfully converted:
+- ✅ Hardware (3): Virtual Blackwell, NPU Backend, Cloud NPU Adapter
+- ✅ Deployment (2): MicroVM Compression, vGPU Stack
+- ✅ Memory (1): AIM Memory System
+
+**Note**: GPU Flash Optimization and Extreme Scale Training were **intentionally excluded** - they are core performance optimizations, not optional plugins.
+
+---
+
+## 🏆 All Tiers Complete!
+
+**Summary**:
+- **Tier 1** (6 modules): Monitoring, Visualization, Evaluation, Infrastructure
+- **Tier 2** (8 modules): Optimization, RL, Protocol, Retrieval
+- **Tier 3** (6 modules): Hardware, Deployment, Memory
+
+**Total**: 20 modules converted → 31 plugins across 15 categories
+
+---
+
+## 🔮 Not Converted (By Design)
+
+The following modules were **intentionally not converted** to plugins:
+
+### Tools (Should Remain as Tools)
+- **APX Converter** (`apt_model/tools/apx/converter.py`) - Packaging tool, not runtime plugin
+- **Data Generation Tools** - Build-time utilities
+- **Diagnostic Tools** - Development utilities
+
+### Core Modules (Should Remain as Modules)
+- **Data Processor** (`apt/core/data/data_processor.py`) - Core data processing
+- **Data Pipeline** (`apt/core/data/pipeline.py`) - Core data pipeline
+- **Knowledge Graph** (`apt/memory/knowledge_graph.py`) - L2 core functionality
+- **External Data Loader** (`apt/core/data/external_data.py`) - Core data capability
+
+### Core Optimizations (Should Remain as Modules)
+- **GPU Flash Optimization** (`apt/perf/optimization/gpu_flash_optimization.py`) - Core performance optimization
+- **Extreme Scale Training** (`apt/perf/optimization/extreme_scale_training.py`) - Core training capability
+
+### Already Plugins
+- **GraphRAG** - Already exists as `apt/apps/plugins/integration/graph_rag_plugin.py`
+
+**Rationale**: Not all modules should be plugins. Tools remain tools, core functionality remains core, and only truly optional/experimental/integration features become plugins.
 
 ---
 
