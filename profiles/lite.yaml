@@ -1,0 +1,86 @@
+# APT Lite Profile
+# 轻量级配置 - 适用于开发、测试和小规模训练
+
+profile:
+  name: lite
+  description: "轻量级配置，适合本地开发和快速原型"
+  version: "2.0.0"
+
+model:
+  # 模型架构选择
+  architecture: apt_small
+  hidden_size: 768
+  num_layers: 12
+  num_attention_heads: 12
+  intermediate_size: 3072
+  max_position_embeddings: 512
+  vocab_size: 50000
+
+  # 功能开关
+  features:
+    multimodal: false
+    moe: false
+    flash_attention: true
+    gradient_checkpointing: true
+
+training:
+  # 训练配置
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  learning_rate: 5.0e-5
+  warmup_steps: 500
+  max_steps: 10000
+
+  # 分布式训练
+  distributed:
+    enabled: false
+    backend: null
+
+  # 混合精度
+  mixed_precision: fp16
+
+  # 优化器
+  optimizer: adamw
+  weight_decay: 0.01
+
+memory:
+  # 内存优化
+  offload_optimizer: false
+  cpu_offload: false
+  max_memory_per_gpu: "8GB"
+
+vgpu:
+  # Virtual Blackwell配置
+  enabled: false
+  max_virtual_gpus: 1
+
+perf:
+  # 性能优化
+  compile_model: false
+  use_torch_compile: false
+  profile_enabled: false
+
+extensions:
+  # 扩展功能（全部禁用以减少资源占用）
+  rag:
+    enabled: false
+  knowledge_graph:
+    enabled: false
+  mcp:
+    enabled: false
+
+plugins:
+  # 插件配置
+  enabled: []
+
+monitoring:
+  # 监控配置
+  tensorboard: true
+  wandb: false
+  metrics_interval: 100
+
+checkpoints:
+  # 检查点配置
+  save_interval: 1000
+  keep_last_n: 3
+  save_optimizer: false
