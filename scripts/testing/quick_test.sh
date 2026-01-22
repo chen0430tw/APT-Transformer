@@ -20,11 +20,11 @@ fi
 echo "========================================"
 echo "2️⃣  训练后端代码检查"
 echo "========================================"
-if [ -f "tools/check_training_backends.py" ]; then
-    python tools/check_training_backends.py
+if [ -f "tools/diagnostics/check_training_backends.py" ]; then
+    python tools/diagnostics/check_training_backends.py
     echo ""
 else
-    echo "⚠️  tools/check_training_backends.py 不存在，跳过"
+    echo "⚠️  tools/diagnostics/check_training_backends.py 不存在，跳过"
     echo ""
 fi
 
@@ -32,11 +32,11 @@ fi
 echo "========================================"
 echo "3️⃣  HLBD系统诊断"
 echo "========================================"
-if [ -f "tools/diagnose_issues.py" ]; then
-    python tools/diagnose_issues.py
+if [ -f "tools/diagnostics/diagnose_issues.py" ]; then
+    python tools/diagnostics/diagnose_issues.py
     echo ""
 else
-    echo "⚠️  tools/diagnose_issues.py 不存在，跳过"
+    echo "⚠️  tools/diagnostics/diagnose_issues.py 不存在，跳过"
     echo ""
 fi
 
