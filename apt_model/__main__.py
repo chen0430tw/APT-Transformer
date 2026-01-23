@@ -61,12 +61,40 @@ def run_chat():
 
     # Check if we have a trained model
     import os
-    if not os.path.exists('checkpoints'):
-        print("❌ Error: No trained model found")
+    import glob
+
+    checkpoint_dir = './checkpoints'
+
+    # Check if checkpoints directory exists
+    if not os.path.exists(checkpoint_dir):
+        print(f"❌ Error: Checkpoint directory not found")
+        print(f"   Looking for models in: {os.path.abspath(checkpoint_dir)}")
+        print()
         print("   Please train a model first:")
         print("   python quickstart.py --profile lite")
         print()
         return 1
+
+    # Check if there are actual model files
+    model_files = (
+        glob.glob(os.path.join(checkpoint_dir, '*.pt')) +
+        glob.glob(os.path.join(checkpoint_dir, '*.pth')) +
+        glob.glob(os.path.join(checkpoint_dir, '*.bin')) +
+        glob.glob(os.path.join(checkpoint_dir, '**/pytorch_model.bin'), recursive=True)
+    )
+
+    if not model_files:
+        print(f"❌ Error: No model files found in checkpoint directory")
+        print(f"   Checkpoint directory: {os.path.abspath(checkpoint_dir)}")
+        print(f"   Looking for: *.pt, *.pth, *.bin files")
+        print()
+        print("   Please train a model first:")
+        print("   python quickstart.py --profile lite")
+        print()
+        return 1
+
+    print(f"✓ Found {len(model_files)} model file(s) in {checkpoint_dir}")
+    print()
 
     # Simple chat loop
     print("Type 'exit' or 'quit' to exit")
