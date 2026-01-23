@@ -1,66 +1,62 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-apt_model - Legacy CLI entry point
+apt_model - APT CLI entry point
 
-⚠️ This is a compatibility layer. New projects should use APT 2.0.
+Command-line interface for APT Model training and inference.
 
 Usage:
     python -m apt_model chat        # Interactive chat
-    python -m apt_model train       # Training (redirects to quickstart)
+    python -m apt_model train       # Training
     python -m apt_model --help      # Show help
 
-For APT 2.0 (recommended):
-    python quickstart.py            # New recommended way
+Alternative entry points:
+    python quickstart.py            # Quick start with profiles
+    python -c "from apt.core..."    # Python API
 """
 
 import sys
-import warnings
 
 
 def show_help():
     """Show help message"""
     print("""
-APT Model - Legacy CLI (Compatibility Layer)
-
-⚠️  WARNING: This is APT 1.0 compatibility mode
-⚠️  Recommended: Use APT 2.0 instead (see below)
+APT Model - Command Line Interface
 
 Available commands:
     python -m apt_model chat        Interactive chat
     python -m apt_model train       Start training
     python -m apt_model --help      Show this help
 
-APT 2.0 (Recommended):
-    python quickstart.py --help                    # Quick start
-    python quickstart.py --profile lite --demo     # View config
-    python quickstart.py --profile lite            # Start training
+Alternative entry points:
+    # Quick start CLI (profile-based)
+    python quickstart.py --help
+    python quickstart.py --profile lite --demo
+    python quickstart.py --profile lite
 
-    Or use Python API:
-        from apt.core.config import load_profile
-        from apt.trainops.engine import Trainer
+    # Python API (programmatic)
+    from apt.core.config import load_profile
+    from apt.trainops.engine import Trainer
 
-        config = load_profile('lite')
-        trainer = Trainer(config)
-        trainer.train()
+    config = load_profile('lite')
+    trainer = Trainer(config)
+    trainer.train()
 
 Documentation:
-    - APT 2.0 Guide: docs/ARCHITECTURE_2.0.md
-    - Migration Guide: docs/ARCHITECTURE_2.0.md
+    - CLI Guide: docs/CLI_STATUS.md
+    - APT 2.0 Architecture: docs/ARCHITECTURE_2.0.md
     - All docs: docs/README.md
 
-Why migrate to APT 2.0?
-    ✅ Profile-based configuration (YAML)
-    ✅ Virtual Blackwell support (100K+ GPUs)
-    ✅ Better architecture (DDD)
-    ✅ All new features only in APT 2.0
+Choose your preferred entry point:
+    • apt_model CLI - Traditional command-line interface
+    • quickstart.py - Profile-based quick start
+    • apt.* API - Programmatic Python API
 """)
 
 
 def run_chat():
     """Run interactive chat"""
-    print("🤖 Starting APT Chat (Compatibility Mode)...")
-    print("⚠️  Note: This uses APT 1.0 compatibility layer")
+    print("🤖 Starting APT Chat...")
     print()
 
     # Check if we have a trained model
@@ -118,13 +114,8 @@ def run_chat():
 
 
 def run_train():
-    """Run training (redirect to quickstart)"""
-    print("🚂 APT Training (Compatibility Mode)")
-    print()
-    print("⚠️  Redirecting to APT 2.0 quickstart...")
-    print()
-    print("For better experience, use:")
-    print("    python quickstart.py --help")
+    """Run training"""
+    print("🚂 APT Training")
     print()
 
     # Parse arguments
@@ -155,13 +146,6 @@ def run_train():
 
 def main():
     """Main entry point"""
-    # Show deprecation warning
-    warnings.warn(
-        "apt_model CLI is deprecated. Please use APT 2.0 (quickstart.py or apt.* package)",
-        DeprecationWarning,
-        stacklevel=2
-    )
-
     # Parse command
     if len(sys.argv) < 2 or sys.argv[1] in ['-h', '--help', 'help']:
         show_help()

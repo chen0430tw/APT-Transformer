@@ -1,31 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-apt_model.webui.app - Legacy WebUI entry point
+apt_model.webui.app - APT WebUI entry point
 
-⚠️ Deprecated: This is a compatibility wrapper
-⚠️ Recommended: Use apt.apps.webui instead
+Web interface for APT Model training and inference.
 
 Usage:
     python -m apt_model.webui.app [options]
+    python -m apt_model.webui.app --checkpoint-dir ./checkpoints
 """
 
 import sys
-import warnings
-
-warnings.warn(
-    "apt_model.webui.app is deprecated. Use apt.apps.webui instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
 
 
 def main():
     """Main entry point for WebUI"""
-    print("🌐 APT WebUI (Compatibility Mode)")
-    print()
-    print("⚠️  This is APT 1.0 compatibility wrapper")
-    print("⚠️  Recommended: Use APT 2.0 webui instead")
+    print("🌐 APT WebUI")
     print()
 
     try:

@@ -1,18 +1,13 @@
 """
-apt_model.webui - Legacy WebUI compatibility package
+apt_model.webui - APT WebUI Package
 
-This redirects to apt.apps.webui (APT 2.0)
+Web interface for APT Model training and inference.
 
-⚠️ Deprecated: Use apt.apps.webui instead
+Usage:
+    python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+
+This wraps apt.apps.webui functionality with a CLI interface.
 """
-
-import warnings
-
-warnings.warn(
-    "apt_model.webui is deprecated. Use apt.apps.webui instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
 
 # Re-export from new location
 try:

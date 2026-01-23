@@ -1,31 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-apt_model.api.server - Legacy API server entry point
+apt_model.api.server - APT API Server entry point
 
-⚠️ Deprecated: This is a compatibility wrapper
-⚠️ Recommended: Use apt.apps.api instead
+REST API server for APT Model inference.
 
 Usage:
     python -m apt_model.api.server [options]
+    python -m apt_model.api.server --checkpoint-dir ./checkpoints
 """
 
 import sys
-import warnings
-
-warnings.warn(
-    "apt_model.api.server is deprecated. Use apt.apps.api instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
 
 
 def main():
     """Main entry point for API server"""
-    print("🚀 APT API Server (Compatibility Mode)")
-    print()
-    print("⚠️  This is APT 1.0 compatibility wrapper")
-    print("⚠️  Recommended: Use APT 2.0 API instead")
+    print("🚀 APT API Server")
     print()
 
     try:

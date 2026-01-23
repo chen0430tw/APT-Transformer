@@ -1,24 +1,18 @@
 """
-apt_model - Legacy compatibility package
+apt_model - APT CLI Package
 
-This package provides backward compatibility for APT 1.0 commands.
-All functionality is now provided by the apt.* package (APT 2.0).
+Command-line interface for APT Model training and inference.
 
-⚠️ Compatibility period: Until 2026-07-22
-⚠️ New projects should use apt.* instead
+This is one of the official entry points for APT (along with quickstart.py and apt.* API).
 
-For migration guide, see: docs/ARCHITECTURE_2.0.md
+Usage:
+    python -m apt_model chat        # Interactive chat
+    python -m apt_model train       # Training
+    python -m apt_model --help      # Show help
+
+For Python API approach, see: quickstart.py or apt.* modules
 """
 
-import warnings
-
-warnings.warn(
-    "apt_model is deprecated and will be removed after 2026-07-22. "
-    "Please migrate to apt.* package (APT 2.0). "
-    "See docs/ARCHITECTURE_2.0.md for migration guide.",
-    DeprecationWarning,
-    stacklevel=2
-)
-
-__version__ = "1.0.0-compat"
+__version__ = "2.0.0"
 __all__ = []
+

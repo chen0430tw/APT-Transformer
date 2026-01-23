@@ -1,18 +1,13 @@
 """
-apt_model.api - Legacy API compatibility package
+apt_model.api - APT API Package
 
-This redirects to apt.apps.api (APT 2.0)
+REST API server for APT Model inference.
 
-⚠️ Deprecated: Use apt.apps.api instead
+Usage:
+    python -m apt_model.api.server --checkpoint-dir ./checkpoints
+
+This wraps apt.apps.api functionality with a CLI interface.
 """
-
-import warnings
-
-warnings.warn(
-    "apt_model.api is deprecated. Use apt.apps.api instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
 
 # Re-export from new location
 try:

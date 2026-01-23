@@ -20,43 +20,45 @@ APT Model 是一个生产就绪的Transformer训练平台，提供完整的训�
 
 ---
 
-## 🚨 重要：入口裁决（避免混乱）
+## 🚀 多种入口方式（选择你喜欢的）
 
-### ✅ 唯一推荐入口：APT 2.0（`apt.*`）
+APT 提供三种互补的入口方式，就像 chkdsk/dism 或 find/grep 一样，根据场景选择：
+
+### 1. 快速开始 CLI（推荐新手）
+
+```bash
+# Profile 配置驱动，最简单
+python quickstart.py --list-profiles
+python quickstart.py --profile lite --demo
+python quickstart.py --profile lite
+```
+
+**适合场景**：快速原型、入门学习、配置实验
+
+### 2. 传统 CLI（推荐脚本）
+
+```bash
+# 传统命令行风格
+python -m apt_model chat
+python -m apt_model train --epochs 20
+python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+```
+
+**适合场景**：命令行脚本、CI/CD、熟悉传统 CLI 的用户
+
+### 3. Python API（推荐开发）
 
 ```python
+# 编程式接口，最灵活
 from apt.core.config import load_profile
 from apt.trainops.engine import Trainer
 
-config = load_profile('standard')  # lite/standard/pro/full
+config = load_profile('standard')
 trainer = Trainer(config)
 trainer.train()
 ```
 
-**为什么必须使用 APT 2.0？**
-- ✅ 配置驱动（YAML Profile）- 无需硬编码参数
-- ✅ DDD 架构 - Model/TrainOps/vGPU/APX 清晰分离
-- ✅ Virtual Blackwell - 支持极限规模训练（100K+ GPUs）
-- ✅ 未来新功能仅在 APT 2.0 提供
-
-### ⚠️ 禁止使用：Legacy 工具链（`apt_model.*`）
-
-```python
-# ❌ 不要使用！会导致：
-# - 配置混乱（硬编码 vs Profile）
-# - Tokenizer 不一致
-# - 无法使用 Virtual Blackwell
-# - 无法使用 APX 打包
-# - 未来不会有新功能
-
-from apt_model.training.trainer import train_model  # ❌ Legacy
-python -m apt_model train  # ❌ Legacy
-```
-
-**兼容期说明**：
-- `apt_model.*` 仅提供 6 个月兼容期（至 2026-07-22）
-- 仅用于旧项目平滑迁移，**新项目禁止使用**
-- 兼容期后将完全移除
+**适合场景**：集成到项目、自定义流程、高级控制
 
 ---
 
@@ -68,7 +70,7 @@ python -m apt_model train  # ❌ Legacy
 - **领域驱动设计（DDD）** - Model（模型定义）、TrainOps（训练操作）、vGPU（GPU虚拟化）、APX（模型打包）四大领域清晰分离
 - **配置驱动** - YAML Profile 系统（lite/standard/pro/full），一键切换配置
 - **Virtual Blackwell** - GPU 虚拟化技术栈，支持极限规模训练（100K+ GPUs）
-- **向后兼容** - 6 个月迁移期（至 2026-07-22），完整的 compat 层
+- **多种入口** - CLI、Python API、快速开始脚本，选择你喜欢的方式
 
 ### 🚀 核心功能
 - **完整的训练流程** - 从数据处理到模型部署的完整pipeline
@@ -95,7 +97,7 @@ python -m apt_model train  # ❌ Legacy
 
 ## 快速开始
 
-### ⚡ 超快速上手（30秒）- APT 2.0 推荐方式
+### ⚡ 超快速上手（30秒）
 
 ```bash
 # 0. 克隆仓库
@@ -131,7 +133,7 @@ trainer = Trainer(config)
 trainer.train()
 ```
 
-**💡 这是 APT 2.0 的唯一推荐入口** - 使用 Profile 配置系统和 `apt.trainops.engine.Trainer`
+**💡 三种方式任选** - quickstart.py（最简单）、apt_model CLI（传统）、apt.* API（编程）
 
 <details>
 <summary><b>📋 查看完整安装步骤</b></summary>
@@ -245,9 +247,47 @@ python -m apt_model --help
 
 ### 5分钟上手
 
-## ✅ APT 2.0 推荐方式（唯一主入口）
+选择你喜欢的方式开始：
 
-#### 1. 使用 Profile 配置系统
+## 方式 1：快速开始 CLI（最简单）
+
+```bash
+# 查看所有配置选项
+python quickstart.py --list-profiles
+
+# 查看配置详情
+python quickstart.py --profile lite --demo
+
+# 开始训练
+python quickstart.py --profile lite --epochs 20
+```
+
+**优点**：Profile 配置驱动、一键启动、最适合入门
+
+---
+
+## 方式 2：传统 CLI（最灵活）
+
+```bash
+# 交互式对话
+python -m apt_model chat
+
+# 训练模型
+python -m apt_model train --epochs 20 --batch-size 16
+
+# 启动 WebUI
+python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+
+# 启动 API 服务
+python -m apt_model.api.server --checkpoint-dir ./checkpoints
+```
+
+**优点**：传统命令行风格、脚本友好、熟悉的接口
+
+---
+
+## 方式 3：Python API（最强大）
+
 ```python
 from apt.core.config import load_profile
 from apt.trainops.engine import Trainer
@@ -259,65 +299,17 @@ config = load_profile('standard')
 print(f"Model: {config.model.architecture}")
 print(f"Hidden size: {config.model.hidden_size}")
 print(f"Batch size: {config.training.batch_size}")
-print(f"VGPU enabled: {config.vgpu.enabled}")
 
-# 使用配置训练
+# 自定义配置（可选）
+config.training.batch_size = 32
+config.training.learning_rate = 1e-4
+
+# 开始训练
 trainer = Trainer(config)
 trainer.train()
 ```
 
-**💡 为什么选择 APT 2.0？**
-- ✅ 配置驱动（YAML Profile），无需硬编码
-- ✅ DDD 架构（Model/TrainOps/vGPU/APX），清晰分离
-- ✅ Virtual Blackwell 支持（极限规模训练）
-- ✅ 未来所有新功能仅在 APT 2.0 提供
-
----
-
-## ⚠️ Legacy/Compat 方式（仅过渡期，不推荐）
-
-> **警告**：`apt_model.*` 是旧版工具链，仅提供 6 个月兼容期（至 2026-07-22）。
-> **问题**：配置硬编码、tokenizer 不一致、无法使用新功能（Virtual Blackwell、APX 打包等）。
-> **建议**：所有新项目请使用 APT 2.0 的 `apt.*` 入口。
-
-<details>
-<summary><b>⚠️ 点击展开 Legacy 代码（不推荐）</b></summary>
-
-#### Legacy: 启动 WebUI
-```bash
-# ⚠️ Legacy toolchain - 仅兼容期使用
-python -m apt_model.webui.app --checkpoint-dir ./checkpoints
-```
-
-#### Legacy: 训练模型
-```python
-# ⚠️ Legacy toolchain - 仅兼容期使用
-from apt_model.training.trainer import train_model
-
-model, tokenizer, config = train_model(
-    epochs=20,
-    batch_size=8,
-    learning_rate=3e-5,
-    save_path="./my_model"
-)
-```
-
-#### Legacy: 文本生成
-```python
-# ⚠️ Legacy toolchain - 仅兼容期使用
-from apt_model.generation.generator import generate_natural_text
-
-text, tokens, logits, confidence = generate_natural_text(
-    model,
-    tokenizer,
-    prompt="人工智能",
-    max_steps=50,
-    temperature=0.8
-)
-print(text)
-```
-
-</details>
+**优点**：编程式控制、集成友好、最灵活定制
 
 ---
 
