@@ -18,7 +18,15 @@
 
 APT Model 是一个生产就绪的Transformer训练平台，提供完整的训练、推理、评估和部署工具链。支持中英文多语言，具备丰富的插件生态系统和分布式训练能力。
 
+**🎉 APT 2.0 架构** - 全新的领域驱动设计（DDD），清晰分离 Model（模型）、TrainOps（训练）、vGPU（虚拟化）、APX（打包）四大领域，配置驱动的 Profile 系统。
+
 ## 特性
+
+### 🎯 APT 2.0 架构
+- **领域驱动设计（DDD）** - Model（模型定义）、TrainOps（训练操作）、vGPU（GPU虚拟化）、APX（模型打包）四大领域清晰分离
+- **配置驱动** - YAML Profile 系统（lite/standard/pro/full），一键切换配置
+- **Virtual Blackwell** - GPU 虚拟化技术栈，支持极限规模训练（100K+ GPUs）
+- **向后兼容** - 6 个月迁移期（至 2026-07-22），完整的 compat 层
 
 ### 🚀 核心功能
 - **完整的训练流程** - 从数据处理到模型部署的完整pipeline
@@ -175,13 +183,32 @@ python -m apt_model --help
 
 ### 5分钟上手
 
-#### 1. 启动WebUI（推荐）
+#### 1. 使用 Profile 配置（APT 2.0 推荐）
+```python
+from apt.core.config import load_profile
+
+# 加载配置 profile
+config = load_profile('standard')  # lite/standard/pro/full
+
+# 查看配置
+print(f"Model: {config.model.architecture}")
+print(f"Hidden size: {config.model.hidden_size}")
+print(f"Batch size: {config.training.batch_size}")
+print(f"VGPU enabled: {config.vgpu.enabled}")
+
+# 使用配置训练
+from apt.trainops.engine import Trainer
+trainer = Trainer(config)
+trainer.train()
+```
+
+#### 2. 启动WebUI（推荐）
 ```bash
 python -m apt_model.webui.app --checkpoint-dir ./checkpoints
 ```
 访问 http://localhost:7860 即可使用交互式界面。
 
-#### 2. 训练模型
+#### 3. 训练模型（传统方式）
 ```python
 from apt_model.training.trainer import train_model
 
@@ -194,7 +221,7 @@ model, tokenizer, config = train_model(
 )
 ```
 
-#### 3. 文本生成
+#### 4. 文本生成
 ```python
 from apt_model.generation.generator import generate_natural_text
 
@@ -317,37 +344,47 @@ trainer.train(model, optimizer)
 
 ## 项目结构
 
+### APT 2.0 架构（新）
+
 ```
 APT-Transformer/
-├── apt_model/              # 核心代码包
-│   ├── config/             # 配置文件和设置管理
-│   ├── modeling/           # 模型定义（APT、Multimodal、KG）
-│   ├── training/           # 训练器、优化器、监控
-│   ├── generation/         # 文本生成和评估
-│   ├── plugins/            # 插件系统（30+插件）
-│   ├── rl/                 # 强化学习（RLHF/DPO/GRPO）
-│   ├── pretraining/        # 自监督预训练（对比学习/MLM）
-│   ├── core/               # 核心模块
-│   │   ├── graph_rag/      # GraphRAG知识图谱
-│   │   ├── training/       # SOSA训练监控
-│   │   └── api_providers.py # 统一API接口
-│   ├── api/                # REST API服务
-│   ├── webui/              # Gradio Web界面
-│   ├── cli/                # 命令行工具
-│   └── utils/              # 工具函数
-├── tests/                  # 单元测试和集成测试（20+测试）
+├── apt/                    # APT 2.0 核心架构
+│   ├── model/              # 【Model Domain】模型定义（what）
+│   │   ├── architectures/  # APT、GPT-5、Claude-4、Multimodal等
+│   │   ├── layers/         # Embeddings、RoPE、MoE、LeftSpin等
+│   │   ├── tokenization/   # 中文分词、多语言支持
+│   │   └── extensions/     # RAG、KG、MCP集成
+│   ├── trainops/           # 【TrainOps Domain】训练操作（how）
+│   │   ├── engine/         # Trainer、Finetuner、混合精度
+│   │   ├── data/           # DataLoader、数据处理
+│   │   ├── checkpoints/    # Checkpoint管理
+│   │   ├── eval/           # 训练监控、梯度监控
+│   │   └── distributed/    # 分布式训练、极限规模训练
+│   ├── vgpu/               # 【vGPU Domain】GPU虚拟化（where）
+│   │   ├── runtime/        # Virtual Blackwell、VGPU Stack
+│   │   └── scheduler/      # 资源估算、调度
+│   ├── apx/                # 【APX Domain】模型打包（package）
+│   ├── compat/             # 向后兼容层（6个月迁移期）
+│   └── core/               # 核心基础设施
+│       └── config/         # Profile配置系统
+├── profiles/               # 配置文件（lite/standard/pro/full）
+├── apt_model/              # 原有工具和脚本（保留）
+├── archived/               # 归档目录
+│   └── apt_model/          # 旧的 apt_model 代码（已迁移）
+├── docs/                   # 完整文档
+│   └── ARCHITECTURE_2.0.md # APT 2.0 架构文档
+├── examples/               # 使用示例
+│   └── use_profiles.py     # Profile系统使用示例
+├── tests/                  # 单元测试和集成测试
 ├── scripts/                # 工具脚本
-│   ├── launchers/          # GUI启动器
-│   └── archived/           # 归档文件
-├── examples/               # 使用示例（7+示例）
-│   ├── rl_examples/        # 强化学习示例
-│   ├── pretraining_examples/ # 预训练示例
-│   ├── graph_rag_examples/ # 知识图谱示例
-│   └── training_monitor_examples/ # 训练监控示例
-├── docs/                   # 完整文档（15+文档）
-├── requirements.txt        # 依赖列表
-└── Makefile               # 构建工具
+└── requirements.txt        # 依赖列表
 ```
+
+**核心设计原则：**
+- **Domain Driven Design（DDD）** - 按业务领域分离，而非技术层次
+- **Single Responsibility（SRP）** - 每个领域职责单一明确
+- **Configuration Over Code** - YAML配置替代代码重复
+- **Backward Compatible** - 完整的兼容层支持平滑迁移
 
 ---
 
@@ -357,6 +394,11 @@ APT-Transformer/
 **[完整文档中心](docs/README.md)** - 所有文档的导航和索引
 
 ### 📚 核心文档
+
+#### APT 2.0 架构（必读）
+- **[APT 2.0 架构文档](docs/ARCHITECTURE_2.0.md)** - 完整的 APT 2.0 架构设计、迁移指南
+- **[Profile 配置系统](examples/use_profiles.py)** - YAML 配置系统使用示例
+- **[Virtual Blackwell 指南](docs/VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md)** - GPU 虚拟化技术栈
 
 #### 入门必读
 - **[APT Model 使用手册](docs/APT_MODEL_HANDBOOK.md)** - 完整的模型使用手册
