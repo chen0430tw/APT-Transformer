@@ -106,8 +106,20 @@ cd APT-Transformer
 pip install -r requirements.txt
 pip install -e .
 
-# 2. 使用 Profile 配置训练（APT 2.0 推荐）
-python -c "
+# 2. 使用 CLI 快速开始（最简单！）
+python quickstart.py --list-profiles  # 查看所有配置
+python quickstart.py --profile lite --demo  # 查看配置详情
+python quickstart.py --profile lite  # 开始训练（开发中）
+```
+
+**✅ CLI 命令选项：**
+- `--list-profiles` - 列出所有可用 profiles (lite/standard/pro/full)
+- `--profile <name>` - 选择配置 profile（默认：lite）
+- `--demo` - 仅查看配置，不训练
+- `--epochs <N>` - 设置训练轮数（默认：10）
+
+**✅ Python 代码方式：**
+```python
 from apt.core.config import load_profile
 from apt.trainops.engine import Trainer
 
@@ -117,10 +129,9 @@ config = load_profile('lite')  # 快速开始用 lite
 # 一键启动训练
 trainer = Trainer(config)
 trainer.train()
-"
 ```
 
-**✅ 这是 APT 2.0 的唯一推荐入口** - 使用 Profile 配置系统和 `apt.trainops.engine.Trainer`
+**💡 这是 APT 2.0 的唯一推荐入口** - 使用 Profile 配置系统和 `apt.trainops.engine.Trainer`
 
 <details>
 <summary><b>📋 查看完整安装步骤</b></summary>
