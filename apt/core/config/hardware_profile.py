@@ -1,7 +1,24 @@
 ### `apt_model/config/hardware_profile.py`
 from dataclasses import dataclass
-from apt.apt_model.utils.fake_torch import get_torch
-torch = get_torch()
+
+# 尝试导入torch，如果失败则使用fake_torch
+try:
+    import torch
+except ImportError:
+    try:
+        from apt_model.utils.fake_torch import get_torch
+        torch = get_torch()
+    except ImportError:
+        # 如果都失败，创建一个简单的mock
+        class MockTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return False
+                @staticmethod
+                def device_count():
+                    return 0
+        torch = MockTorch()
 
 try:
     import psutil

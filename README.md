@@ -18,6 +18,50 @@
 
 APT Model 是一个生产就绪的Transformer训练平台，提供完整的训练、推理、评估和部署工具链。支持中英文多语言，具备丰富的插件生态系统和分布式训练能力。
 
+---
+
+## 🚀 多种入口方式（选择你喜欢的）
+
+APT 提供三种互补的入口方式，就像 chkdsk/dism 或 find/grep 一样，根据场景选择：
+
+### 1. 快速开始 CLI（推荐新手）
+
+```bash
+# Profile 配置驱动，最简单
+python quickstart.py --list-profiles
+python quickstart.py --profile lite --demo
+python quickstart.py --profile lite
+```
+
+**适合场景**：快速原型、入门学习、配置实验
+
+### 2. 传统 CLI（推荐脚本）
+
+```bash
+# 传统命令行风格
+python -m apt_model chat
+python -m apt_model train --epochs 20
+python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+```
+
+**适合场景**：命令行脚本、CI/CD、熟悉传统 CLI 的用户
+
+### 3. Python API（推荐开发）
+
+```python
+# 编程式接口，最灵活
+from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
+
+config = load_profile('standard')
+trainer = Trainer(config)
+trainer.train()
+```
+
+**适合场景**：集成到项目、自定义流程、高级控制
+
+---
+
 **🎉 APT 2.0 架构** - 全新的领域驱动设计（DDD），清晰分离 Model（模型）、TrainOps（训练）、vGPU（虚拟化）、APX（打包）四大领域，配置驱动的 Profile 系统。
 
 ## 特性
@@ -26,7 +70,7 @@ APT Model 是一个生产就绪的Transformer训练平台，提供完整的训�
 - **领域驱动设计（DDD）** - Model（模型定义）、TrainOps（训练操作）、vGPU（GPU虚拟化）、APX（模型打包）四大领域清晰分离
 - **配置驱动** - YAML Profile 系统（lite/standard/pro/full），一键切换配置
 - **Virtual Blackwell** - GPU 虚拟化技术栈，支持极限规模训练（100K+ GPUs）
-- **向后兼容** - 6 个月迁移期（至 2026-07-22），完整的 compat 层
+- **多种入口** - CLI、Python API、快速开始脚本，选择你喜欢的方式
 
 ### 🚀 核心功能
 - **完整的训练流程** - 从数据处理到模型部署的完整pipeline
@@ -60,16 +104,36 @@ APT Model 是一个生产就绪的Transformer训练平台，提供完整的训�
 git clone https://github.com/chen0430tw/APT-Transformer.git
 cd APT-Transformer
 
-# 1. 安装（二选一）
-pip install -r requirements.txt          # 完整安装
-pip install -r requirements-minimal.txt  # 最小安装
+# 1. 安装
+pip install -r requirements.txt
+pip install -e .
 
-# 2. 训练一个模型
-python -m apt_model train --data data.txt --epochs 10
-
-# 3. 文本生成
-python -m apt_model chat
+# 2. 使用 CLI 快速开始（最简单！）
+python quickstart.py --list-profiles  # 查看所有配置
+python quickstart.py --profile lite --demo  # 查看配置详情
+python quickstart.py --profile lite  # 开始训练（开发中）
 ```
+
+**✅ CLI 命令选项：**
+- `--list-profiles` - 列出所有可用 profiles (lite/standard/pro/full)
+- `--profile <name>` - 选择配置 profile（默认：lite）
+- `--demo` - 仅查看配置，不训练
+- `--epochs <N>` - 设置训练轮数（默认：10）
+
+**✅ Python 代码方式：**
+```python
+from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
+
+# 加载配置 profile（lite/standard/pro/full）
+config = load_profile('lite')  # 快速开始用 lite
+
+# 一键启动训练
+trainer = Trainer(config)
+trainer.train()
+```
+
+**💡 三种方式任选** - quickstart.py（最简单）、apt_model CLI（传统）、apt.* API（编程）
 
 <details>
 <summary><b>📋 查看完整安装步骤</b></summary>
@@ -183,66 +247,127 @@ python -m apt_model --help
 
 ### 5分钟上手
 
-#### 1. 使用 Profile 配置（APT 2.0 推荐）
+选择你喜欢的方式开始：
+
+## 方式 1：快速开始 CLI（最简单）
+
+```bash
+# 查看所有配置选项
+python quickstart.py --list-profiles
+
+# 查看配置详情
+python quickstart.py --profile lite --demo
+
+# 开始训练
+python quickstart.py --profile lite --epochs 20
+```
+
+**优点**：Profile 配置驱动、一键启动、最适合入门
+
+---
+
+## 方式 2：传统 CLI（最灵活）
+
+```bash
+# 交互式对话
+python -m apt_model chat
+
+# 训练模型
+python -m apt_model train --epochs 20 --batch-size 16
+
+# 启动 WebUI
+python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+
+# 启动 API 服务
+python -m apt_model.api.server --checkpoint-dir ./checkpoints
+```
+
+**优点**：传统命令行风格、脚本友好、熟悉的接口
+
+---
+
+## 方式 3：Python API（最强大）
+
 ```python
 from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
 
-# 加载配置 profile
-config = load_profile('standard')  # lite/standard/pro/full
+# 加载配置 profile（lite/standard/pro/full）
+config = load_profile('standard')
 
 # 查看配置
 print(f"Model: {config.model.architecture}")
 print(f"Hidden size: {config.model.hidden_size}")
 print(f"Batch size: {config.training.batch_size}")
-print(f"VGPU enabled: {config.vgpu.enabled}")
 
-# 使用配置训练
-from apt.trainops.engine import Trainer
+# 自定义配置（可选）
+config.training.batch_size = 32
+config.training.learning_rate = 1e-4
+
+# 开始训练
 trainer = Trainer(config)
 trainer.train()
 ```
 
-#### 2. 启动WebUI（推荐）
-```bash
-python -m apt_model.webui.app --checkpoint-dir ./checkpoints
-```
-访问 http://localhost:7860 即可使用交互式界面。
-
-#### 3. 训练模型（传统方式）
-```python
-from apt_model.training.trainer import train_model
-
-# 基础训练
-model, tokenizer, config = train_model(
-    epochs=20,
-    batch_size=8,
-    learning_rate=3e-5,
-    save_path="./my_model"
-)
-```
-
-#### 4. 文本生成
-```python
-from apt_model.generation.generator import generate_natural_text
-
-text, tokens, logits, confidence = generate_natural_text(
-    model,
-    tokenizer,
-    prompt="人工智能",
-    max_steps=50,
-    temperature=0.8
-)
-print(text)
-```
+**优点**：编程式控制、集成友好、最灵活定制
 
 ---
 
 ## 使用示例
 
-### WebUI服务
+### ✅ APT 2.0 训练（推荐）
 
-启动带认证的WebUI：
+```python
+from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
+
+# 加载配置
+config = load_profile('standard')  # lite/standard/pro/full
+
+# 自定义配置（可选）
+config.training.batch_size = 16
+config.training.learning_rate = 3e-4
+config.model.hidden_size = 512
+
+# 启动训练
+trainer = Trainer(config)
+trainer.train(
+    train_data="./data/train.txt",
+    eval_data="./data/eval.txt",
+    num_epochs=20
+)
+```
+
+### ✅ APT 2.0 微调（推荐）
+
+```python
+from apt.core.config import load_profile
+from apt.trainops.engine import Finetuner
+
+# 加载预训练配置
+config = load_profile('standard')
+
+# 微调
+finetuner = Finetuner(config)
+finetuner.finetune(
+    pretrained_path="./checkpoints/base_model",
+    train_data="./data/finetune.txt",
+    method="lora",  # 或 "full"
+    num_epochs=5
+)
+```
+
+---
+
+### ⚠️ Legacy WebUI/API（仅兼容期）
+
+<details>
+<summary><b>⚠️ 点击展开 Legacy 服务（不推荐）</b></summary>
+
+#### Legacy: WebUI服务
+
 ```bash
+# ⚠️ Legacy toolchain - 仅兼容期使用
 python -m apt_model.webui.app \
   --checkpoint-dir ./checkpoints \
   --username admin \
@@ -256,10 +381,10 @@ WebUI提供4个功能Tab：
 - **Checkpoint管理** - 加载和管理模型检查点
 - **推理测试** - 交互式文本生成
 
-### REST API服务
+#### Legacy: REST API服务
 
 ```bash
-# 启动API服务
+# ⚠️ Legacy toolchain - 仅兼容期使用
 python -m apt_model.api.server --checkpoint-dir ./checkpoints
 
 # 使用API生成文本
@@ -273,9 +398,56 @@ API文档自动生成：
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-### 分布式训练 ⭐ 多后端支持
+</details>
 
-APT支持5种训练后端，满足从单卡到大规模云端训练的所有需求：
+### ✅ 分布式训练（APT 2.0 推荐）
+
+```python
+from apt.core.config import load_profile
+from apt.trainops.distributed import DistributedTrainer
+
+# 加载配置
+config = load_profile('pro')  # pro/full 配置支持分布式
+
+# 配置分布式参数
+config.training.distributed = True
+config.training.num_gpus = 4
+config.training.backend = 'nccl'  # 或 'gloo'
+
+# 启动分布式训练
+trainer = DistributedTrainer(config)
+trainer.train()
+```
+
+**Virtual Blackwell 极限规模训练**（100K+ GPUs）：
+```python
+from apt.core.config import load_profile
+
+# 加载 full profile（包含 vGPU 支持）
+config = load_profile('full')
+
+# 启用 Virtual Blackwell
+config.vgpu.enabled = True
+config.vgpu.virtual_gpus = 100000  # 虚拟 GPU 数量
+config.vgpu.scheduler = 'elastic'  # 弹性调度
+
+# 训练会自动使用 vGPU 技术栈
+trainer = DistributedTrainer(config)
+trainer.train()
+```
+
+**📖 完整文档**:
+- [Virtual Blackwell 完整指南](docs/performance/VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md)
+- [APT 2.0 架构文档](docs/ARCHITECTURE_2.0.md)
+
+---
+
+### ⚠️ Legacy 训练后端（仅兼容期）
+
+<details>
+<summary><b>⚠️ 点击展开 Legacy 后端（不推荐）</b></summary>
+
+APT 1.0 支持多种训练后端（仅兼容期）：
 
 | 后端 | 特点 | 适用场景 |
 |------|------|---------|
@@ -285,60 +457,63 @@ APT支持5种训练后端，满足从单卡到大规模云端训练的所有需�
 | **HuggingFace** | W&B集成 | 生态系统集成 |
 
 ```bash
-# 查看所有可用后端
-python training/train.py --list-backends
-
-# Playground训练（推荐HLBD）
+# ⚠️ Legacy - 仅兼容期使用
 python training/train.py --backend playground --epochs 100
-
-# DeepSpeed分布式训练
 python training/train.py --backend deepspeed --num-gpus 4 --zero-stage 2
-
-# Azure ML云端训练
-python training/train.py --backend azure \
-  --azure-subscription-id <ID> \
-  --azure-resource-group <RG> \
-  --azure-workspace-name <WS>
-
-# HuggingFace + W&B
-python training/train.py --backend huggingface --wandb --epochs 100
+bash scripts/launch_distributed.sh --num-gpus 4
 ```
 
 **📖 完整文档**: [训练后端使用指南](docs/performance/TRAINING_BACKENDS.md)
 
-**传统分布式训练**（单机多卡）：
-```bash
-bash scripts/launch_distributed.sh \
-  --num-gpus 4 \
-  --batch-size 32 \
-  --data-path ./data
+</details>
+
+### ✅ 模型压缩（APT 2.0 推荐）
+
+```python
+from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
+
+# 加载配置
+config = load_profile('standard')
+
+# 启用 DBC 训练加速（20-30% 速度提升）
+config.training.compression.enabled = True
+config.training.compression.method = 'dbc'
+config.training.compression.rank_ratio = 0.5
+
+# 训练会自动应用压缩
+trainer = Trainer(config)
+trainer.train()
 ```
 
-### 模型压缩
+支持的压缩方法（通过 Profile 配置）：
+- `dbc` - DBC训练加速 ⭐（20-30%提升）
+- `quantization` - 量化压缩
+- `pruning` - 剪枝
+- `distillation` - 知识蒸馏
+- `low_rank` - 低秩分解
 
-使用DBC训练加速：
+---
+
+### ⚠️ Legacy 压缩插件（仅兼容期）
+
+<details>
+<summary><b>⚠️ 点击展开 Legacy 代码（不推荐）</b></summary>
+
 ```python
+# ⚠️ Legacy toolchain - 仅兼容期使用
 from apt_model.plugins.compression_plugin import CompressionPlugin
 
 plugin = CompressionPlugin()
-
-# 启用DBC加速（20-30%速度提升）
 model, optimizer = plugin.enable_dbc_training(
     model=model,
     rank_ratio=0.5,
     apply_to_gradients=True
 )
-
-# 正常训练即可享受加速
 trainer.train(model, optimizer)
 ```
 
-5种压缩方法可选：
-- Pruning（剪枝）
-- Quantization（量化）
-- Knowledge Distillation（知识蒸馏）
-- Low-Rank Decomposition（低秩分解）
-- DBC Training Acceleration（DBC训练加速）⭐
+</details>
 
 ---
 
@@ -367,10 +542,10 @@ APT-Transformer/
 │   ├── compat/             # 向后兼容层（6个月迁移期）
 │   └── core/               # 核心基础设施
 │       └── config/         # Profile配置系统
-├── profiles/               # 配置文件（lite/standard/pro/full）
-├── apt_model/              # 原有工具和脚本（保留）
+├── profiles/               # ✅ 配置文件（lite/standard/pro/full）
+├── apt_model/              # ⚠️ Legacy 工具链（仅兼容期，至 2026-07-22）
 ├── archived/               # 归档目录
-│   └── apt_model/          # 旧的 apt_model 代码（已迁移）
+│   └── apt_model/          # 已废弃的旧代码
 ├── docs/                   # 完整文档
 │   └── ARCHITECTURE_2.0.md # APT 2.0 架构文档
 ├── examples/               # 使用示例
@@ -480,41 +655,65 @@ pip install tensorboard matplotlib
 
 ## 常用命令
 
-### 训练相关
+### ✅ APT 2.0 推荐命令
+
 ```bash
-# 基础训练
+# 使用 Profile 配置训练
+python -c "
+from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
+config = load_profile('lite')  # lite/standard/pro/full
+trainer = Trainer(config)
+trainer.train()
+"
+
+# 或者使用 Python 脚本（推荐）
+# 创建 train.py:
+cat > train.py << 'EOF'
+from apt.core.config import load_profile
+from apt.trainops.engine import Trainer
+
+config = load_profile('standard')
+trainer = Trainer(config)
+trainer.train()
+EOF
+
+python train.py
+```
+
+### 查看可用 Profiles
+```bash
+ls profiles/
+# 输出: lite.yaml  standard.yaml  pro.yaml  full.yaml
+```
+
+---
+
+### ⚠️ Legacy 命令（仅兼容期）
+
+<details>
+<summary><b>⚠️ 点击展开 Legacy 命令（不推荐）</b></summary>
+
+```bash
+# ⚠️ Legacy toolchain - 仅兼容期使用
+
+# 训练相关
 python -m apt_model train
-
-# 指定参数训练
 python -m apt_model train --epochs 20 --batch-size 8
-
-# 分布式训练
 bash scripts/launch_distributed.sh --num-gpus 4
-```
 
-### 服务相关
-```bash
-# 启动WebUI
+# 服务相关
 python -m apt_model.webui.app --checkpoint-dir ./checkpoints
-
-# 启动API
 python -m apt_model.api.server --checkpoint-dir ./checkpoints
-
-# 交互式对话
 python -m apt_model chat
-```
 
-### 工具命令
-```bash
-# Debug诊断
+# 工具命令
 python -m apt_model debug
-
-# 配置管理
 python -m apt_model config
-
-# 查看帮助
 python -m apt_model --help
 ```
+
+</details>
 
 ---
 
