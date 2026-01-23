@@ -21,76 +21,101 @@ import sys
 def show_help():
     """Show help message"""
     print("""
-╔══════════════════════════════════════════════════════════════╗
-║          APT Model - Command Line Interface                  ║
-╚══════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════════════════╗
+║              APT Model - Command Line Interface                        ║
+╚════════════════════════════════════════════════════════════════════════╝
 
-📋 Basic Commands:
-    python -m apt_model chat        Interactive chat with trained model
-    python -m apt_model train       Start training
-    python -m apt_model --help      Show this help
+🚀 TRAINING:
+  train              Train model
+  train-custom       Train with custom dataset
+  fine-tune          Fine-tune pretrained model
+  train-hf           Train HuggingFace compatible model
+  distill            Knowledge distillation
+  train-reasoning    Train logical reasoning
 
-🌐 Web Services:
-    python -m apt_model.webui.app --checkpoint-dir ./checkpoints
-        Launch WebUI (Gradio interface)
-        Options: --port, --share, --username, --password
+💬 INTERACTIVE:
+  chat               Interactive chat
 
-    python -m apt_model.api.server --checkpoint-dir ./checkpoints
-        Launch REST API server (FastAPI)
-        Options: --port, --host, --api-key, --reload
+📊 EVALUATION:
+  evaluate (eval)    Evaluate model
+  visualize          Generate charts
+  compare            Compare models
+  test               Test model
 
-📊 Training Options:
-    python -m apt_model train [options]
-        --epochs N          Number of training epochs (default: 10)
-        --batch-size N      Batch size (default: 16)
-        --data PATH         Training data path
+🔧 TOOLS:
+  clean-cache        Clean cache
+  estimate           Estimate training time
+  config             Configuration
+  debug              Debug mode
 
-💬 Chat Options:
-    python -m apt_model chat
-        Requires trained model in ./checkpoints/
-        Supports: *.pt, *.pth, *.bin files
+📋 INFO:
+  info               Show info
+  list               List resources
+  size               Calculate size
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛠️ MAINTENANCE:
+  prune              Delete old models
+  backup             Backup models
 
-🚀 Alternative Entry Points:
+📦 DATA:
+  process-data       Process datasets
 
-1. Quick Start CLI (Profile-based)
-    python quickstart.py --help
+🌐 DISTRIBUTION:
+  upload             Upload models
+  export-ollama      Export to Ollama
+
+🌐 WEB SERVICES:
+  python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+  python -m apt_model.api.server --checkpoint-dir ./checkpoints
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 COMMON OPTIONS:
+  --epochs N             Training epochs (default: 20)
+  --batch-size N         Batch size (default: 8)
+  --learning-rate N      Learning rate (default: 3e-5)
+  --save-path PATH       Model save path
+  --model-path PATH      Model load path
+  --temperature N        Generation temperature (default: 0.7)
+  --top-p N              Nucleus sampling (default: 0.9)
+  --max-length N         Max generation length (default: 50)
+  --force-cpu            Force CPU
+  --language LANG        Interface language (zh_CN/en_US)
+  --data-path PATH       Training data path
+  --tokenizer-type TYPE  Tokenizer type
+  --monitor-resources    Monitor resources
+  --create-plots         Create plots
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 EXAMPLES:
+  python -m apt_model train --epochs 50
+  python -m apt_model fine-tune --model-path ./pretrained
+  python -m apt_model chat --temperature 0.9
+  python -m apt_model evaluate
+  python -m apt_model export-ollama --model-path ./my_model
+  python -m apt_model.webui.app --port 8080
+  python -m apt_model.api.server --api-key secret
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 ALTERNATIVE ENTRY POINTS:
+
+  quickstart.py (Profile-based)
     python quickstart.py --profile lite --demo
-    python quickstart.py --profile lite
 
-2. Python API (Programmatic)
+  apt.* API (Programmatic)
     from apt.core.config import load_profile
     from apt.trainops.engine import Trainer
-
     config = load_profile('lite')
     trainer = Trainer(config)
     trainer.train()
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📚 Documentation:
-    • CLI Guide:         docs/CLI_STATUS.md
-    • APT 2.0 Architecture: docs/ARCHITECTURE_2.0.md
-    • All Documentation: docs/README.md
+📚 DOCS: docs/CLI_STATUS.md | docs/ARCHITECTURE_2.0.md | docs/README.md
 
-💡 Choose your preferred entry point:
-    • apt_model CLI    - Traditional command-line interface (this)
-    • quickstart.py    - Profile-based quick start
-    • apt.* API        - Programmatic Python API
-
-Examples:
-    # Start WebUI on custom port
-    python -m apt_model.webui.app --port 8080 --checkpoint-dir ./my_models
-
-    # Train with custom parameters
-    python -m apt_model train --epochs 50 --batch-size 32 --data ./data.txt
-
-    # Launch API with authentication
-    python -m apt_model.api.server --api-key my-secret-key --port 8000
-
-    # Interactive chat
-    python -m apt_model chat
+For detailed help: python -m apt_model <command> --help
 """)
 
 
