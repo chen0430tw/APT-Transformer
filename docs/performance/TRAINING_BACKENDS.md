@@ -440,11 +440,11 @@ deepspeed train_deepspeed.py --train-batch-size 32
 
 ## 📚 相关文档
 
-- [HLBD数据集生成](generate_hlbd_hardcore.py)
-- [模型验证指南](verify_hlbd_model.py)
-- [可视化使用指南](VISUALIZATION_GUIDE.md)
+- [HLBD数据集生成](../../tools/data_generation/generate_hlbd_hardcore.py)
+- [模型验证指南](../../tools/diagnostics/verify_hlbd_model.py)
+- [可视化使用指南](../product/VISUALIZATION_GUIDE.md)
 - [训练恢复指南](training_resume_guide.py)
-- [问题诊断工具](diagnose_issues.py)
+- [问题诊断工具](../../tools/diagnostics/diagnose_issues.py)
 
 ---
 

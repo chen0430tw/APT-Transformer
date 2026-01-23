@@ -393,9 +393,9 @@ from apt_model.utils import get_device, set_seed                    # 工具
 
 ## 📚 参考资料
 
-- [APT模型训练指南](./README.md)
-- [Optuna超参数优化](./OPTUNA_GUIDE.md)
-- [Debug模式使用](./apt_model/config/settings_manager.py)
+- [APT模型训练指南](../../README.md)
+- [Optuna超参数优化](../product/OPTUNA_GUIDE.md)
+- [Debug模式使用](../../apt/core/config/settings_manager.py)
 
 ---
 

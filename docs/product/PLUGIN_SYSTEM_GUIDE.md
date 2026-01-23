@@ -2740,9 +2740,9 @@ for plugin_name in registered_plugins:
 ### APT 相关文档
 
 - [插件系统架构](PLUGIN_SYSTEM.md) - 插件系统设计文档
-- [DeepSeek 训练指南](DEEPSEEK_TRAINING_GUIDE.md) - MoE 训练教程
-- [图脑训练教程](GRAPH_BRAIN_TRAINING_GUIDE.md) - 图推理架构
-- [数据预处理指南](DATA_PREPROCESSING_GUIDE.md) - 数据清洗流程
+- [DeepSeek 训练指南](../kernel/DEEPSEEK_TRAINING_GUIDE.md) - MoE 训练教程
+- [图脑训练教程](../memory/GRAPH_BRAIN_TRAINING_GUIDE.md) - 图推理架构
+- [数据预处理指南](../kernel/DATA_PREPROCESSING_GUIDE.md) - 数据清洗流程
 
 ### 代码示例
 

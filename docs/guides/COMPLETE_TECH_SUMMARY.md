@@ -45,7 +45,7 @@
 | 长对话、RAG、知识问答 | **apt-mind** | L0 + L2 | `enable('mind')` |
 | 完整演示、高级开发 | apt-max | L0+L1+L2+L3 | `enable('max')` |
 
-详见 [DISTRIBUTION_MODES.md](../DISTRIBUTION_MODES.md) 和 [ARCHITECTURE.md](../ARCHITECTURE.md)
+详见 [DISTRIBUTION_MODES.md](DISTRIBUTION_MODES.md) 和 [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 ---
 

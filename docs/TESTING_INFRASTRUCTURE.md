@@ -392,9 +392,9 @@ HELP_ONLY_COMMANDS = {
 
 - [CLI命令增强文档](CLI_ENHANCEMENTS.md) - Profile、Pipeline、模块选择
 - [高级CLI命令文档](ADVANCED_CLI_COMMANDS.md) - MoE、Blackwell、AIM、NPU、RAG、MXFP4
-- [代码检查报告](../CODE_CHECK_REPORT.md) - 综合代码质量检查结果
-- [训练后端指南](TRAINING_BACKENDS.md) - 训练后端使用指南
-- [可视化指南](VISUALIZATION_GUIDE.md) - 可视化使用指南
+- [代码检查报告](../archived/reports/CODE_CHECK_REPORT.md) - 综合代码质量检查结果
+- [训练后端指南](performance/TRAINING_BACKENDS.md) - 训练后端使用指南
+- [可视化指南](product/VISUALIZATION_GUIDE.md) - 可视化使用指南
 
 ---
 

@@ -522,7 +522,7 @@ Warning: Vocabulary full, using [UNK]
 - [HLBD Hardcore V2总结](HLBD_V2_SUMMARY.md)
 - [数据集完成总结](DATASETS_COMPLETION_SUMMARY.md)
 - [HLBD Hardcore训练指南](HLBD_HARDCORE_TRAINING.md)
-- [训练后端使用](docs/TRAINING_BACKENDS.md)
+- [训练后端使用](../performance/TRAINING_BACKENDS.md)
 
 ## 🎉 总结
 

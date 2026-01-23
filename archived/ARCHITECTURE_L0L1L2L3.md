@@ -561,9 +561,9 @@ from apt_core.modeling import *
 
 ## 🔗 相关文档
 
-- [DISTRIBUTION_MODES.md](./DISTRIBUTION_MODES.md) - 三档发行版配置
-- [RESTRUCTURE_PLAN.md](./RESTRUCTURE_PLAN.md) - 详细迁移计划
-- [COMPLETE_TECH_SUMMARY.md](./docs/COMPLETE_TECH_SUMMARY.md) - 按层级重排的技术总览
+- [DISTRIBUTION_MODES.md](../docs/guides/DISTRIBUTION_MODES.md) - 三档发行版配置
+- [RESTRUCTURE_PLAN.md](reports/RESTRUCTURE_PLAN.md) - 详细迁移计划
+- [COMPLETE_TECH_SUMMARY.md](../docs/guides/COMPLETE_TECH_SUMMARY.md) - 按层级重排的技术总览
 
 ---
 

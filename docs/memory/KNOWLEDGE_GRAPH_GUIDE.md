@@ -591,8 +591,8 @@ question = "感冒有哪些症状？"
 
 ## 📞 技术支持
 
-- **完整文档**: [README.md](./README.md)
-- **RAG指南**: [rag_integration.py](apt_model/modeling/rag_integration.py)
+- **完整文档**: [README.md](../../README.md)
+- **RAG指南**: [rag_integration.py](../../apt/memory/rag_integration.py)
 - **问题反馈**: GitHub Issues
 
 ---

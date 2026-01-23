@@ -395,11 +395,11 @@ dfb8a2b 集成 AIM-Memory 惯性锚定镜像记忆系统
 
 ## 📚 相关文档
 
-- [AIM-Memory 技术指南](docs/AIM_MEMORY_GUIDE.md)
-- [AIM-NC 技术指南](docs/AIM_NC_GUIDE.md)
-- [Agent 系统指南](docs/AGENT_SYSTEM_GUIDE.md)
-- [完整技术总结](docs/COMPLETE_TECH_SUMMARY.md)
-- [集成总结](docs/INTEGRATION_SUMMARY.md)
+- [AIM-Memory 技术指南](../../docs/memory/AIM_MEMORY_GUIDE.md)
+- [AIM-NC 技术指南](../../docs/memory/AIM_NC_GUIDE.md)
+- [Agent 系统指南](../../docs/product/AGENT_SYSTEM_GUIDE.md)
+- [完整技术总结](../../docs/guides/COMPLETE_TECH_SUMMARY.md)
+- [集成总结](../../docs/guides/INTEGRATION_SUMMARY.md)
 
 ---
 

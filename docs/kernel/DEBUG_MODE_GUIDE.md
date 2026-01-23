@@ -455,8 +455,8 @@ python -m apt_model config --reset
 ## 🔗 相关文档
 
 - [原Debug模式检查报告](./debug_mode_analysis.md)
-- [配置文件参考](./apt_model/config/settings.yaml)
-- [日志系统文档](./apt_model/utils/logging_utils.py)
+- [配置文件参考](../../apt/core/config/settings.yaml)
+- [日志系统文档](../../archived/apt_model/utils/logging_utils.py)
 
 ---
 

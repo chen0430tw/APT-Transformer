@@ -466,8 +466,8 @@ print("\n✅ 训练完成！")
 | [本文档](VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md) | 虚拟Blackwell完整指南 | 全面了解 |
 | [NPU集成指南](NPU_INTEGRATION_GUIDE.md) | 多厂商NPU支持详解 | 多硬件部署 |
 | [云端NPU指南](CLOUD_NPU_GUIDE.md) | 云端NPU使用说明 | 无硬件测试 |
-| [VGPU Stack文档](../apt_model/optimization/vgpu_stack.py) | VGPU堆叠技术实现 | 显存扩展 |
-| [GPU Flash文档](../apt_model/optimization/gpu_flash_optimization.py) | FP4量化+Triton融合 | 推理加速 |
+| [VGPU Stack文档](../../apt/vgpu/runtime/vgpu_stack.py) | VGPU堆叠技术实现 | 显存扩展 |
+| [GPU Flash文档](../../apt/perf/optimization/gpu_flash_optimization.py) | FP4量化+Triton融合 | 推理加速 |
 
 ---
 

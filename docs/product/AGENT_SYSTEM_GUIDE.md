@@ -625,9 +625,9 @@ python examples/agent_demo.py
 
 ## 相关文档
 
-- [AIM-Memory 技术指南](AIM_MEMORY_GUIDE.md)
-- [AIM-NC 技术指南](AIM_NC_GUIDE.md)
-- [集成总结文档](INTEGRATION_SUMMARY.md)
+- [AIM-Memory 技术指南](../memory/AIM_MEMORY_GUIDE.md)
+- [AIM-NC 技术指南](../memory/AIM_NC_GUIDE.md)
+- [集成总结文档](../guides/INTEGRATION_SUMMARY.md)
 
 ---
 

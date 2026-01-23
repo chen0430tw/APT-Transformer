@@ -552,7 +552,7 @@ python training/test_aim_memory.py
 ## 相关文档
 
 - [分层记忆系统指南](HIERARCHICAL_MEMORY_GUIDE.md)
-- [集成总结文档](INTEGRATION_SUMMARY.md)
+- [集成总结文档](../guides/INTEGRATION_SUMMARY.md)
 - [APT-Transformer 技术总结](APT_TRANSFORMER_SUMMARY.md)
 
 ## FAQ

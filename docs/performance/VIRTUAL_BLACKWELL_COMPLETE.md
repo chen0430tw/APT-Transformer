@@ -361,7 +361,7 @@ values = FP4_TABLE[indices] * scale
 - [成功案例分析](GPU_FLASH_SUCCESS_ANALYSIS.md) - 调试历程
 
 ### API文档
-- [optimization/__init__.py](../apt_model/optimization/__init__.py) - 导出清单
+- [optimization/__init__.py](../../apt/__init__.py) - 导出清单
 
 ---
 

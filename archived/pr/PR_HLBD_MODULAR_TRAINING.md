@@ -363,10 +363,10 @@ f940bd5 Update repo documentation to reflect new directory structure
 
 ## 🔗 相关链接
 
-- [快速开始文档](docs/hlbd/MODULAR_TRAINING_QUICKSTART.md)
-- [完整使用指南](docs/hlbd/HLBD_MODULAR_TRAINING.md)
-- [实现细节文档](docs/hlbd/MODULAR_TRAINING_IMPLEMENTATION.md)
-- [数据集总结](docs/hlbd/DATASETS_COMPLETION_SUMMARY.md)
+- [快速开始文档](../../docs/hlbd/MODULAR_TRAINING_QUICKSTART.md)
+- [完整使用指南](../../docs/hlbd/HLBD_MODULAR_TRAINING.md)
+- [实现细节文档](../../docs/hlbd/MODULAR_TRAINING_IMPLEMENTATION.md)
+- [数据集总结](../../docs/hlbd/DATASETS_COMPLETION_SUMMARY.md)
 
 ---
 

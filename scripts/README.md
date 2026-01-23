@@ -38,7 +38,7 @@ python scripts/launchers/apt_launcher.pyw
 python scripts/launchers/create_desktop_shortcut.py
 ```
 
-详细使用说明请参考: [启动器指南](../docs/LAUNCHER_README.md)
+详细使用说明请参考: [启动器指南](../docs/product/LAUNCHER_README.md)
 
 ## 🎯 训练脚本
 
@@ -59,7 +59,7 @@ python scripts/launchers/create_desktop_shortcut.py
 ./scripts/run_optuna_quick_test.sh
 ```
 
-详细使用说明请参考: [Optuna指南](../docs/OPTUNA_GUIDE.md)
+详细使用说明请参考: [Optuna指南](../docs/product/OPTUNA_GUIDE.md)
 
 ## 📦 归档文件 (archived/)
 
@@ -77,9 +77,9 @@ python scripts/launchers/create_desktop_shortcut.py
 
 ## 🔗 相关文档
 
-- [启动器使用指南](../docs/LAUNCHER_README.md)
-- [Optuna优化指南](../docs/OPTUNA_GUIDE.md)
-- [微调指南](../docs/FINE_TUNING_GUIDE.md)
+- [启动器使用指南](../docs/product/LAUNCHER_README.md)
+- [Optuna优化指南](../docs/product/OPTUNA_GUIDE.md)
+- [微调指南](../docs/kernel/FINE_TUNING_GUIDE.md)
 - [完整文档中心](../docs/README.md)
 
 ## 📝 注意事项

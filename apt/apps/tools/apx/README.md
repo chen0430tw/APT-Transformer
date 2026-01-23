@@ -468,6 +468,6 @@ apt_model/tools/apx/
 
 ## References
 
-- [APT-Transformer Documentation](../../README.md)
+- [APT-Transformer Documentation](../../../../README.md)
 - [Plugin System](../../console/README.md)
 - [Capability Detection Specification](../../../memo.txt)

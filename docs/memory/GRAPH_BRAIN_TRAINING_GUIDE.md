@@ -1129,8 +1129,8 @@ Sources:
 
 ### APT 相关文档
 
-- [DeepSeek 训练指南](DEEPSEEK_TRAINING_GUIDE.md) - MoE 架构
-- [数据预处理指南](DATA_PREPROCESSING_GUIDE.md) - 数据清洗
+- [DeepSeek 训练指南](../kernel/DEEPSEEK_TRAINING_GUIDE.md) - MoE 架构
+- [数据预处理指南](../kernel/DATA_PREPROCESSING_GUIDE.md) - 数据清洗
 - [插件系统文档](PLUGIN_SYSTEM.md) - 插件开发
 
 ---
