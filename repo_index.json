@@ -6,26 +6,11 @@
     }
   },
   ".gitignore": "file",
-  "ADVANCED_CLI_COMMANDS_SUMMARY.md": "file",
-  "ARCHITECTURE.md": "file",
-  "CLI_ENHANCEMENTS_SUMMARY.md": "file",
-  "CODE_CHECK_REPORT.md": "file",
   "CONTRIBUTING.md": "file",
-  "DIRECTORY_CLEANUP_PLAN.md": "file",
-  "DISTRIBUTION_MODES.md": "file",
   "INSTALLATION.md": "file",
-  "L0_MIGRATION_SUMMARY.md": "file",
   "MANIFEST.in": "file",
-  "MODULE_STATUS_REPORT.md": "file",
   "Makefile": "file",
-  "PLUGIN_CONVERSION_ROADMAP.md": "file",
-  "PLUGIN_MIGRATION_SUMMARY.md": "file",
-  "PLUGIN_TRANSFORMATION_COMPLETE.md": "file",
-  "PR_CREATE_INSTRUCTIONS.md": "file",
-  "PR_DESCRIPTION.md": "file",
-  "PR_MERGE_TO_MAIN.md": "file",
   "README.md": "file",
-  "RESTRUCTURE_PLAN.md": "file",
   "apt": {
     "__init__.py": "file",
     "apps": {
@@ -576,45 +561,120 @@
       "PR_DESCRIPTION_FULL.md": "file",
       "PR_HLBD_MODULAR_TRAINING.md": "file",
       "PR_REORGANIZATION.md": "file",
-      "PULL_REQUEST.md": "file"
+      "PULL_REQUEST.md": "file",
+      "PR_DESCRIPTION_APT20.md": "file",
+      "PR_CREATE_INSTRUCTIONS.md": "file",
+      "PR_MERGE_TO_MAIN.md": "file"
     },
     "reports": {
       "BUG_REPORT.md": "file",
       "SELF_SUPERVISED_RL_CHECK_REPORT.md": "file",
       "bugfix_summary_20241222.md": "file",
-      "hlbd_modular_final_summary_20241222.md": "file"
+      "hlbd_modular_final_summary_20241222.md": "file",
+      "PLUGIN_TRANSFORMATION_COMPLETE.md": "file",
+      "CLI_ENHANCEMENTS_SUMMARY.md": "file",
+      "CODE_CHECK_REPORT.md": "file",
+      "MODULE_STATUS_REPORT.md": "file",
+      "RESTRUCTURE_PLAN.md": "file",
+      "DIRECTORY_CLEANUP_PLAN.md": "file",
+      "ADVANCED_CLI_COMMANDS_SUMMARY.md": "file",
+      "L0_MIGRATION_SUMMARY.md": "file",
+      "PLUGIN_MIGRATION_SUMMARY.md": "file",
+      "PLUGIN_CONVERSION_ROADMAP.md": "file"
     },
     "apt_model": {
-      "memory": {
+      "train.txt": "file",
+      "generation": {
         "__init__.py": "file"
       },
-      "optuna_results_20250310_162705.txt": "file",
-      "optuna_importance_20250310_162704.png": "file",
+      "report": {
+        "__init__.py": "file"
+      },
+      "utils": {
+        "hardware_check.py": "file",
+        "time_estimator.py": "file",
+        "common.py": "file",
+        "logging_config.py": "file",
+        "error_handler.py": "file",
+        "logging_utils.py": "file",
+        "fake_torch.py": "file",
+        "__init__.py": "file",
+        "warning_filter.py": "file",
+        "mascot_render.py": "file",
+        "language_manager.py": "file",
+        "validators.py": "file",
+        "error_persistence.py": "file",
+        "resource_monitor.py": "file",
+        "visualization.py": "file",
+        "cache_manager.py": "file"
+      },
+      "console": {
+        "__init__.py": "file"
+      },
+      "modeling": {
+        "__init__.py": "file"
+      },
+      "分层语言启蒙数据集.txt": "file",
+      "best_train_cmd_20250310_162705.sh": "file",
+      "pretraining": {
+        "__init__.py": "file"
+      },
+      "__main__.py": "file",
+      "config": {
+        "__init__.py": "file"
+      },
+      "main.py": "file",
+      "tools": {
+        "__init__.py": "file"
+      },
       "training": {
+        "__init__.py": "file"
+      },
+      "api": {
+        "__init__.py": "file"
+      },
+      "rl": {
         "__init__.py": "file"
       },
       "interactive": {
         "__init__.py": "file"
       },
-      "train.txt": "file",
+      "runtime": {
+        "__init__.py": "file"
+      },
+      "exceptions.py": "file",
+      "evaluation": {
+        "__init__.py": "file"
+      },
       "zh_train.txt": "file",
-      "分层语言启蒙数据集.txt": "file",
-      "optuna_results_20250309_202621.txt": "file",
-      "api": {
+      "best_train_cmd_20250310_162705.bat": "file",
+      "run_apt.py": "file",
+      "__init__.py": "file",
+      "data": {
         "__init__.py": "file"
       },
-      "generation": {
+      "agent": {
         "__init__.py": "file"
       },
-      "__main__.py": "file",
-      "apt_optuna_20250310_1602.db": "file",
+      "memory": {
+        "__init__.py": "file"
+      },
+      "config.json": "file",
+      "infrastructure": {
+        "__init__.py": "file"
+      },
+      "resources": {
+        "README.md": "file"
+      },
+      "optuna_results_20250310_162705.txt": "file",
       "codecs": {
+        "compat.py": "file",
         "plugins": {
-          "zh_char": {
+          "en_gpt2": {
             "codec.py": "file",
             "__init__.py": "file"
           },
-          "en_gpt2": {
+          "zh_char": {
             "codec.py": "file",
             "__init__.py": "file"
           },
@@ -623,89 +683,27 @@
             "__init__.py": "file"
           }
         },
-        "__init__.py": "file",
-        "compat.py": "file"
-      },
-      "agent": {
         "__init__.py": "file"
       },
-      "optimization": {
-        "__init__.py": "file"
-      },
-      "runtime": {
-        "__init__.py": "file"
-      },
-      "console": {
-        "__init__.py": "file"
-      },
-      "tools": {
-        "__init__.py": "file"
-      },
-      "config.json": "file",
+      "optuna_history_20250310_162704.png": "file",
+      "apt_optuna_20250310_1602.db": "file",
       "core": {
         "__init__.py": "file"
       },
-      "resources": {
-        "README.md": "file"
-      },
-      "infrastructure": {
-        "__init__.py": "file"
-      },
-      "cli": {
-        "__init__.py": "file"
-      },
-      "rl": {
-        "__init__.py": "file"
-      },
-      "main.py": "file",
-      "run_apt.py": "file",
-      "modeling": {
-        "__init__.py": "file"
-      },
-      "best_train_cmd_20250310_162705.bat": "file",
-      "evaluation": {
-        "__init__.py": "file"
-      },
-      "config": {
-        "__init__.py": "file"
-      },
-      "__init__.py": "file",
-      "utils": {
-        "visualization.py": "file",
-        "mascot_render.py": "file",
-        "hardware_check.py": "file",
-        "cache_manager.py": "file",
-        "error_persistence.py": "file",
-        "language_manager.py": "file",
-        "time_estimator.py": "file",
-        "error_handler.py": "file",
-        "resource_monitor.py": "file",
-        "logging_utils.py": "file",
-        "__init__.py": "file",
-        "logging_config.py": "file",
-        "fake_torch.py": "file",
-        "common.py": "file",
-        "validators.py": "file",
-        "warning_filter.py": "file"
-      },
-      "optuna_history_20250310_162704.png": "file",
-      "pretraining": {
-        "__init__.py": "file"
-      },
-      "data": {
-        "__init__.py": "file"
-      },
-      "exceptions.py": "file",
-      "report": {
+      "optuna_importance_20250310_162704.png": "file",
+      "optimization": {
         "__init__.py": "file"
       },
       "webui": {
         "__init__.py": "file"
       },
-      "best_train_cmd_20250310_162705.sh": "file"
-    }
+      "cli": {
+        "__init__.py": "file"
+      },
+      "optuna_results_20250309_202621.txt": "file"
+    },
+    "ARCHITECTURE_L0L1L2L3.md": "file"
   },
-  "create_compat_proxies.py": "file",
   "datasets": {
     "HLBD_Full_V2.json": "file",
     "HLBD_Hardcore_Full.json": "file",
@@ -733,7 +731,8 @@
       "INTEGRATION_SUMMARY.md": "file",
       "PLUGIN_VS_MODULE_PRINCIPLES.md": "file",
       "README.md": "file",
-      "repo_schema.md": "file"
+      "repo_schema.md": "file",
+      "DISTRIBUTION_MODES.md": "file"
     },
     "hlbd": {
       "DATASETS_COMPLETION_SUMMARY.md": "file",
@@ -910,8 +909,6 @@
     "prototypes": {},
     "research": {}
   },
-  "fix_issues.sh": "file",
-  "make_repo_index.py": "file",
   "profiles": {
     "README.md": "file",
     "full.yaml": "file",
@@ -989,7 +986,12 @@
       "quick_test.sh": "file",
       "test_all_commands.py": "file",
       "view_test_report.py": "file"
-    }
+    },
+    "update_import_paths.py": "file",
+    "make_repo_index.py": "file",
+    "test_profiles.py": "file",
+    "fix_issues.sh": "file",
+    "create_compat_proxies.py": "file"
   },
   "setup.py": "file",
   "test_logs": {
@@ -1003,7 +1005,6 @@
     "command_test_20260122_121915.json": "file",
     "command_test_20260122_121915.log": "file"
   },
-  "test_profiles.py": "file",
   "tests": {
     "README.md": "file",
     "README_HLBD_MODELS.md": "file",
@@ -1067,6 +1068,5 @@
       "monitor_all_trainings.py": "file",
       "visualize_training.py": "file"
     }
-  },
-  "update_import_paths.py": "file"
+  }
 }
