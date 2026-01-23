@@ -21,20 +21,45 @@ import sys
 def show_help():
     """Show help message"""
     print("""
-APT Model - Command Line Interface
+╔══════════════════════════════════════════════════════════════╗
+║          APT Model - Command Line Interface                  ║
+╚══════════════════════════════════════════════════════════════╝
 
-Available commands:
-    python -m apt_model chat        Interactive chat
+📋 Basic Commands:
+    python -m apt_model chat        Interactive chat with trained model
     python -m apt_model train       Start training
     python -m apt_model --help      Show this help
 
-Alternative entry points:
-    # Quick start CLI (profile-based)
+🌐 Web Services:
+    python -m apt_model.webui.app --checkpoint-dir ./checkpoints
+        Launch WebUI (Gradio interface)
+        Options: --port, --share, --username, --password
+
+    python -m apt_model.api.server --checkpoint-dir ./checkpoints
+        Launch REST API server (FastAPI)
+        Options: --port, --host, --api-key, --reload
+
+📊 Training Options:
+    python -m apt_model train [options]
+        --epochs N          Number of training epochs (default: 10)
+        --batch-size N      Batch size (default: 16)
+        --data PATH         Training data path
+
+💬 Chat Options:
+    python -m apt_model chat
+        Requires trained model in ./checkpoints/
+        Supports: *.pt, *.pth, *.bin files
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 Alternative Entry Points:
+
+1. Quick Start CLI (Profile-based)
     python quickstart.py --help
     python quickstart.py --profile lite --demo
     python quickstart.py --profile lite
 
-    # Python API (programmatic)
+2. Python API (Programmatic)
     from apt.core.config import load_profile
     from apt.trainops.engine import Trainer
 
@@ -42,15 +67,30 @@ Alternative entry points:
     trainer = Trainer(config)
     trainer.train()
 
-Documentation:
-    - CLI Guide: docs/CLI_STATUS.md
-    - APT 2.0 Architecture: docs/ARCHITECTURE_2.0.md
-    - All docs: docs/README.md
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Choose your preferred entry point:
-    • apt_model CLI - Traditional command-line interface
-    • quickstart.py - Profile-based quick start
-    • apt.* API - Programmatic Python API
+📚 Documentation:
+    • CLI Guide:         docs/CLI_STATUS.md
+    • APT 2.0 Architecture: docs/ARCHITECTURE_2.0.md
+    • All Documentation: docs/README.md
+
+💡 Choose your preferred entry point:
+    • apt_model CLI    - Traditional command-line interface (this)
+    • quickstart.py    - Profile-based quick start
+    • apt.* API        - Programmatic Python API
+
+Examples:
+    # Start WebUI on custom port
+    python -m apt_model.webui.app --port 8080 --checkpoint-dir ./my_models
+
+    # Train with custom parameters
+    python -m apt_model train --epochs 50 --batch-size 32 --data ./data.txt
+
+    # Launch API with authentication
+    python -m apt_model.api.server --api-key my-secret-key --port 8000
+
+    # Interactive chat
+    python -m apt_model chat
 """)
 
 
