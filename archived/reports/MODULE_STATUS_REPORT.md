@@ -343,9 +343,9 @@ python tools/diagnostics/diagnose_issues.py
 
 ## 📚 相关文档
 
-- [测试基础架构文档](docs/TESTING_INFRASTRUCTURE.md)
-- [CLI命令增强](docs/CLI_ENHANCEMENTS.md)
-- [高级CLI命令](docs/ADVANCED_CLI_COMMANDS.md)
+- [测试基础架构文档](../../docs/TESTING_INFRASTRUCTURE.md)
+- [CLI命令增强](../../docs/CLI_ENHANCEMENTS.md)
+- [高级CLI命令](../../docs/ADVANCED_CLI_COMMANDS.md)
 - [代码检查报告](CODE_CHECK_REPORT.md)
 
 ---

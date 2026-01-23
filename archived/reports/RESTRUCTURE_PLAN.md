@@ -837,7 +837,7 @@ echo "✅ 导入路径更新完成"
 ## 📚 相关文档
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - 架构设计
-- [DISTRIBUTION_MODES.md](./DISTRIBUTION_MODES.md) - 发行版说明
+- [DISTRIBUTION_MODES.md](../../docs/guides/DISTRIBUTION_MODES.md) - 发行版说明
 - [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) - 用户迁移指南（待创建）
 
 ---

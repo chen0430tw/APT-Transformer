@@ -560,7 +560,7 @@ A: 特别适合：
 ## 相关文档
 
 - [AIM-Memory 技术指南](AIM_MEMORY_GUIDE.md)
-- [集成总结文档](INTEGRATION_SUMMARY.md)
+- [集成总结文档](../guides/INTEGRATION_SUMMARY.md)
 - [APT-Transformer 技术总结](APT_TRANSFORMER_SUMMARY.md)
 
 ## 引用

@@ -806,7 +806,7 @@ DeepSeek 方法：
 ### APT 相关文档
 
 - [GPT 训练指南](GPT_TRAINING_GUIDE.md) - 对比 GPT 架构
-- [API 集成指南](API_PROVIDERS_GUIDE.md) - 使用 DeepSeek API
+- [API 集成指南](../product/API_PROVIDERS_GUIDE.md) - 使用 DeepSeek API
 - [APT Model Handbook](APT_MODEL_HANDBOOK.md) - APT 平台完整手册
 
 ---

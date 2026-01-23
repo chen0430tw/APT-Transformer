@@ -25,4 +25,4 @@ python training/train.py --backend playground --epochs 100
 
 ## Documentation
 
-See [TRAINING_BACKENDS.md](../docs/TRAINING_BACKENDS.md) for detailed usage guide.
+See [TRAINING_BACKENDS.md](../../../docs/performance/TRAINING_BACKENDS.md) for detailed usage guide.

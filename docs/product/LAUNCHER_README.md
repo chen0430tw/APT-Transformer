@@ -304,14 +304,14 @@ python -m apt_model chat --model-path apt_model
 python -m apt_model evaluate --model-path apt_model
 ```
 
-完整CLI文档请参考: [README.md](./README.md)
+完整CLI文档请参考: [README.md](../../README.md)
 
 ---
 
 ## 📞 技术支持
 
-- **完整文档**: [README.md](./README.md)
-- **微调指南**: [FINE_TUNING_GUIDE.md](./FINE_TUNING_GUIDE.md)
+- **完整文档**: [README.md](../../README.md)
+- **微调指南**: [FINE_TUNING_GUIDE.md](../kernel/FINE_TUNING_GUIDE.md)
 - **Optuna优化**: [OPTUNA_GUIDE.md](./OPTUNA_GUIDE.md)
 - **问题反馈**: 在GitHub仓库创建Issue
 

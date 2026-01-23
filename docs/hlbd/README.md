@@ -81,8 +81,8 @@ python3 training/train_hlbd_playground.py \
 ## 🔗 相关链接
 
 - [主README](../../README.md)
-- [训练后端文档](../TRAINING_BACKENDS.md)
-- [APT Model手册](../APT_MODEL_HANDBOOK.md)
+- [训练后端文档](../performance/TRAINING_BACKENDS.md)
+- [APT Model手册](../kernel/APT_MODEL_HANDBOOK.md)
 
 ---
 

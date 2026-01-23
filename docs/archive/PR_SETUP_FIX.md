@@ -155,7 +155,7 @@ python -m apt_model console-status
 
 - [Python Packaging User Guide](https://packaging.python.org/)
 - [setuptools Documentation](https://setuptools.pypa.io/)
-- [INSTALLATION.md](INSTALLATION.md) - 本项目的详细安装指南
+- [INSTALLATION.md](../../INSTALLATION.md) - 本项目的详细安装指南
 
 ## ✍️ 提交信息
 

@@ -144,35 +144,35 @@
 ### 📖 文档导航
 
 #### 🟢 初级 (入门)
-- [APT模型手册](docs/APT_MODEL_HANDBOOK.md)
-- [启动器指南](docs/LAUNCHER_README.md)
-- [微调指南](docs/FINE_TUNING_GUIDE.md)
+- [APT模型手册](../kernel/APT_MODEL_HANDBOOK.md)
+- [启动器指南](../product/LAUNCHER_README.md)
+- [微调指南](../kernel/FINE_TUNING_GUIDE.md)
 
 #### 🟡 中级 (进阶)
-- [知识蒸馏原理](docs/DISTILLATION_PRINCIPLE.md)
-- [Teacher API指南](docs/TEACHER_API_GUIDE.md)
-- [知识图谱指南](docs/KNOWLEDGE_GRAPH_GUIDE.md)
+- [知识蒸馏原理](../product/DISTILLATION_PRINCIPLE.md)
+- [Teacher API指南](../product/TEACHER_API_GUIDE.md)
+- [知识图谱指南](../memory/KNOWLEDGE_GRAPH_GUIDE.md)
 
 #### 🔴 高级 (定制)
-- [RL与预训练指南](docs/RL_PRETRAINING_GUIDE.md)
-- [视觉蒸馏指南](docs/VISUAL_DISTILLATION_GUIDE.md)
-- [模块集成方案](docs/MODULE_INTEGRATION_PLAN.md)
+- [RL与预训练指南](../product/RL_PRETRAINING_GUIDE.md)
+- [视觉蒸馏指南](../product/VISUAL_DISTILLATION_GUIDE.md)
+- [模块集成方案](../../archived/plans/MODULE_INTEGRATION_PLAN.md)
 
 ---
 
 ### 🎯 使用场景
 
 #### 训练小模型
-→ [微调指南](docs/FINE_TUNING_GUIDE.md) + [启动器](docs/LAUNCHER_README.md)
+→ [微调指南](../kernel/FINE_TUNING_GUIDE.md) + [启动器](../product/LAUNCHER_README.md)
 
 #### API知识蒸馏
-→ [知识蒸馏原理](docs/DISTILLATION_PRINCIPLE.md) + [Teacher API](docs/TEACHER_API_GUIDE.md)
+→ [知识蒸馏原理](../product/DISTILLATION_PRINCIPLE.md) + [Teacher API](../product/TEACHER_API_GUIDE.md)
 
 #### 强化学习训练
-→ [RL完整指南](docs/RL_PRETRAINING_GUIDE.md) + [示例代码](examples/rl_examples/)
+→ [RL完整指南](../product/RL_PRETRAINING_GUIDE.md) + [示例代码](examples/rl_examples/)
 
 #### 构建知识图谱
-→ [知识图谱指南](docs/KNOWLEDGE_GRAPH_GUIDE.md) + [GraphRAG文档](apt_model/core/graph_rag/)
+→ [知识图谱指南](../memory/KNOWLEDGE_GRAPH_GUIDE.md) + [GraphRAG文档](../../apt/core/graph_rag)
 
 ---
 

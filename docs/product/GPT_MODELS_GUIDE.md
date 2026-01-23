@@ -1036,10 +1036,10 @@ if __name__ == "__main__":
 
 ## 🔗 相关资源
 
-- [APT Model Handbook](APT_MODEL_HANDBOOK.md) - 完整的APT模型文档
+- [APT Model Handbook](../kernel/APT_MODEL_HANDBOOK.md) - 完整的APT模型文档
 - [GPT Models Analysis](../GPT_MODELS_ANALYSIS.md) - 模型架构分析
 - [API Documentation](API_PROVIDERS_GUIDE.md) - API集成指南
-- [Troubleshooting Guide](../INSTALLATION.md) - 安装和故障排除
+- [Troubleshooting Guide](../../INSTALLATION.md) - 安装和故障排除
 
 ---
 

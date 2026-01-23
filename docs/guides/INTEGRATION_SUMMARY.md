@@ -495,7 +495,7 @@ python training/test_aim_memory.py
 - **实现**: Claude + 430
 - **版本**: 2026-01-21
 
-**详细文档**: [AIM-Memory 技术指南](AIM_MEMORY_GUIDE.md)
+**详细文档**: [AIM-Memory 技术指南](../memory/AIM_MEMORY_GUIDE.md)
 
 ---
 
@@ -628,10 +628,10 @@ print("\n✅ 训练完成！")
 
 | 文档 | 描述 | 适用场景 |
 |------|------|----------|
-| [VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md](VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md) | 虚拟Blackwell完整指南 | 全面了解 |
-| [NPU_INTEGRATION_GUIDE.md](NPU_INTEGRATION_GUIDE.md) | 多厂商NPU支持详解 | 多硬件部署 |
-| [CLOUD_NPU_GUIDE.md](CLOUD_NPU_GUIDE.md) | 云端NPU使用说明 | 无硬件测试 |
-| [LEFT_SPIN_SMOOTH_INTEGRATION.md](LEFT_SPIN_SMOOTH_INTEGRATION.md) | 左旋平滑集成文档 | 尖点规避 |
+| [VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md](../performance/VIRTUAL_BLACKWELL_COMPLETE_GUIDE.md) | 虚拟Blackwell完整指南 | 全面了解 |
+| [NPU_INTEGRATION_GUIDE.md](../performance/NPU_INTEGRATION_GUIDE.md) | 多厂商NPU支持详解 | 多硬件部署 |
+| [CLOUD_NPU_GUIDE.md](../performance/CLOUD_NPU_GUIDE.md) | 云端NPU使用说明 | 无硬件测试 |
+| [LEFT_SPIN_SMOOTH_INTEGRATION.md](../kernel/LEFT_SPIN_SMOOTH_INTEGRATION.md) | 左旋平滑集成文档 | 尖点规避 |
 | [本文档](INTEGRATION_SUMMARY.md) | 完整集成总结 | 快速入门 |
 
 ---
