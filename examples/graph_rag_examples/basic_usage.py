@@ -9,7 +9,7 @@ GraphRAG基础使用示例
 import logging
 logging.basicConfig(level=logging.INFO)
 
-from apt_model.plugins.graph_rag_plugin import create_graph_rag_plugin
+from apt.apt_model.plugins.graph_rag_plugin import create_graph_rag_plugin
 
 
 def main():

@@ -21,11 +21,11 @@ REM 2. 训练后端代码检查
 echo ========================================
 echo 2️⃣  训练后端代码检查
 echo ========================================
-if exist tools/check_training_backends.py (
-    python tools/check_training_backends.py
+if exist tools\diagnostics\check_training_backends.py (
+    python tools\diagnostics\check_training_backends.py
     echo.
 ) else (
-    echo ⚠️  tools/check_training_backends.py 不存在，跳过
+    echo ⚠️  tools\diagnostics\check_training_backends.py 不存在，跳过
     echo.
 )
 
@@ -33,11 +33,11 @@ REM 3. HLBD系统诊断
 echo ========================================
 echo 3️⃣  HLBD系统诊断
 echo ========================================
-if exist tools/diagnose_issues.py (
-    python tools/diagnose_issues.py
+if exist tools\diagnostics\diagnose_issues.py (
+    python tools\diagnostics\diagnose_issues.py
     echo.
 ) else (
-    echo ⚠️  tools/diagnose_issues.py 不存在，跳过
+    echo ⚠️  tools\diagnostics\diagnose_issues.py 不存在，跳过
     echo.
 )
 

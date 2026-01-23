@@ -1,0 +1,188 @@
+# APT-Transformer Memory Profile
+# 记忆增强版本 - 适合长对话、RAG、知识问答
+
+name: apt-mind
+version: 1.0.0
+description: "记忆增强版本 - 长对话和 RAG 优先"
+
+# ═══════════════════════════════════════════════════════════
+# 继承核心配置
+# ═══════════════════════════════════════════════════════════
+extends: core.yaml
+
+# ═══════════════════════════════════════════════════════════
+# 启用层级
+# ═══════════════════════════════════════════════════════════
+layers:
+  - L0  # 核心层
+  - L2  # 记忆层
+
+# ═══════════════════════════════════════════════════════════
+# 记忆层配置（关键）
+# ═══════════════════════════════════════════════════════════
+memory:
+  enabled: true
+
+  # ═════════════════════════════════════════════════════════
+  # AIM-Memory（惯性锚定镜像记忆）
+  # ═════════════════════════════════════════════════════════
+  aim_memory:
+    enabled: true
+    mode: aim-nc  # aim / aim-nc
+
+    # 严格模式（是否回灌完整证据）
+    strict_mode: false  # 默认轻量（摘要+fields）
+
+    # 锚点主权（强制）
+    anchor_sovereignty: true
+
+    # 惯性路由
+    inertial_routing:
+      enabled: true
+      decay_rate: 0.95
+      weight: 0.3
+
+    # 时间镜像
+    time_mirror:
+      enabled: true
+      window_size: 1000  # 保留最近1000条
+
+    # 锚点纠错
+    anchor_correction:
+      enabled: true
+      threshold: 0.8  # 语义一致性阈值
+
+  # ═════════════════════════════════════════════════════════
+  # AIM-NC（N-gram/Trie 收编协议）
+  # ═════════════════════════════════════════════════════════
+  aim_nc:
+    enabled: true
+
+    # N-gram 配置
+    ngram_size: 3
+    min_freq: 2
+
+    # Trie 配置
+    trie_cache_size: 10000
+    trie_max_depth: 10
+
+    # 召回配置
+    retrieval_k: 5
+    rerank: true
+
+  # ═════════════════════════════════════════════════════════
+  # 分层记忆（A/B/C 档）
+  # ═════════════════════════════════════════════════════════
+  tiered_memory:
+    enabled: true
+
+    # A档：原文哈希（完整证据）
+    tier_a:
+      capacity: 1000
+      ttl: 86400  # 1天
+      storage: memory
+
+    # B档：字段JSON（结构化）
+    tier_b:
+      capacity: 10000
+      ttl: 604800  # 7天
+      storage: memory
+
+    # C档：摘要 + 回溯链接（长期）
+    tier_c:
+      capacity: 100000
+      ttl: -1  # 永久
+      storage: disk
+      db_path: ./memory/tier_c.db
+
+  # ═════════════════════════════════════════════════════════
+  # GraphRAG（知识图谱 + 检索增强）
+  # ═════════════════════════════════════════════════════════
+  graph_rag:
+    enabled: true
+
+    # Graph Brain（动态建模）
+    graph_brain:
+      enabled: true
+      update_interval: 100  # 每100步更新
+
+    # Hodge-Laplacian（光谱分析）
+    hodge_laplacian:
+      enabled: true
+      num_eigenvalues: 50
+
+    # RAG 管理器
+    rag_manager:
+      retrieval_k: 5
+      rerank: true
+      fusion: rrf  # reciprocal rank fusion
+
+    # 知识图谱存储
+    kg_storage:
+      backend: networkx  # networkx / neo4j
+      persist: true
+      db_path: ./memory/knowledge_graph.json
+
+# ═══════════════════════════════════════════════════════════
+# 长上下文配置
+# ═══════════════════════════════════════════════════════════
+long_context:
+  # 扩展最大序列长度
+  max_seq_len: 8192  # 8K tokens
+
+  # RoPE 变体
+  rope_variant: longrope2  # rope / irope / yarn / longrope2
+
+  # RoPE 缩放
+  rope_scaling:
+    type: linear  # linear / dynamic
+    factor: 4.0
+
+  # 上下文压缩
+  context_compression:
+    enabled: true
+    ratio: 0.5
+    method: selective  # selective / uniform
+
+  # 滑动窗口
+  sliding_window:
+    enabled: false
+    window_size: 2048
+
+# ═══════════════════════════════════════════════════════════
+# 模型配置（覆盖）
+# ═══════════════════════════════════════════════════════════
+model:
+  max_seq_len: 8192  # 覆盖 core.yaml
+
+# ═══════════════════════════════════════════════════════════
+# 训练配置（针对长上下文）
+# ═══════════════════════════════════════════════════════════
+training:
+  batch_size: 16  # 长上下文需要更小批次
+  gradient_accumulation_steps: 8
+
+  # 长上下文预训练
+  long_context_pretrain:
+    enabled: false  # 可选
+    curriculum_learning: true
+    start_len: 512
+    end_len: 8192
+    growth_rate: 1.5
+
+# ═══════════════════════════════════════════════════════════
+# 输出配置
+# ═══════════════════════════════════════════════════════════
+output:
+  checkpoint_dir: ./checkpoints/mind
+  log_dir: ./logs/mind
+  memory_dir: ./memory  # 记忆持久化目录
+
+# ═══════════════════════════════════════════════════════════
+# 适用场景
+# ═══════════════════════════════════════════════════════════
+# - 长对话系统：客服机器人
+# - 知识问答：QA 系统
+# - 文档检索：RAG 应用
+# - 个人助理：记住用户偏好
+# - 知识图谱：实体关系推理

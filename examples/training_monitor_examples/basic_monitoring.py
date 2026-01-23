@@ -12,7 +12,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-from apt_model.plugins.training_monitor_plugin import create_training_monitor_plugin
+from apt.apt_model.plugins.training_monitor_plugin import create_training_monitor_plugin
 
 
 # 简单的模型

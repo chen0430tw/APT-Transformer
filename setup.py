@@ -37,7 +37,7 @@ setup(
     install_requires=read_requirements(),
     entry_points={
         'console_scripts': [
-            'apt-model=apt_model.main:main',
+            'apt-model=apt.apt_model.main:main',
         ],
     },
     classifiers=[

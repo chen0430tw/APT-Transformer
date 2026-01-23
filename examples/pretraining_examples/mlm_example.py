@@ -11,7 +11,7 @@ MLM预训练示例
 import torch
 import torch.nn as nn
 import logging
-from apt_model.pretraining import create_mlm_pretrainer, MLMConfig
+from apt.apt_model.pretraining import create_mlm_pretrainer, MLMConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

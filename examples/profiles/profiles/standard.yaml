@@ -1,0 +1,157 @@
+# APT-Transformer Standard Profile
+# 标准版 (L0 + L1) - 核心算法 + 性能优化栈
+
+name: apt-standard
+version: 2.0.0
+description: "标准版 - 核心APT算法 + Virtual Blackwell性能优化 (L0 + L1)"
+
+# ═══════════════════════════════════════════════════════════
+# 启用层级
+# ═══════════════════════════════════════════════════════════
+layers:
+  - L0  # Kernel: Autopoietic Transform, DBC-DAC, Left-Spin Smooth
+  - L1  # Performance: Virtual Blackwell, GPU Flash, VGPU Stack
+
+# ═══════════════════════════════════════════════════════════
+# 核心模型配置
+# ═══════════════════════════════════════════════════════════
+model:
+  type: APTModel
+  extends: lite.yaml  # 继承 lite 配置
+
+  # 模型结构
+  vocab_size: 50000
+  d_model: 768
+  num_heads: 12
+  num_encoder_layers: 12
+  num_decoder_layers: 12
+  max_seq_len: 512
+
+  # 核心特性（APT 三大创新）
+  use_autopoietic: true
+  use_dbc_dac: true
+  use_left_spin: true
+
+  # Autopoietic 参数
+  autopoietic:
+    adaptive_rank_ratio: 0.3
+    energy_threshold: 0.95
+
+  # DBC-DAC 参数
+  dbc_dac:
+    compression_ratio: 0.7
+    compensation: true
+
+  # Left-Spin 参数
+  left_spin:
+    smooth_factor: 0.1
+    epsilon: 1.0e-6
+    grad_threshold: 1000.0
+
+# ═══════════════════════════════════════════════════════════
+# 训练配置
+# ═══════════════════════════════════════════════════════════
+training:
+  optimizer: AdamW
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  batch_size: 64          # 更大批次（得益于性能优化）
+  max_steps: 100000
+  gradient_accumulation_steps: 2
+
+  lr_scheduler: cosine
+  warmup_steps: 1000
+  max_grad_norm: 1.0
+
+  eval_steps: 1000
+  save_steps: 5000
+  logging_steps: 100
+
+# ═══════════════════════════════════════════════════════════
+# 数据配置
+# ═══════════════════════════════════════════════════════════
+data:
+  train_file: data/train.txt
+  eval_file: data/eval.txt
+  tokenizer: gpt2
+
+  preprocessing:
+    lowercase: false
+    remove_special_chars: false
+
+# ═══════════════════════════════════════════════════════════
+# 性能层配置（启用 L1）
+# ═══════════════════════════════════════════════════════════
+performance:
+  enabled: true
+
+  # Virtual Blackwell 配置
+  virtual_blackwell:
+    enabled: true
+    mode: balanced  # fast | balanced | max_memory
+
+    # GPU Flash 配置
+    gpu_flash:
+      enabled: true
+      compression: mxfp4           # MXFP4 量化
+      batch_compression: true      # 批量压缩
+      adaptive_precision: true     # 自适应精度
+
+    # VGPU Stack 配置
+    vgpu_stack:
+      enabled: true
+      layers:
+        - type: gpu
+          size: auto
+        - type: cpu
+          size: 64GB
+        - type: ssd
+          size: 256GB
+          path: /tmp/vgpu_cache
+
+    # NPU 支持（可选）
+    npu:
+      enabled: false
+      providers: []  # ["ascend", "kunlun", "iluvatar"]
+
+  # 性能监控
+  monitoring:
+    enabled: true
+    metrics: ["throughput", "memory_usage", "gpu_utilization"]
+    interval: 10  # 每10步记录一次
+
+# ═══════════════════════════════════════════════════════════
+# 记忆层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+memory:
+  enabled: false
+
+# ═══════════════════════════════════════════════════════════
+# 应用层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+product:
+  enabled: false
+  logging:
+    level: INFO
+    format: simple
+
+# ═══════════════════════════════════════════════════════════
+# 输出配置
+# ═══════════════════════════════════════════════════════════
+output:
+  checkpoint_dir: ./checkpoints/standard
+  log_dir: ./logs/standard
+  tensorboard: true
+  save_total_limit: 5
+
+# ═══════════════════════════════════════════════════════════
+# 适用场景
+# ═══════════════════════════════════════════════════════════
+# - 生产训练：大规模模型训练
+# - 性能优化：追求最高吞吐量
+# - 资源受限：需要内存优化
+# - 多GPU训练：分布式训练场景
+# - NPU加速：国产芯片适配

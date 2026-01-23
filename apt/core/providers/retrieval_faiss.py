@@ -10,9 +10,12 @@ efficient similarity search in high-dimensional spaces.
 import os
 import pickle
 from typing import Dict, Any, Optional, List, Tuple
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from apt.apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+from apt.apt_model.utils.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
+F = torch.nn.functional
 import numpy as np
 
 from apt.core.providers.retrieval import RetrievalProvider

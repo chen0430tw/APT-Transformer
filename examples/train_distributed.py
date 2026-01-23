@@ -47,10 +47,10 @@ except ImportError:
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from apt_model.modeling.apt_model import APTLargeModel, APTConfig
-from apt_model.training.trainer import APTTrainer
-from apt_model.training.gradient_monitor import GradientMonitor
-from apt_model.utils.tokenizer import SimpleTokenizer
+from apt.apt_model.modeling.apt_model import APTLargeModel, APTConfig
+from apt.apt_model.training.trainer import APTTrainer
+from apt.apt_model.training.gradient_monitor import GradientMonitor
+from apt.apt_model.utils.tokenizer import SimpleTokenizer
 
 
 # Setup logging
