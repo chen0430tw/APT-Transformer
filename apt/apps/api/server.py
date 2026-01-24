@@ -144,7 +144,7 @@ class APIState:
             raise RuntimeError("PyTorch not available")
 
         try:
-            from apt.apt_model.modeling.apt_model import APTLargeModel, APTConfig
+            from apt.model.architectures.apt_model import APTLargeModel, APTConfig
 
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
 

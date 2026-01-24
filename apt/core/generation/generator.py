@@ -6,9 +6,9 @@ APT Model (自生成变换器) - Text Generator
 This module contains functions for generating natural text using APT models.
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 F = torch.nn.functional
 import logging

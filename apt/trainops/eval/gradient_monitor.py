@@ -12,7 +12,7 @@
 6. 🔮 支持分布式训练的梯度同步
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 import numpy as np
 import json
@@ -442,7 +442,7 @@ class GradientMonitor:
 
 if __name__ == "__main__":
     # 示例：如何在训练循环中使用
-    from apt.apt_model.utils.fake_torch import get_torch
+    from apt.core.fake_torch import get_torch
     torch = get_torch()
     nn = torch.nn
 

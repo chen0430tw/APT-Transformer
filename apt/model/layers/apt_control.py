@@ -18,9 +18,9 @@ APT Non-Autopoietic Control Version
     autopoietic_model = create_autopoietic_model(vocab_size=2000, d_model=512)
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 from typing import Optional, Dict, Any

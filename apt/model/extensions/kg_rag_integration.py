@@ -9,9 +9,9 @@
 - 两者融合增强生成质量
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 from typing import Dict, Any, Optional, List, Tuple, Union

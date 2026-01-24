@@ -6,9 +6,9 @@
 与现有retrieval系统集成，提供基于KG的检索能力
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 from typing import Dict, Any, List, Tuple, Optional

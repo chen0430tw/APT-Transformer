@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Training-time hooks (e.g., DBC-DAC gradient stabilizers)."""
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 def register_dbc_dac_hooks(model) -> list:
     try:

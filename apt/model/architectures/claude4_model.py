@@ -13,9 +13,9 @@ Claude-4 Model — GPT-4o with Graph-based Reflection Layer
 Author: Claude Assistant
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional

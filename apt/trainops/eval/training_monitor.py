@@ -12,7 +12,7 @@ APT训练自动监控和纠错系统
 作者: chen0430tw
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Callable

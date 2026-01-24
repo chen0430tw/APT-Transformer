@@ -5,9 +5,9 @@ Claude Unified Model Trainer
 统一的Claude模型训练器，支持HHH反思和图论反思
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
@@ -20,7 +20,7 @@ from datetime import datetime
 import logging
 
 from apt.model.architectures.claude4_model import ClaudeUnifiedModel, create_claude_unified
-from apt.apt_model.utils import get_device
+from apt.core import get_device
 from apt.model.architectures.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,

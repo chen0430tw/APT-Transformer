@@ -187,7 +187,7 @@ class ChineseTokenizer:
         # 返回张量
         if return_tensors == "pt":
             try:
-                from apt.apt_model.utils.fake_torch import get_torch
+                from apt.core.fake_torch import get_torch
                 torch = get_torch()
                 return torch.tensor([ids])
             except ImportError:

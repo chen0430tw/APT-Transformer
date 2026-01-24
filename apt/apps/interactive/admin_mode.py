@@ -117,7 +117,7 @@ class APTAdminMode:
             
             # 尝试导入APT模型
             try:
-                from apt.apt_model.modeling.apt_model import APTModel, APTLargeModel
+                from apt.model.architectures.apt_model import APTModel, APTLargeModel
                 from apt.core.config.apt_config import APTConfig
             except ImportError:
                 self.logger.error("无法导入APT模型。请确保已正确安装apt_model包。")

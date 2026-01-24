@@ -699,5 +699,5 @@ if __name__ == "__main__":
 
     print("\n[完成] 演示完成！")
     print("\n[提示] 使用方法:")
-    print("   from apt.apt_model.plugins.visual_distillation_plugin import quick_visual_distill")
+    print("   from apt.apps.plugins.distillation.visual_distillation_plugin import quick_visual_distill")
     print("   quick_visual_distill(student_model, teacher_model, dataloader, tokenizer)")

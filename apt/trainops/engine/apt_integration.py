@@ -15,7 +15,7 @@ APT-SOSA集成适配器
         # wrapper自动处理异常
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 import torch.nn as nn
 from typing import Dict, Optional, Callable, Any

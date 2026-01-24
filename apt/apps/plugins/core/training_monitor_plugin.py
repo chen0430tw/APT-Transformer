@@ -257,7 +257,7 @@ def integrate_with_apt_trainer(
         包装后的trainer
 
     Example:
-        >>> from apt.apt_model.training.trainer import Trainer
+        >>> from apt.trainops.engine.trainer import Trainer
         >>> trainer = Trainer(model, config)
         >>> trainer = integrate_with_apt_trainer(trainer, {
         ...     'auto_fix': True

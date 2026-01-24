@@ -7,9 +7,9 @@
 支持 PyTorch 原生 AMP (Automatic Mixed Precision)。
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 autocast = torch.cuda.amp.autocast
 GradScaler = torch.cuda.amp.GradScaler

@@ -22,17 +22,17 @@ import traceback
 from datetime import datetime
 
 # 临时注释掉不存在的导入
-# from apt.apt_model.utils.logging_utils import setup_logging
-# from apt.apt_model.utils.resource_monitor import ResourceMonitor
-# from apt.apt_model.utils.language_manager import LanguageManager
-# from apt.apt_model.utils.hardware_check import check_hardware_compatibility
-# from apt.apt_model.utils.cache_manager import CacheManager
+# DEPRECATED: # DEPRECATED: # from apt.apt_model.utils.logging_utils import setup_logging  # apt.apt_model.utils.logging_utils 已废弃  # apt.apt_model.utils.logging_utils 已废弃
+# from apt.trainops.eval.training_monitor import ResourceMonitor
+# DEPRECATED: # DEPRECATED: # from apt.apt_model.utils.language_manager import LanguageManager  # apt.apt_model.utils.language_manager 已废弃  # apt.apt_model.utils.language_manager 已废弃
+# from apt.core.hardware import check_hardware_compatibility
+# DEPRECATED: # DEPRECATED: # from apt.apt_model.utils.cache_manager import CacheManager  # apt.apt_model.utils.cache_manager 已废弃  # apt.apt_model.utils.cache_manager 已废弃
 # from apt.core.config.apt_config import APTConfig
-# from apt.apt_model.utils import get_device, set_seed
+# from apt.core import get_device, set_seed
 
 # 使用标准库替代
 import logging
-# from apt.apt_model.utils.common import _initialize_common
+# DEPRECATED: # DEPRECATED: # from apt.apt_model.utils.common import _initialize_common  # apt.apt_model.utils.common 已废弃  # apt.apt_model.utils.common 已废弃
 from apt.apps.cli.command_registry import register_command
 
 # 延迟导入 - 仅在实际使用命令时导入以避免依赖问题
@@ -82,9 +82,9 @@ def _get_tokenizer_with_detection(texts, args):
 
     使用新的codec系统（优先）或回退到旧系统
     """
-    from apt.apt_model.codecs import get_codec_for_language
-    from apt.apt_model.codecs.compat import CodecTokenizerWrapper
-    from apt.apt_model.modeling.chinese_tokenizer_integration import detect_language
+# DEPRECATED: # DEPRECATED:     from apt.apt_model.codecs import get_codec_for_language  # apt.apt_model.codecs 已废弃  # apt.apt_model.codecs 已废弃
+# DEPRECATED: # DEPRECATED:     from apt.apt_model.codecs.compat import CodecTokenizerWrapper  # apt.apt_model.codecs 已废弃  # apt.apt_model.codecs 已废弃
+    from apt.model.tokenization.chinese_tokenizer_integration import detect_language
 
     # 自动检测语言
     detected_language = args.model_language or detect_language(texts)
@@ -99,7 +99,7 @@ def _get_tokenizer_with_detection(texts, args):
         print(f"Codec系统失败，回退到旧分词器: {e}")
 
     # 回退到旧系统
-    from apt.apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+    from apt.model.tokenization.chinese_tokenizer_integration import get_appropriate_tokenizer
     return get_appropriate_tokenizer(
         texts,
         tokenizer_type=args.tokenizer_type,
@@ -201,7 +201,7 @@ def run_train_custom_command(args):
             except FileNotFoundError:
                 logger.warning(f"未找到数据文件: {args.data_path}，将使用预设训练数据")
                 print(f"未找到数据文件: {args.data_path}，将使用预设训练数据")
-                from apt.apt_model.training.trainer import get_training_texts
+                from apt.trainops.engine.trainer import get_training_texts
                 custom_texts = get_training_texts()
                 print(f"使用预设数据，共 {len(custom_texts)} 条文本")
 
@@ -367,7 +367,7 @@ def run_visualize_command(args):
         model = None
         try:
             print(f"尝试加载模型: {model_path}")
-            from apt.apt_model.training.checkpoint import load_model
+            from apt.trainops.checkpoints.checkpoint import load_model
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"模型路径不存在: {model_path}")
             model, tokenizer, config = load_model(model_path)
@@ -986,7 +986,7 @@ def run_prune_command(args):
             print(f"\n清理缓存文件:")
 
             try:
-                from apt.apt_model.utils.cache_manager import CacheManager
+# DEPRECATED: # DEPRECATED:                 from apt.apt_model.utils.cache_manager import CacheManager  # apt.apt_model.utils.cache_manager 已废弃  # apt.apt_model.utils.cache_manager 已废弃
 
                 # 使用 CacheManager 清理缓存
                 cache_manager = CacheManager(cache_dir=base_dir, logger=logger)
@@ -1152,7 +1152,7 @@ def run_size_command(args):
             # 尝试加载模型并计算参数量
             try:
                 import torch
-                from apt.apt_model.modeling.apt_model import APTModel
+                from apt.model.architectures.apt_model import APTModel
                 from apt.core.config.apt_config import APTConfig
 
                 # 检查是否是APT模型目录
@@ -1367,9 +1367,9 @@ def run_test_command(args):
 
         # 加载模型
         print("\n正在加载模型...")
-        from apt.apt_model.modeling.apt_model import APTModel
+        from apt.model.architectures.apt_model import APTModel
         from apt.core.config.apt_config import APTConfig
-        from apt.apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+        from apt.model.tokenization.chinese_tokenizer_integration import get_appropriate_tokenizer
 
         # 加载配置
         config = APTConfig.from_pretrained(model_path)
@@ -1686,9 +1686,9 @@ def run_distill_command(args):
     _start_monitor(resource_monitor)
 
     try:
-        from apt.apt_model.plugins.visual_distillation_plugin import VisualDistillationPlugin
-        from apt.apt_model.plugins.teacher_api import TeacherAPIPlugin
-        from apt.apt_model.training.trainer import train_model
+        from apt.apps.plugins.distillation.visual_distillation_plugin import VisualDistillationPlugin
+        from apt.apps.plugins.distillation.teacher_api import TeacherAPIPlugin
+        from apt.trainops.engine.trainer import train_model
         from apt.core.data.external_data import load_external_data
 
         # 配置蒸馏参数
@@ -2577,7 +2577,7 @@ def debug_model_architecture(args):
         print(f"  加载模型配置...")
 
         from apt.core.config.apt_config import APTConfig
-        from apt.apt_model.modeling.apt_model import APTModel
+        from apt.model.architectures.apt_model import APTModel
 
         # 创建测试配置
         config = APTConfig(
@@ -2674,7 +2674,7 @@ def debug_tokenizer(args):
     try:
         print(f"  测试分词器...")
 
-        from apt.apt_model.modeling.chinese_tokenizer_integration import get_appropriate_tokenizer
+        from apt.model.tokenization.chinese_tokenizer_integration import get_appropriate_tokenizer
 
         test_texts = ["人工智能", "深度学习", "自然语言处理"]
 
