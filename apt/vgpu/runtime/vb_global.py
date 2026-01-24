@@ -42,8 +42,8 @@ try:
         convert_model_to_mxfp4
     )
     _mxfp4_available = True
-except ImportError as e:
-    logger.warning(f"MXFP4 量化模块导入失败: {e}")
+except ImportError:
+    # 可选模块，静默失败
     _mxfp4_available = False
 
 # 新增：GPU优化MoE
@@ -54,8 +54,8 @@ try:
         MoEConfig
     )
     _moe_optimized_available = True
-except ImportError as e:
-    logger.warning(f"GPU优化MoE模块导入失败: {e}")
+except ImportError:
+    # 可选模块，静默失败
     _moe_optimized_available = False
 
 # 新增：超大规模训练
@@ -66,8 +66,8 @@ try:
         setup_extreme_scale_training
     )
     _extreme_scale_available = True
-except ImportError as e:
-    logger.warning(f"超大规模训练模块导入失败: {e}")
+except ImportError:
+    # 可选模块，静默失败
     _extreme_scale_available = False
 
 # 全局状态
