@@ -148,6 +148,9 @@ if TORCH_AVAILABLE:
                 enable_fp4=self.enable_fp4
             )
 
+            # 移到与原始模块相同的设备
+            vb_linear = vb_linear.to(module.weight.device)
+
             # 复制权重
             vb_linear.weight.data.copy_(module.weight.data)
             if module.bias is not None:
