@@ -121,12 +121,15 @@ Examples:
     #  Generation related arguments
     # ===============================
     generation_group = parser.add_argument_group('Generation Options')
-    generation_group.add_argument('--temperature', type=float, default=0.7, 
+    generation_group.add_argument('--temperature', type=float, default=0.7,
                                  help='Generation temperature parameter (default: 0.7)')
-    generation_group.add_argument('--top-p', type=float, default=0.9, 
+    generation_group.add_argument('--top-p', type=float, default=0.9,
                                  help='Generation top-p parameter (default: 0.9)')
-    generation_group.add_argument('--max-length', type=int, default=50, 
+    generation_group.add_argument('--max-length', type=int, default=50,
                                  help='Maximum generation length (default: 50)')
+    generation_group.add_argument('--enable-vb', '--enable-virtual-blackwell',
+                                 action='store_true', dest='enable_vb',
+                                 help='Enable Virtual Blackwell GPU optimization for faster inference')
     
     # ===============================
     #  Data related arguments
