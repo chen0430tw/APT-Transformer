@@ -21,14 +21,18 @@ if sys.platform == 'win32':
 import traceback
 from datetime import datetime
 
-from apt.apt_model.utils.logging_utils import setup_logging
-from apt.apt_model.utils.resource_monitor import ResourceMonitor
-from apt.apt_model.utils.language_manager import LanguageManager
-from apt.apt_model.utils.hardware_check import check_hardware_compatibility
-from apt.apt_model.utils.cache_manager import CacheManager
-from apt.core.config.apt_config import APTConfig
-from apt.apt_model.utils import get_device, set_seed
-from apt.apt_model.utils.common import _initialize_common
+# 临时注释掉不存在的导入
+# from apt.apt_model.utils.logging_utils import setup_logging
+# from apt.apt_model.utils.resource_monitor import ResourceMonitor
+# from apt.apt_model.utils.language_manager import LanguageManager
+# from apt.apt_model.utils.hardware_check import check_hardware_compatibility
+# from apt.apt_model.utils.cache_manager import CacheManager
+# from apt.core.config.apt_config import APTConfig
+# from apt.apt_model.utils import get_device, set_seed
+
+# 使用标准库替代
+import logging
+# from apt.apt_model.utils.common import _initialize_common
 from apt.apps.cli.command_registry import register_command
 
 # 延迟导入 - 仅在实际使用命令时导入以避免依赖问题
