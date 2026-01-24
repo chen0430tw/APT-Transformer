@@ -13,25 +13,46 @@ Virtual GPU Runtime (Virtual Blackwell)
 """
 
 # Virtual Blackwell Core
-from apt.vgpu.runtime.virtual_blackwell_adapter import (
-    VirtualBlackwellAdapter,
-    create_virtual_blackwell,
-)
-from apt.vgpu.runtime.vb_global import VBGlobalConfig
-from apt.vgpu.runtime.vb_integration import (
-    VBOptimizedLinear,
-    VBModelWrapper,
-    enable_vb_optimization,
-)
-from apt.vgpu.runtime.vb_autopatch import VBAutoPatcher
+try:
+    from apt.vgpu.runtime.virtual_blackwell_adapter import (
+        VirtualBlackwellAdapter,
+        create_virtual_blackwell,
+    )
+except ImportError:
+    VirtualBlackwellAdapter = None
+    create_virtual_blackwell = None
+try:
+    from apt.vgpu.runtime.vb_global import VBGlobalConfig
+except ImportError:
+    VBGlobalConfig = None
+try:
+    from apt.vgpu.runtime.vb_integration import (
+        VBOptimizedLinear,
+        VBModelWrapper,
+        enable_vb_optimization,
+    )
+except ImportError:
+    VBOptimizedLinear = None
+    VBModelWrapper = None
+    enable_vb_optimization = None
+try:
+    from apt.vgpu.runtime.vb_autopatch import VBAutoPatcher
+except ImportError:
+    VBAutoPatcher = None
 
 # VGPU Stack Technology
-from apt.vgpu.runtime.vgpu_stack import (
-    VGPUStack,
-    VGPULevel,
-    VGPUStackLinear,
-    create_vgpu_stack,
-)
+try:
+    from apt.vgpu.runtime.vgpu_stack import (
+        VGPUStack,
+        VGPULevel,
+        VGPUStackLinear,
+        create_vgpu_stack,
+    )
+except ImportError:
+    VGPUStack = None
+    VGPULevel = None
+    VGPUStackLinear = None
+    create_vgpu_stack = None
 
 __all__ = [
     # Virtual Blackwell

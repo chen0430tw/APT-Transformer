@@ -24,17 +24,37 @@ warnings.warn(
 )
 
 # 重导出所有训练组件（保持向后兼容）
-from apt.trainops.engine import *  # noqa: F401, F403
-from apt.trainops.data import *  # noqa: F401, F403
-from apt.trainops.checkpoints import *  # noqa: F401, F403
-from apt.trainops.eval import *  # noqa: F401, F403
+try:
+    from apt.trainops.engine import *  # noqa: F401, F403
+except ImportError:
+try:
+    from apt.trainops.data import *  # noqa: F401, F403
+except ImportError:
+try:
+    from apt.trainops.checkpoints import *  # noqa: F401, F403
+except ImportError:
+try:
+    from apt.trainops.eval import *  # noqa: F401, F403
+except ImportError:
 
 # 导出__all__
 try:
-    from apt.trainops.engine import __all__ as _engine_all
-    from apt.trainops.data import __all__ as _data_all
-    from apt.trainops.checkpoints import __all__ as _ckpt_all
-    from apt.trainops.eval import __all__ as _eval_all
+    try:
+        from apt.trainops.engine import __all__ as _engine_all
+    except ImportError:
+        _engine_all = None
+    try:
+        from apt.trainops.data import __all__ as _data_all
+    except ImportError:
+        _data_all = None
+    try:
+        from apt.trainops.checkpoints import __all__ as _ckpt_all
+    except ImportError:
+        _ckpt_all = None
+    try:
+        from apt.trainops.eval import __all__ as _eval_all
+    except ImportError:
+        _eval_all = None
     __all__ = _engine_all + _data_all + _ckpt_all + _eval_all
 except ImportError:
     __all__ = []

@@ -10,9 +10,18 @@ Evaluation and Validation
 - Performance monitoring
 """
 
-from apt.trainops.eval.training_monitor import TrainingMonitor
-from apt.trainops.eval.training_guard import TrainingGuard
-from apt.trainops.eval.gradient_monitor import GradientMonitor
+try:
+    from apt.trainops.eval.training_monitor import TrainingMonitor
+except ImportError:
+    TrainingMonitor = None
+try:
+    from apt.trainops.eval.training_guard import TrainingGuard
+except ImportError:
+    TrainingGuard = None
+try:
+    from apt.trainops.eval.gradient_monitor import GradientMonitor
+except ImportError:
+    GradientMonitor = None
 
 __all__ = [
     'TrainingMonitor',

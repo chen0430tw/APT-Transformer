@@ -12,31 +12,53 @@ Provides runtime decoding strategies including:
 - Expert routing in vein subspace
 """
 
-from apt.core.runtime.decoder.halting import (
-    HaltingUnit,
-    MultiCriteriaHalting,
-    BudgetedHalting,
-)
+try:
+    from apt.core.runtime.decoder.halting import (
+        HaltingUnit,
+        MultiCriteriaHalting,
+        BudgetedHalting,
+    )
+except ImportError:
+    HaltingUnit = None
+    MultiCriteriaHalting = None
+    BudgetedHalting = None
 
-from apt.core.runtime.decoder.routing import (
-    ExpertRouter,
-    MiniExpert,
-    MoELayer,
-    SwitchRouter,
-)
+try:
+    from apt.core.runtime.decoder.routing import (
+        ExpertRouter,
+        MiniExpert,
+        MoELayer,
+        SwitchRouter,
+    )
+except ImportError:
+    ExpertRouter = None
+    MiniExpert = None
+    MoELayer = None
+    SwitchRouter = None
 
-from apt.core.runtime.decoder.structured_reasoner import (
-    StructuredReasoner,
-    ChainOfThoughtReasoner,
-    SelfConsistencyReasoner,
-    TreeOfThoughtsReasoner,
-)
+try:
+    from apt.core.runtime.decoder.structured_reasoner import (
+        StructuredReasoner,
+        ChainOfThoughtReasoner,
+        SelfConsistencyReasoner,
+        TreeOfThoughtsReasoner,
+    )
+except ImportError:
+    StructuredReasoner = None
+    ChainOfThoughtReasoner = None
+    SelfConsistencyReasoner = None
+    TreeOfThoughtsReasoner = None
 
-from apt.core.runtime.decoder.reasoning_controller import (
-    ReasoningController,
-    BudgetedReasoningController,
-    AdaptiveBudgetController,
-)
+try:
+    from apt.core.runtime.decoder.reasoning_controller import (
+        ReasoningController,
+        BudgetedReasoningController,
+        AdaptiveBudgetController,
+    )
+except ImportError:
+    ReasoningController = None
+    BudgetedReasoningController = None
+    AdaptiveBudgetController = None
 
 __all__ = [
     # Halting

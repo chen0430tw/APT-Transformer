@@ -8,9 +8,11 @@ apt_model/ 包含APT的训练实现，apt/ 是框架层。
 """
 
 # 重导出apt_model的所有训练功能
-from apt.apt_model.training import *  # noqa: F401, F403
+try:
+    from apt.apt_model.training import *  # noqa: F401, F403
+except ImportError:
 
 try:
     from apt.apt_model.training import __all__
 except ImportError:
-    pass
+    __all__ = None

@@ -20,27 +20,42 @@ APT Memory Module (L2 Memory Layer)
 # AIM-Memory System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.memory.aim.aim_memory import AIMMemory
+    try:
+        from apt.memory.aim.aim_memory import AIMMemory
+    except ImportError:
+        AIMMemory = None
 except ImportError:
     AIMMemory = None
 
 try:
-    from apt.memory.aim.aim_nc import AIMNC
+    try:
+        from apt.memory.aim.aim_nc import AIMNC
+    except ImportError:
+        AIMNC = None
 except ImportError:
     AIMNC = None
 
 try:
-    from apt.memory.aim.anchor_fields import AnchorField
+    try:
+        from apt.memory.aim.anchor_fields import AnchorField
+    except ImportError:
+        AnchorField = None
 except ImportError:
     AnchorField = None
 
 try:
-    from apt.memory.aim.evidence_feedback import EvidenceFeedback
+    try:
+        from apt.memory.aim.evidence_feedback import EvidenceFeedback
+    except ImportError:
+        EvidenceFeedback = None
 except ImportError:
     EvidenceFeedback = None
 
 try:
-    from apt.memory.aim.tiered_memory import TieredMemory
+    try:
+        from apt.memory.aim.tiered_memory import TieredMemory
+    except ImportError:
+        TieredMemory = None
 except ImportError:
     TieredMemory = None
 
@@ -48,27 +63,42 @@ except ImportError:
 # GraphRAG System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.memory.graph_rag.graph_brain import GraphBrain
+    try:
+        from apt.memory.graph_rag.graph_brain import GraphBrain
+    except ImportError:
+        GraphBrain = None
 except ImportError:
     GraphBrain = None
 
 try:
-    from apt.memory.graph_rag.graph_rag_manager import GraphRAGManager as GraphRAG
+    try:
+        from apt.memory.graph_rag.graph_rag_manager import GraphRAGManager as GraphRAG
+    except ImportError:
+        GraphRAG = None
 except ImportError:
     GraphRAG = None
 
 try:
-    from apt.memory.knowledge_graph import KnowledgeGraph
+    try:
+        from apt.memory.knowledge_graph import KnowledgeGraph
+    except ImportError:
+        KnowledgeGraph = None
 except ImportError:
     KnowledgeGraph = None
 
 try:
-    from apt.memory.kg_rag_integration import KGRAGIntegration
+    try:
+        from apt.memory.kg_rag_integration import KGRAGIntegration
+    except ImportError:
+        KGRAGIntegration = None
 except ImportError:
     KGRAGIntegration = None
 
 try:
-    from apt.memory.rag_integration import RAGIntegration
+    try:
+        from apt.memory.rag_integration import RAGIntegration
+    except ImportError:
+        RAGIntegration = None
 except ImportError:
     RAGIntegration = None
 

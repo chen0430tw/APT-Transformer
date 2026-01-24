@@ -9,12 +9,20 @@ Tokenization
 - Language detection
 """
 
-from apt.model.tokenization.chinese_tokenizer import ChineseTokenizer
-from apt.model.tokenization.chinese_tokenizer_integration import (
-    integrate_chinese_tokenizer,
-    detect_language,
-    get_appropriate_tokenizer,
-)
+try:
+    from apt.model.tokenization.chinese_tokenizer import ChineseTokenizer
+except ImportError:
+    ChineseTokenizer = None
+try:
+    from apt.model.tokenization.chinese_tokenizer_integration import (
+        integrate_chinese_tokenizer,
+        detect_language,
+        get_appropriate_tokenizer,
+    )
+except ImportError:
+    integrate_chinese_tokenizer = None
+    detect_language = None
+    get_appropriate_tokenizer = None
 
 __all__ = [
     'ChineseTokenizer',

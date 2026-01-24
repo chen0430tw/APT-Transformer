@@ -6,6 +6,9 @@
 包含用于代码质量检查、依赖分析等开发辅助工具。
 """
 
-from apt.core.dev_tools.dependency_checker import DependencyChecker
+try:
+    from apt.core.dev_tools.dependency_checker import DependencyChecker
+except ImportError:
+    DependencyChecker = None
 
 __all__ = ['DependencyChecker']

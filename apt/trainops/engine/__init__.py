@@ -13,27 +13,69 @@ Training Engine
 """
 
 # 主训练器
-from apt.trainops.engine.trainer import Trainer, train_model
-from apt.trainops.engine.finetuner import Finetuner
+try:
+    from apt.trainops.engine.trainer import Trainer, train_model
+except ImportError:
+    Trainer = None
+    train_model = None
+try:
+    from apt.trainops.engine.finetuner import Finetuner
+except ImportError:
+    Finetuner = None
 
 # 特定训练器
-from apt.trainops.engine.claude_trainer import ClaudeTrainer
-from apt.trainops.engine.gpt_trainer import GPTTrainer
-from apt.trainops.engine.vft_tva_trainer import VFTTVATrainer
-from apt.trainops.engine.train_reasoning import ReasoningTrainer
+try:
+    from apt.trainops.engine.claude_trainer import ClaudeTrainer
+except ImportError:
+    ClaudeTrainer = None
+try:
+    from apt.trainops.engine.gpt_trainer import GPTTrainer
+except ImportError:
+    GPTTrainer = None
+try:
+    from apt.trainops.engine.vft_tva_trainer import VFTTVATrainer
+except ImportError:
+    VFTTVATrainer = None
+try:
+    from apt.trainops.engine.train_reasoning import ReasoningTrainer
+except ImportError:
+    ReasoningTrainer = None
 
 # 训练支持
-from apt.trainops.engine.callbacks import (
-    TrainingCallback,
-    EarlyStoppingCallback,
-    LearningRateSchedulerCallback,
-)
-from apt.trainops.engine.hooks import TrainingHook
-from apt.trainops.engine.training_events import TrainingEventManager
-from apt.trainops.engine.mixed_precision import MixedPrecisionManager
-from apt.trainops.engine.optimizer import get_optimizer
-from apt.trainops.engine.apt_integration import APTIntegration
-from apt.trainops.engine.sosa_core import SOSACore
+try:
+    from apt.trainops.engine.callbacks import (
+        TrainingCallback,
+        EarlyStoppingCallback,
+        LearningRateSchedulerCallback,
+    )
+except ImportError:
+    TrainingCallback = None
+    EarlyStoppingCallback = None
+    LearningRateSchedulerCallback = None
+try:
+    from apt.trainops.engine.hooks import TrainingHook
+except ImportError:
+    TrainingHook = None
+try:
+    from apt.trainops.engine.training_events import TrainingEventManager
+except ImportError:
+    TrainingEventManager = None
+try:
+    from apt.trainops.engine.mixed_precision import MixedPrecisionManager
+except ImportError:
+    MixedPrecisionManager = None
+try:
+    from apt.trainops.engine.optimizer import get_optimizer
+except ImportError:
+    get_optimizer = None
+try:
+    from apt.trainops.engine.apt_integration import APTIntegration
+except ImportError:
+    APTIntegration = None
+try:
+    from apt.trainops.engine.sosa_core import SOSACore
+except ImportError:
+    SOSACore = None
 
 __all__ = [
     # Main trainers

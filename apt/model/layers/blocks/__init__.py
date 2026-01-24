@@ -6,20 +6,34 @@ VFT/TVA Blocks Module
 Refactored VFT/TVA implementation from original vft_tva.py.
 """
 
-from apt.model.layers.blocks.vein import (
-    VeinProjector,
-    VeinSubspaceShared,  # Alias for backward compatibility
-)
+try:
+    from apt.model.layers.blocks.vein import (
+        VeinProjector,
+        VeinSubspaceShared,  # Alias for backward compatibility
+    )
+except ImportError:
+    VeinProjector = None
+    VeinSubspaceShared = None
+    # Alias for backward compatibility = None
 
-from apt.model.layers.blocks.vft_tva import (
-    TVAAttention,
-    VFTFeedForward,
-    NormalCompensator,
-    VFTBlock,
-    create_vft_block,
-    _stable_softmax,
-    _off_plane_eps,
-)
+try:
+    from apt.model.layers.blocks.vft_tva import (
+        TVAAttention,
+        VFTFeedForward,
+        NormalCompensator,
+        VFTBlock,
+        create_vft_block,
+        _stable_softmax,
+        _off_plane_eps,
+    )
+except ImportError:
+    TVAAttention = None
+    VFTFeedForward = None
+    NormalCompensator = None
+    VFTBlock = None
+    create_vft_block = None
+    _stable_softmax = None
+    _off_plane_eps = None
 
 __all__ = [
     # Vein projector

@@ -14,18 +14,67 @@ APT TrainOps Domain
 - artifacts: 训练产物管理（模型、日志、指标等）
 
 使用示例：
-    from apt.trainops.engine import Trainer
-    from apt.trainops.distributed import setup_ddp
-    from apt.trainops.data import APTDataLoader
+    try:
+        from apt.trainops.engine import Trainer
+    except ImportError:
+        Trainer = None
+    try:
+        from apt.trainops.distributed import setup_ddp
+    except ImportError:
+        setup_ddp = None
+    try:
+        from apt.trainops.data import APTDataLoader
+    except ImportError:
+        APTDataLoader = None
 """
 
 __version__ = '2.0.0-alpha'
 
 # 主要模块导出
-from apt.trainops.engine import Trainer, Finetuner, train_model
-from apt.trainops.data import create_dataloader, APTDataLoader
-from apt.trainops.checkpoints import CheckpointManager, save_checkpoint, load_checkpoint
-from apt.trainops.eval import TrainingMonitor, TrainingGuard
+# Note: Using try-except to handle potential import errors
+try:
+    try:
+        from apt.trainops.engine import Trainer, Finetuner, train_model
+    except ImportError:
+        Trainer = None
+        Finetuner = None
+        train_model = None
+except ImportError:
+    Trainer = None
+    Finetuner = None
+    train_model = None
+
+try:
+    try:
+        from apt.trainops.data import create_dataloader, APTDataLoader
+    except ImportError:
+        create_dataloader = None
+        APTDataLoader = None
+except ImportError:
+    create_dataloader = None
+    APTDataLoader = None
+
+try:
+    try:
+        from apt.trainops.checkpoints import CheckpointManager, save_checkpoint, load_checkpoint
+    except ImportError:
+        CheckpointManager = None
+        save_checkpoint = None
+        load_checkpoint = None
+except ImportError:
+    CheckpointManager = None
+    save_checkpoint = None
+    load_checkpoint = None
+
+try:
+    try:
+        from apt.trainops.eval import TrainingMonitor, TrainingGuard
+    except ImportError:
+        TrainingMonitor = None
+        TrainingGuard = None
+except ImportError:
+    TrainingMonitor = None
+    TrainingGuard = None
 
 __all__ = [
     # Engine

@@ -11,31 +11,51 @@ Model Layers
 - Custom blocks
 """
 
-from apt.model.layers.embeddings import (
-    PositionalEncoding,
-    TokenEmbedding,
-    ImageEmbedding,
-)
-from apt.model.layers.advanced_rope import AdvancedRoPE
+try:
+    from apt.model.layers.embeddings import (
+        PositionalEncoding,
+        TokenEmbedding,
+        ImageEmbedding,
+    )
+except ImportError:
+    PositionalEncoding = None
+    TokenEmbedding = None
+    ImageEmbedding = None
+try:
+    from apt.model.layers.advanced_rope import AdvancedRoPE
+except ImportError:
+    AdvancedRoPE = None
 
 # 尝试导入可选模块（如果导入失败则跳过）
 try:
-    from apt.model.layers.apt_control import APTControl
+    try:
+        from apt.model.layers.apt_control import APTControl
+    except ImportError:
+        APTControl = None
 except ImportError:
     APTControl = None
 
 try:
-    from apt.model.layers.left_spin_smooth import LeftSpinSmooth
+    try:
+        from apt.model.layers.left_spin_smooth import LeftSpinSmooth
+    except ImportError:
+        LeftSpinSmooth = None
 except ImportError:
     LeftSpinSmooth = None
 
 try:
-    from apt.model.layers.memory_augmented_smooth import MemoryAugmentedSmooth
+    try:
+        from apt.model.layers.memory_augmented_smooth import MemoryAugmentedSmooth
+    except ImportError:
+        MemoryAugmentedSmooth = None
 except ImportError:
     MemoryAugmentedSmooth = None
 
 try:
-    from apt.model.layers.moe_optimized import OptimizedMoE
+    try:
+        from apt.model.layers.moe_optimized import OptimizedMoE
+    except ImportError:
+        OptimizedMoE = None
 except ImportError:
     OptimizedMoE = None
 

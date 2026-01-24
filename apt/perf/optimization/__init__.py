@@ -5,20 +5,32 @@ APT Model Optimization Module
 """
 
 # GPU Flash优化（推荐）
-from apt.perf.optimization.gpu_flash_optimization import (
-    FP4Codec,
-    FusedFP4Linear,
-    FlashAttention,
-    OptimizedTransformerBlock,
-    HAS_TRITON
-)
+try:
+    from apt.perf.optimization.gpu_flash_optimization import (
+        FP4Codec,
+        FusedFP4Linear,
+        FlashAttention,
+        OptimizedTransformerBlock,
+        HAS_TRITON
+    )
+except ImportError:
+    FP4Codec = None
+    FusedFP4Linear = None
+    FlashAttention = None
+    OptimizedTransformerBlock = None
+    HAS_TRITON = None
 
 # 旧版虚拟Blackwell（已弃用，仅兼容）
-from apt.perf.optimization.microvm_compression import (
-    AutoCompressor,
-    compress,
-    CompressedLinear
-)
+try:
+    from apt.perf.optimization.microvm_compression import (
+        AutoCompressor,
+        compress,
+        CompressedLinear
+    )
+except ImportError:
+    AutoCompressor = None
+    compress = None
+    CompressedLinear = None
 
 # ⚠️ Virtual Blackwell已迁移到apt.vgpu域
 # 为保持向后兼容，从新位置重导出
@@ -33,56 +45,97 @@ warnings.warn(
     stacklevel=2
 )
 
-from apt.vgpu.runtime import (
-    VirtualBlackwellAdapter,
-    create_virtual_blackwell,
-    VBOptimizedLinear,
-    VBModelWrapper,
-    enable_vb_optimization,
-    VGPUStack,
-    VGPULevel,
-    VGPUStackLinear,
-    create_vgpu_stack,
-)
-from apt.vgpu.scheduler import (
-    VGPUResourceEstimator,
-    ModelConfig,
-    MemoryEstimate,
-    VGPUConfig,
-    quick_estimate,
-)
+try:
+    from apt.vgpu.runtime import (
+        VirtualBlackwellAdapter,
+        create_virtual_blackwell,
+        VBOptimizedLinear,
+        VBModelWrapper,
+        enable_vb_optimization,
+        VGPUStack,
+        VGPULevel,
+        VGPUStackLinear,
+        create_vgpu_stack,
+    )
+except ImportError:
+    VirtualBlackwellAdapter = None
+    create_virtual_blackwell = None
+    VBOptimizedLinear = None
+    VBModelWrapper = None
+    enable_vb_optimization = None
+    VGPUStack = None
+    VGPULevel = None
+    VGPUStackLinear = None
+    create_vgpu_stack = None
+try:
+    from apt.vgpu.scheduler import (
+        VGPUResourceEstimator,
+        ModelConfig,
+        MemoryEstimate,
+        VGPUConfig,
+        quick_estimate,
+    )
+except ImportError:
+    VGPUResourceEstimator = None
+    ModelConfig = None
+    MemoryEstimate = None
+    VGPUConfig = None
+    quick_estimate = None
 
 # 暂时保留旧导入方式（用于gradual migration）
 try:
-    from apt.vgpu.runtime.vb_integration import TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+    try:
+        from apt.vgpu.runtime.vb_integration import TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+    except ImportError:
+        VB_TORCH_AVAILABLE = None
 except ImportError:
     VB_TORCH_AVAILABLE = False
 
 # NPU/XPU/HPU后端适配器（统一多厂商加速器接口）
-from apt.perf.optimization.npu_backend import (
-    DeviceBackend,
-    UnifiedDeviceManager,
-    get_device_manager,
-    get_unified_backend,
-    # 设备检测
-    is_cuda_available,
-    is_npu_available,
-    is_hpu_available,
-    is_xpu_available,
-    # 工具函数
-    get_accelerator_type,
-    get_all_accelerator_types,
-)
+try:
+    from apt.perf.optimization.npu_backend import (
+        DeviceBackend,
+        UnifiedDeviceManager,
+        get_device_manager,
+        get_unified_backend,
+        # 设备检测
+        is_cuda_available,
+        is_npu_available,
+        is_hpu_available,
+        is_xpu_available,
+        # 工具函数
+        get_accelerator_type,
+        get_all_accelerator_types,
+    )
+except ImportError:
+    DeviceBackend = None
+    UnifiedDeviceManager = None
+    get_device_manager = None
+    get_unified_backend = None
+    # 设备检测 is_cuda_available = None
+    is_npu_available = None
+    is_hpu_available = None
+    is_xpu_available = None
+    # 工具函数 get_accelerator_type = None
+    get_all_accelerator_types = None
 
 # 云端NPU适配器（无需购买硬件，通过API调用远程NPU）
-from apt.perf.optimization.cloud_npu_adapter import (
-    CloudNPUBackend,
-    HuaweiModelArtsNPU,
-    CloudNPULinear,
-    CloudNPUManager,
-    get_cloud_npu_manager,
-    enable_cloud_npu,
-)
+try:
+    from apt.perf.optimization.cloud_npu_adapter import (
+        CloudNPUBackend,
+        HuaweiModelArtsNPU,
+        CloudNPULinear,
+        CloudNPUManager,
+        get_cloud_npu_manager,
+        enable_cloud_npu,
+    )
+except ImportError:
+    CloudNPUBackend = None
+    HuaweiModelArtsNPU = None
+    CloudNPULinear = None
+    CloudNPUManager = None
+    get_cloud_npu_manager = None
+    enable_cloud_npu = None
 
 __all__ = [
     # GPU Flash优化（推荐使用）

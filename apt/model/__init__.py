@@ -14,35 +14,61 @@ APT Model Domain
 - extensions: 核心扩展（RAG, KG, MCP等）
 
 使用示例：
-    from apt.model.architectures import APTLargeModel
-    from apt.model.tokenization import ChineseTokenizer
-    from apt.model.losses import APTLoss
+    try:
+        from apt.model.architectures import APTLargeModel
+    except ImportError:
+        APTLargeModel = None
+    try:
+        from apt.model.tokenization import ChineseTokenizer
+    except ImportError:
+        ChineseTokenizer = None
+    try:
+        from apt.model.losses import APTLoss
+    except ImportError:
+        APTLoss = None
 """
 
 __version__ = '2.0.0-alpha'
 
 # 主要模块导出
 try:
-    from apt.model.architectures import APTLargeModel, MultimodalAPTModel
+    try:
+        from apt.model.architectures import APTLargeModel, MultimodalAPTModel
+    except ImportError:
+        APTLargeModel = None
+        MultimodalAPTModel = None
 except ImportError as e:
     # 如果导入失败，定义占位符
     APTLargeModel = None
     MultimodalAPTModel = None
 
 try:
-    from apt.model.tokenization import ChineseTokenizer
+    try:
+        from apt.model.tokenization import ChineseTokenizer
+    except ImportError:
+        ChineseTokenizer = None
 except ImportError:
     ChineseTokenizer = None
 
 try:
-    from apt.model.layers import PositionalEncoding, TokenEmbedding, AdvancedRoPE
+    try:
+        from apt.model.layers import PositionalEncoding, TokenEmbedding, AdvancedRoPE
+    except ImportError:
+        PositionalEncoding = None
+        TokenEmbedding = None
+        AdvancedRoPE = None
 except ImportError:
     PositionalEncoding = None
     TokenEmbedding = None
     AdvancedRoPE = None
 
 try:
-    from apt.model.extensions import RAGIntegration, KnowledgeGraph, MCPIntegration
+    try:
+        from apt.model.extensions import RAGIntegration, KnowledgeGraph, MCPIntegration
+    except ImportError:
+        RAGIntegration = None
+        KnowledgeGraph = None
+        MCPIntegration = None
 except ImportError:
     RAGIntegration = None
     KnowledgeGraph = None

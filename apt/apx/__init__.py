@@ -17,9 +17,18 @@ APX特性：
 - 签名验证
 
 使用示例：
-    from apt.apx.packaging import package_model
-    from apt.apx.distribution import publish_model
-    from apt.apx.validation import validate_package
+    try:
+        from apt.apx.packaging import package_model
+    except ImportError:
+        package_model = None
+    try:
+        from apt.apx.distribution import publish_model
+    except ImportError:
+        publish_model = None
+    try:
+        from apt.apx.validation import validate_package
+    except ImportError:
+        validate_package = None
 """
 
 __version__ = '2.0.0-alpha'

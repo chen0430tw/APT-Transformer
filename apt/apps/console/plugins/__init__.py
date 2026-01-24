@@ -9,9 +9,18 @@ This directory contains example plugins demonstrating the plugin system:
 - route_optimizer_plugin.py - Performance tier plugin for route optimization
 """
 
-from apt.apps.console.plugins.grpo_plugin import GRPOPlugin
-from apt.apps.console.plugins.eqi_reporter_plugin import EQIReporterPlugin
-from apt.apps.console.plugins.route_optimizer_plugin import RouteOptimizerPlugin
+try:
+    from apt.apps.console.plugins.grpo_plugin import GRPOPlugin
+except ImportError:
+    GRPOPlugin = None
+try:
+    from apt.apps.console.plugins.eqi_reporter_plugin import EQIReporterPlugin
+except ImportError:
+    EQIReporterPlugin = None
+try:
+    from apt.apps.console.plugins.route_optimizer_plugin import RouteOptimizerPlugin
+except ImportError:
+    RouteOptimizerPlugin = None
 
 __all__ = [
     'GRPOPlugin',
