@@ -2,6 +2,7 @@
 虚拟Blackwell PyTorch集成模块
 
 将虚拟Blackwell优化无缝集成到APT模型训练中。
+使用 Flash Attention + FP4 量化进行加速。
 
 注意：此模块需要PyTorch。
 """
@@ -19,18 +20,20 @@ if TORCH_AVAILABLE:
 
 
     class VBOptimizedLinear(nn.Module):
-        """使用虚拟Blackwell优化的线性层（GPU加速版）"""
+        """使用虚拟Blackwell优化的线性层（Flash Attention + FP4加速）"""
 
         def __init__(self, in_features: int, out_features: int,
                      mode: str = 'auto', bias: bool = True,
-                     enable_quantization: bool = True):
+                     enable_quantization: bool = True,
+                     enable_fp4: bool = True):
             """
             Args:
                 in_features: 输入维度
                 out_features: 输出维度
                 mode: 'auto', 'training', 'inference', 'precision'
                 bias: 是否使用bias
-                enable_quantization: 是否启用量化
+                enable_quantization: 是否启用BOH协议量化 (Layer 3)
+                enable_fp4: 是否启用FP4量化 (Layer 2)
             """
             super().__init__()
             self.in_features = in_features
@@ -38,10 +41,11 @@ if TORCH_AVAILABLE:
             self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
             self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
 
-            # 虚拟Blackwell适配器
+            # 虚拟Blackwell适配器 (Flash Attention + FP4)
             self.vb_adapter = create_virtual_blackwell(
                 mode=mode,
-                enable_quantization=enable_quantization
+                enable_quantization=enable_quantization,
+                enable_fp4=enable_fp4
             )
             self.layer_id = f'linear_{id(self)}'
             self._registered = False
@@ -93,22 +97,25 @@ if TORCH_AVAILABLE:
 
 
     class VBModelWrapper(nn.Module):
-        """将现有模型的线性层替换为VB优化版本"""
+        """将现有模型的线性层替换为VB优化版本 (Flash Attention + FP4)"""
 
         def __init__(self, model: nn.Module, mode: str = 'auto',
                      enable_quantization: bool = True,
+                     enable_fp4: bool = True,
                      replace_pattern: str = 'all'):
             """
             Args:
                 model: 原始模型
                 mode: VB模式
-                enable_quantization: 是否启用量化
+                enable_quantization: 是否启用BOH协议量化 (Layer 3)
+                enable_fp4: 是否启用FP4量化 (Layer 2)
                 replace_pattern: 替换模式 ('all', 'large', 'custom')
             """
             super().__init__()
             self.model = model
             self.mode = mode
             self.enable_quantization = enable_quantization
+            self.enable_fp4 = enable_fp4
             self.replaced_layers = []
 
             # 替换线性层
@@ -137,7 +144,8 @@ if TORCH_AVAILABLE:
                 module.out_features,
                 mode=self.mode,
                 bias=module.bias is not None,
-                enable_quantization=self.enable_quantization
+                enable_quantization=self.enable_quantization,
+                enable_fp4=self.enable_fp4
             )
 
             # 复制权重
@@ -178,7 +186,7 @@ if TORCH_AVAILABLE:
         def print_all_stats(self):
             """打印所有统计信息"""
             print("\n" + "="*70)
-            print("虚拟Blackwell优化统计 - 全局汇总")
+            print("虚拟Blackwell优化统计 - 全局汇总 (Flash Attention + FP4)")
             print("="*70)
 
             all_stats = self.get_all_stats()
@@ -186,7 +194,8 @@ if TORCH_AVAILABLE:
             # 汇总
             total_gpu_hits = 0
             total_accesses = 0
-            total_svd_saves = 0
+            total_fp4_hits = 0
+            total_fp4_calls = 0
 
             for name, stats in all_stats.items():
                 if 'layer1_vgpu' in stats:
@@ -194,14 +203,16 @@ if TORCH_AVAILABLE:
                     total_gpu_hits += vgpu.get('gpu_hits', 0)
                     total_accesses += vgpu.get('total', 0)
 
-                if 'layer2_microvm' in stats:
-                    microvm = stats['layer2_microvm']
-                    total_svd_saves += microvm.get('hits', 0)
+                if 'layer2_fp4' in stats:
+                    fp4 = stats['layer2_fp4']
+                    total_fp4_hits += fp4.get('fp4_hits', 0)
+                    total_fp4_calls += fp4.get('total_calls', 0)
 
             print(f"\n已优化层数: {len(self.replaced_layers)}")
             print(f"总GPU命中: {total_gpu_hits}/{total_accesses} " +
                   f"({total_gpu_hits/total_accesses*100:.1f}%)" if total_accesses > 0 else "")
-            print(f"总SVD节省: {total_svd_saves}次")
+            print(f"总FP4命中: {total_fp4_hits}/{total_fp4_calls} " +
+                  f"({total_fp4_hits/total_fp4_calls*100:.1f}%)" if total_fp4_calls > 0 else "")
 
             print("\n详细统计:")
             for name in self.replaced_layers[:5]:  # 只显示前5个
@@ -218,14 +229,16 @@ if TORCH_AVAILABLE:
 
     def enable_vb_optimization(model: nn.Module, mode: str = 'training',
                               enable_quantization: bool = False,
+                              enable_fp4: bool = True,
                               replace_pattern: str = 'all') -> VBModelWrapper:
         """
-        快速启用虚拟Blackwell优化
+        快速启用虚拟Blackwell优化 (Flash Attention + FP4)
 
         Args:
             model: 要优化的模型
             mode: 'auto', 'training', 'inference', 'precision'
-            enable_quantization: 是否启用量化（默认禁用，因为太慢）
+            enable_quantization: 是否启用BOH协议量化（默认禁用）
+            enable_fp4: 是否启用FP4量化（默认启用）
             replace_pattern: 'all' 或 'large'
 
         Returns:
@@ -236,10 +249,11 @@ if TORCH_AVAILABLE:
             model = enable_vb_optimization(model, mode='training')
         """
         print("\n" + "="*70)
-        print("启用虚拟Blackwell优化")
+        print("启用虚拟Blackwell优化 (Flash Attention + FP4)")
         print("="*70)
         print(f"模式: {mode}")
-        print(f"量化: {'启用' if enable_quantization else '禁用'}")
+        print(f"FP4量化: {'启用' if enable_fp4 else '禁用'}")
+        print(f"BOH协议量化: {'启用' if enable_quantization else '禁用'}")
         print(f"替换策略: {replace_pattern}")
         print()
 
@@ -247,6 +261,7 @@ if TORCH_AVAILABLE:
             model,
             mode=mode,
             enable_quantization=enable_quantization,
+            enable_fp4=enable_fp4,
             replace_pattern=replace_pattern
         )
 
