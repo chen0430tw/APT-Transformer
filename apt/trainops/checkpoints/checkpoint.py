@@ -83,9 +83,59 @@ def _load_directory_checkpoint(path, device):
     # 创建模型
     model = APTLargeModel(config)
 
-    # 加载模型权重
+    # 加载模型权重（兼容旧版本 checkpoint）
     model_path = os.path.join(path, "model.pt")
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    checkpoint_state_dict = torch.load(model_path, map_location=device)
+
+    # 尝试严格加载，如果失败则使用兼容模式
+    try:
+        model.load_state_dict(checkpoint_state_dict, strict=True)
+    except RuntimeError as e:
+        # 如果是形状不匹配或缺失参数，使用兼容模式
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"检测到 checkpoint 兼容性问题，使用兼容模式加载...")
+
+        # 获取当前模型的 state_dict
+        model_state_dict = model.state_dict()
+
+        # 过滤掉形状不匹配的参数
+        filtered_state_dict = {}
+        skipped_keys = []
+        shape_mismatch_keys = []
+
+        for key, checkpoint_param in checkpoint_state_dict.items():
+            if key in model_state_dict:
+                model_param = model_state_dict[key]
+                # 检查形状是否匹配
+                if checkpoint_param.shape == model_param.shape:
+                    filtered_state_dict[key] = checkpoint_param
+                else:
+                    shape_mismatch_keys.append(
+                        f"{key}: checkpoint {checkpoint_param.shape} vs model {model_param.shape}"
+                    )
+            else:
+                skipped_keys.append(key)
+
+        # 加载过滤后的参数
+        missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=False)
+
+        # 记录兼容性信息
+        if shape_mismatch_keys:
+            logger.warning(f"跳过 {len(shape_mismatch_keys)} 个形状不匹配的参数（将使用模型默认初始化）:")
+            for info in shape_mismatch_keys[:3]:
+                logger.warning(f"  - {info}")
+            if len(shape_mismatch_keys) > 3:
+                logger.warning(f"  ... 还有 {len(shape_mismatch_keys) - 3} 个")
+
+        if skipped_keys:
+            logger.info(f"跳过 {len(skipped_keys)} 个当前模型中不存在的参数")
+
+        if missing_keys:
+            logger.info(f"使用默认初始化的参数: {len(missing_keys)} 个")
+
+        logger.info(f"✓ 兼容模式加载完成，成功加载 {len(filtered_state_dict)} 个参数")
+
     model = model.to(device)
 
     # 加载分词器
