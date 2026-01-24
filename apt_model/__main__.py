@@ -64,6 +64,19 @@ def show_help():
   upload             Upload models
   export-ollama      Export to Ollama
 
+🎁 APX (Model Packaging) - 🆕 NEW in 2.0:
+  pack-apx           Package model into APX format
+  apx-info           Display APX package info
+  detect-capabilities Auto-detect model capabilities (MoE, RAG, RLHF)
+  detect-framework   Detect model framework (HuggingFace, etc.)
+
+📋 PROFILE SYSTEM - 🆕 NEW in 2.0:
+  --profile PROFILE  Use profile config (lite/standard/pro/full)
+                     • lite     - Lightweight, fast startup
+                     • standard - Balanced performance
+                     • pro      - High performance, distributed
+                     • full     - All features + Virtual Blackwell
+
 🌐 WEB SERVICES:
   python -m apt_model.webui.app --checkpoint-dir ./checkpoints
   python -m apt_model.api.server --checkpoint-dir ./checkpoints
@@ -85,26 +98,62 @@ def show_help():
   --tokenizer-type TYPE  Tokenizer type
   --monitor-resources    Monitor resources
   --create-plots         Create plots
+  --profile PROFILE      Profile config (lite/standard/pro/full) 🆕
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 💡 EXAMPLES:
-  python -m apt_model train --epochs 50
-  python -m apt_model fine-tune --model-path ./pretrained
-  python -m apt_model chat --temperature 0.9
-  python -m apt_model evaluate
-  python -m apt_model export-ollama --model-path ./my_model
-  python -m apt_model.webui.app --port 8080
-  python -m apt_model.api.server --api-key secret
+
+  Basic Training:
+    python -m apt_model train --epochs 50
+    python -m apt_model train --profile pro --epochs 100
+
+  Fine-tuning:
+    python -m apt_model fine-tune --model-path ./pretrained --profile standard
+
+  Chat:
+    python -m apt_model chat --temperature 0.9
+
+  APX Packaging (🆕 NEW):
+    python -m apt_model pack-apx --src ./my_model --out model.apx
+    python -m apt_model detect-capabilities --src ./my_model
+    python -m apt_model apx-info --apx model.apx
+
+  Export:
+    python -m apt_model export-ollama --model-path ./my_model
+
+  Web Services:
+    python -m apt_model.webui.app --port 8080
+    python -m apt_model.api.server --api-key secret
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🆕 APT 2.0 NEW FEATURES:
+
+  1. Profile System - Configuration-driven workflow
+     python quickstart.py --profile lite --demo
+
+  2. APX Model Packaging - Portable model format
+     python -m apt_model pack-apx --src ./model --out model.apx
+
+  3. Virtual Blackwell - GPU virtualization (100K+ GPUs)
+     Enabled in 'full' profile
+
+  4. Auto-detection - Automatically detect model capabilities
+     python -m apt_model detect-capabilities --src ./model
+
+  5. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
+     See: docs/ARCHITECTURE_2.0.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🚀 ALTERNATIVE ENTRY POINTS:
 
-  quickstart.py (Profile-based)
+  quickstart.py (Profile-based, recommended for beginners)
     python quickstart.py --profile lite --demo
+    python quickstart.py --profile standard --epochs 20
 
-  apt.* API (Programmatic)
+  apt.* API (Programmatic, recommended for developers)
     from apt.core.config import load_profile
     from apt.trainops.engine import Trainer
     config = load_profile('lite')
