@@ -387,7 +387,8 @@ def run_chat_command(args):
             temperature=args.temperature,
             top_p=args.top_p,
             max_length=args.max_length,
-            logger=logger
+            logger=logger,
+            enable_vb=getattr(args, 'enable_vb', False)
         )
         return 0
     except Exception as e:

@@ -29,7 +29,8 @@ def chat_with_model(
     show_metrics: bool = True,
     custom_prompts: Optional[Dict[str, str]] = None,
     tokenizer_type: Optional[str] = None,
-    force_cpu: bool = False
+    force_cpu: bool = False,
+    enable_vb: bool = False
 ) -> None:
     """
     Start an interactive command-line chat session with a trained APT model.
@@ -159,6 +160,20 @@ def chat_with_model(
                     model_path, device=device)
 
         model.eval()
+
+        # Apply Virtual Blackwell optimization if enabled
+        if enable_vb:
+            try:
+                from apt.vgpu.runtime import enable_vb_optimization
+                model = enable_vb_optimization(model)
+                print(f"✓ Virtual Blackwell 优化已启用")
+            except ImportError:
+                print(f"⚠️  Virtual Blackwell 模块不可用，继续使用标准模式")
+            except Exception as e:
+                if logger:
+                    logger.warning(f"Virtual Blackwell 优化失败: {e}")
+                print(f"⚠️  Virtual Blackwell 优化失败，继续使用标准模式")
+
         print(f"模型加载成功! 使用设备: {next(model.parameters()).device}")
     except Exception as e:
         # 详细错误信息只记录到日志
