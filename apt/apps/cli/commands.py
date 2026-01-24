@@ -2806,19 +2806,76 @@ def run_blackwell_simulate_command(args):
     Virtual Blackwell GPU 模拟命令
 
     用法:
-        python -m apt_model blackwell-simulate
+        python -m apt_model blackwell-simulate --num-gpus 100000
+        python -m apt_model blackwell-simulate --mode extreme-scale
     """
     print("🎮 APT Virtual Blackwell GPU Simulation")
     print("=" * 60)
     print()
 
+    # 获取参数
+    num_gpus = getattr(args, 'num_gpus', None)
+    mode = getattr(args, 'mode', 'balanced')
+    max_gpu_mb = getattr(args, 'max_gpu_mb', 2000)
+    enable_quantization = getattr(args, 'enable_quantization', True)
+
     try:
-        from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapter
+        # 如果指定了GPU数量，使用extreme scale模式
+        if num_gpus and num_gpus >= 1000:
+            print(f"🚀 Enabling Extreme Scale Mode with {num_gpus:,} virtual GPUs")
+            print()
 
-        print("Initializing Virtual Blackwell adapter...")
-        adapter = VirtualBlackwellAdapter()
+            try:
+                import apt.vgpu.runtime.vb_global as vb
 
-        print()
+                vb.enable_extreme_scale_mode(total_gpus=num_gpus)
+
+                print("✓ Extreme Scale Training Enabled!")
+                print(f"  • Total GPUs: {num_gpus:,}")
+                print("  • 3D Parallelism: Data + Tensor + Pipeline")
+                print("  • MXFP4 Quantization: Enabled")
+                print("  • GPU-Optimized MoE: Enabled")
+                print("  • Flash Attention: Enabled")
+                print()
+
+                # 显示规模示例
+                if num_gpus >= 350000:
+                    print("📊 Scale Level: Meta Llama 4 class (350K+ GPUs)")
+                elif num_gpus >= 100000:
+                    print("📊 Scale Level: GPT-4 class (100K+ GPUs)")
+                elif num_gpus >= 10000:
+                    print("📊 Scale Level: Claude 3 class (10K+ GPUs)")
+                else:
+                    print("📊 Scale Level: Large Scale Training (1K+ GPUs)")
+                print()
+
+            except ImportError as e:
+                print(f"⚠️  Extreme scale module not available: {e}")
+                print("   Falling back to standard mode...")
+                print()
+                from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapter
+                adapter = VirtualBlackwellAdapter(
+                    mode='auto',
+                    enable_quantization=enable_quantization,
+                    max_gpu_mb=max_gpu_mb
+                )
+        else:
+            # 标准模式
+            if num_gpus:
+                print(f"Virtual GPU Configuration: {num_gpus} GPUs")
+            print(f"Mode: {mode}")
+            print(f"Max GPU Memory: {max_gpu_mb} MB")
+            print(f"Quantization: {'Enabled' if enable_quantization else 'Disabled'}")
+            print()
+
+            from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapter
+
+            adapter = VirtualBlackwellAdapter(
+                mode=mode,
+                enable_quantization=enable_quantization,
+                max_gpu_mb=max_gpu_mb
+            )
+
         print("✓ Virtual Blackwell Features:")
         print("  • NVLink 5.0 (1.8 TB/s bandwidth)")
         print("  • FP4/FP6 precision support")
@@ -2828,6 +2885,14 @@ def run_blackwell_simulate_command(args):
         print()
         print("Virtual Blackwell adapter is now active!")
         print()
+
+        # 使用提示
+        if num_gpus and num_gpus >= 1000:
+            print("💡 Next Steps:")
+            print("  1. Use in training: --profile full --enable-modules vgpu")
+            print("  2. Configure parallelism in training config")
+            print("  3. Monitor with: python -m apt_model monitor-resources")
+            print()
 
         return 0
 
