@@ -64,6 +64,11 @@ with open(output_file, 'w', encoding='utf-8') as f:
     batches_per_epoch = 100
     batch_size = 8
 
+    # 控制台提示训练开始
+    print(f"\n[Training Started] Device: {device} | VB GPUs: {vb_count} | Target Loss: {target_loss}")
+    print(f"Config: {max_epochs} epochs, {batches_per_epoch} batches/epoch, batch_size={batch_size}")
+    print("Progress will be shown every 10 batches...\n")
+
     start_time = time.time()
     total_batches = 0
     best_loss = float('inf')
@@ -101,9 +106,15 @@ with open(output_file, 'w', encoding='utf-8') as f:
                 epoch_loss += loss.item()
                 total_batches += 1
 
+                # 实时进度输出到控制台（每10个batch）
+                if (batch_idx + 1) % 10 == 0:
+                    current_avg = epoch_loss / (batch_idx + 1)
+                    print(f"Epoch {epoch+1}/{max_epochs} | Batch {batch_idx+1}/{batches_per_epoch} | Loss: {current_avg:.4f}", flush=True)
+
             except Exception as e:
                 f.write(f"Error at batch {batch_idx}: {e}\n")
                 f.flush()
+                print(f"[Error] Batch {batch_idx}: {e}", flush=True)
                 continue
 
         avg_loss = epoch_loss / batches_per_epoch
@@ -112,8 +123,12 @@ with open(output_file, 'w', encoding='utf-8') as f:
         if avg_loss < best_loss:
             best_loss = avg_loss
 
+        # 写到文件
         f.write(f"Epoch {epoch+1:3d}/{max_epochs}: Loss={avg_loss:.4f} (最佳={best_loss:.4f}) - {epoch_time:.1f}s\n")
         f.flush()
+
+        # 也输出到控制台
+        print(f"\n[Epoch {epoch+1} Complete] Loss: {avg_loss:.4f} | Best: {best_loss:.4f} | Time: {epoch_time:.1f}s\n", flush=True)
 
         # 每10个epoch打印详细信息
         if (epoch + 1) % 10 == 0:
