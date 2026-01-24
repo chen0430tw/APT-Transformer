@@ -18,7 +18,7 @@ LOG_FILE = os.path.join(os.getcwd(), 'train_mini_claude_vb.log')
 
 def log(msg):
     """安全的日志输出"""
-    with open(LOG_FILE, 'a') as f:
+    with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(msg + '\n')
 
 def create_training_data(num_samples=500):
@@ -88,7 +88,7 @@ def train_mini_claude():
 
     # 统计替换的层数（每层一个VB adapter）
     vb_adapter_count = len(model_vb.replaced_layers)
-    log(f"\n   ✅ 虚拟Blackwell显卡数量: {vb_adapter_count} 张")
+    log(f"\n   [OK] 虚拟Blackwell显卡数量: {vb_adapter_count} 张")
     log(f"   每个线性层对应一张虚拟显卡")
 
     # 显示前10个VB层
@@ -238,21 +238,21 @@ def train_mini_claude():
                 log(f"推理失败: {e}")
 
     log("\n" + "=" * 80)
-    log(f"✅ 成功训练迷你Claude模型，使用了 {vb_adapter_count} 张虚拟Blackwell显卡！")
+    log(f"[OK] 成功训练迷你Claude模型，使用了 {vb_adapter_count} 张虚拟Blackwell显卡！")
     log("=" * 80)
 
     return vb_adapter_count
 
 if __name__ == "__main__":
     # 清空日志文件
-    with open(LOG_FILE, 'w') as f:
+    with open(LOG_FILE, 'w', encoding='utf-8') as f:
         f.write("")
 
     try:
         num_vb = train_mini_claude()
 
         # 读取日志并打印
-        with open(LOG_FILE, 'r') as f:
+        with open(LOG_FILE, 'r', encoding='utf-8') as f:
             content = f.read()
 
         # 写到stderr避免stdout问题
