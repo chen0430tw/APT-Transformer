@@ -12,31 +12,43 @@ Provides runtime decoding strategies including:
 - Expert routing in vein subspace
 """
 
-from apt.core.runtime.decoder.halting import (
-    HaltingUnit,
-    MultiCriteriaHalting,
-    BudgetedHalting,
-)
+try:
+    from apt.core.runtime.decoder.halting import (
+        HaltingUnit,
+        MultiCriteriaHalting,
+        BudgetedHalting,
+    )
+except ImportError:
+    pass
 
-from apt.core.runtime.decoder.routing import (
-    ExpertRouter,
-    MiniExpert,
-    MoELayer,
-    SwitchRouter,
-)
+try:
+    from apt.core.runtime.decoder.routing import (
+        ExpertRouter,
+        MiniExpert,
+        MoELayer,
+        SwitchRouter,
+    )
+except ImportError:
+    pass
 
-from apt.core.runtime.decoder.structured_reasoner import (
-    StructuredReasoner,
-    ChainOfThoughtReasoner,
-    SelfConsistencyReasoner,
-    TreeOfThoughtsReasoner,
-)
+try:
+    from apt.core.runtime.decoder.structured_reasoner import (
+        StructuredReasoner,
+        ChainOfThoughtReasoner,
+        SelfConsistencyReasoner,
+        TreeOfThoughtsReasoner,
+    )
+except ImportError:
+    pass
 
-from apt.core.runtime.decoder.reasoning_controller import (
-    ReasoningController,
-    BudgetedReasoningController,
-    AdaptiveBudgetController,
-)
+try:
+    from apt.core.runtime.decoder.reasoning_controller import (
+        ReasoningController,
+        BudgetedReasoningController,
+        AdaptiveBudgetController,
+    )
+except ImportError:
+    pass
 
 __all__ = [
     # Halting

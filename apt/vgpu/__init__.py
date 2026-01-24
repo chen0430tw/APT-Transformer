@@ -18,26 +18,41 @@ Virtual Blackwell特性：
 - 性能监控
 
 使用示例：
-    from apt.vgpu.runtime import VirtualGPU
-    from apt.vgpu.scheduler import GPUScheduler
-    from apt.vgpu.memory import GPUMemoryManager
+    try:
+        from apt.vgpu.runtime import VirtualGPU
+    except ImportError:
+        pass
+    try:
+        from apt.vgpu.scheduler import GPUScheduler
+    except ImportError:
+        pass
+    try:
+        from apt.vgpu.memory import GPUMemoryManager
+    except ImportError:
+        pass
 """
 
 __version__ = '2.0.0-alpha'
 
 # 主要模块导出
-from apt.vgpu.runtime import (
-    VirtualBlackwellAdapter,
-    create_virtual_blackwell,
-    VGPUStack,
-    create_vgpu_stack,
-    VBOptimizedLinear,
-    enable_vb_optimization,
-)
-from apt.vgpu.scheduler import (
-    VGPUResourceEstimator,
-    quick_estimate,
-)
+try:
+    from apt.vgpu.runtime import (
+        VirtualBlackwellAdapter,
+        create_virtual_blackwell,
+        VGPUStack,
+        create_vgpu_stack,
+        VBOptimizedLinear,
+        enable_vb_optimization,
+    )
+except ImportError:
+    pass
+try:
+    from apt.vgpu.scheduler import (
+        VGPUResourceEstimator,
+        quick_estimate,
+    )
+except ImportError:
+    pass
 
 __all__ = [
     # Runtime

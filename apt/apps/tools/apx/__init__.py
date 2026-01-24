@@ -17,24 +17,33 @@ APX Format:
     - tests/: Optional smoke tests
 """
 
-from apt.apps.tools.apx.converter import (
-    pack_apx,
-    detect_framework,
-    APXPackagingError,
-)
-from apt.apps.tools.apx.detectors import (
-    detect_capabilities,
-    detect_moe,
-    detect_rag,
-    detect_rl,
-    detect_safety,
-    detect_quant_distill,
-    detect_tva_vft,
-)
-from apt.apps.tools.apx.adapters import (
-    AdapterType,
-    get_adapter_code,
-)
+try:
+    from apt.apps.tools.apx.converter import (
+        pack_apx,
+        detect_framework,
+        APXPackagingError,
+    )
+except ImportError:
+    pass
+try:
+    from apt.apps.tools.apx.detectors import (
+        detect_capabilities,
+        detect_moe,
+        detect_rag,
+        detect_rl,
+        detect_safety,
+        detect_quant_distill,
+        detect_tva_vft,
+    )
+except ImportError:
+    pass
+try:
+    from apt.apps.tools.apx.adapters import (
+        AdapterType,
+        get_adapter_code,
+    )
+except ImportError:
+    pass
 
 __all__ = [
     # Main packaging function

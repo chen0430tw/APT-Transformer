@@ -14,11 +14,26 @@ Available Provider Types:
 - RetrievalProvider: RAG retrieval implementations
 """
 
-from apt.core.providers.attention import AttentionProvider
-from apt.core.providers.ffn import FFNProvider
-from apt.core.providers.router import RouterProvider
-from apt.core.providers.align import AlignProvider
-from apt.core.providers.retrieval import RetrievalProvider
+try:
+    from apt.core.providers.attention import AttentionProvider
+except ImportError:
+    pass
+try:
+    from apt.core.providers.ffn import FFNProvider
+except ImportError:
+    pass
+try:
+    from apt.core.providers.router import RouterProvider
+except ImportError:
+    pass
+try:
+    from apt.core.providers.align import AlignProvider
+except ImportError:
+    pass
+try:
+    from apt.core.providers.retrieval import RetrievalProvider
+except ImportError:
+    pass
 
 __all__ = [
     'AttentionProvider',

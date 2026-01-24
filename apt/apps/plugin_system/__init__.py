@@ -12,7 +12,10 @@ Key components:
 - Built-in plugins: MoE, Alignment, Retrieval, etc.
 
 Usage:
-    from apt.plugins import plugin_manager, Plugin
+    try:
+        from apt.plugins import plugin_manager, Plugin
+    except ImportError:
+        pass
 
     # Define a plugin
     class MyPlugin(Plugin):
@@ -41,19 +44,28 @@ Usage:
     plugin_manager.trigger_event('on_epoch_start', epoch=5)
 """
 
-from apt.plugins.base import Plugin, PluginMetadata
-from apt.plugins.manager import PluginManager, plugin_manager
-from apt.plugins.hooks import (
-    HookManager,
-    hook_manager,
-    Hook,
-    HookEvents,
-    hook,
-    every_n_epochs,
-    every_n_steps,
-    after_epoch,
-    before_epoch
-)
+try:
+    from apt.plugins.base import Plugin, PluginMetadata
+except ImportError:
+    pass
+try:
+    from apt.plugins.manager import PluginManager, plugin_manager
+except ImportError:
+    pass
+try:
+    from apt.plugins.hooks import (
+        HookManager,
+        hook_manager,
+        Hook,
+        HookEvents,
+        hook,
+        every_n_epochs,
+        every_n_steps,
+        after_epoch,
+        before_epoch
+    )
+except ImportError:
+    pass
 
 __all__ = [
     # Base classes

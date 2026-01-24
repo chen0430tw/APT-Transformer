@@ -17,13 +17,16 @@ Key components:
 - LanguageDetector: Automatic language detection
 
 Usage:
-    from apt.multilingual import (
-        Language,
-        get_language,
-        list_languages,
-        detect_language,
-        TokenizerProvider
-    )
+    try:
+        from apt.multilingual import (
+            Language,
+            get_language,
+            list_languages,
+            detect_language,
+            TokenizerProvider
+        )
+    except ImportError:
+        pass
 
     # Get a language
     chinese = get_language('zh')
@@ -40,56 +43,68 @@ Usage:
 """
 
 # Language definitions
-from apt.multilingual.language import (
-    Language,
-    Script,
-    Direction,
-    LanguageFeatures,
-    # Predefined languages
-    ENGLISH,
-    CHINESE_SIMPLIFIED,
-    CHINESE_TRADITIONAL,
-    JAPANESE,
-    KOREAN,
-    SPANISH,
-    FRENCH,
-    GERMAN,
-    RUSSIAN,
-    ARABIC,
-    HINDI,
-    MULTILINGUAL,
-    # Language groups
-    PREDEFINED_LANGUAGES,
-    EAST_ASIAN_LANGUAGES,
-    EUROPEAN_LANGUAGES,
-    RTL_LANGUAGES,
-)
+try:
+    from apt.multilingual.language import (
+        Language,
+        Script,
+        Direction,
+        LanguageFeatures,
+        # Predefined languages
+        ENGLISH,
+        CHINESE_SIMPLIFIED,
+        CHINESE_TRADITIONAL,
+        JAPANESE,
+        KOREAN,
+        SPANISH,
+        FRENCH,
+        GERMAN,
+        RUSSIAN,
+        ARABIC,
+        HINDI,
+        MULTILINGUAL,
+        # Language groups
+        PREDEFINED_LANGUAGES,
+        EAST_ASIAN_LANGUAGES,
+        EUROPEAN_LANGUAGES,
+        RTL_LANGUAGES,
+    )
+except ImportError:
+    pass
 
 # Tokenizer interface
-from apt.multilingual.tokenizer import (
-    TokenizerProvider,
-    TokenizerConfig,
-    get_tokenizer_for_language,
-)
+try:
+    from apt.multilingual.tokenizer import (
+        TokenizerProvider,
+        TokenizerConfig,
+        get_tokenizer_for_language,
+    )
+except ImportError:
+    pass
 
 # Language registry
-from apt.multilingual.registry import (
-    LanguageRegistry,
-    language_registry,
-    get_language,
-    list_languages,
-    get_vocab_size,
-    is_language_supported,
-)
+try:
+    from apt.multilingual.registry import (
+        LanguageRegistry,
+        language_registry,
+        get_language,
+        list_languages,
+        get_vocab_size,
+        is_language_supported,
+    )
+except ImportError:
+    pass
 
 # Language detection
-from apt.multilingual.detector import (
-    LanguageDetector,
-    language_detector,
-    detect_language,
-    detect_script,
-    is_mixed_language,
-)
+try:
+    from apt.multilingual.detector import (
+        LanguageDetector,
+        language_detector,
+        detect_language,
+        detect_script,
+        is_mixed_language,
+    )
+except ImportError:
+    pass
 
 __all__ = [
     # Core classes

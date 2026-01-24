@@ -34,8 +34,14 @@ Architecture:
 
 __version__ = "1.0.0"
 
-from apt.apps.console.core import ConsoleCore
-from apt.apps.console.module_manager import ModuleManager
+try:
+    from apt.apps.console.core import ConsoleCore
+except ImportError:
+    pass
+try:
+    from apt.apps.console.module_manager import ModuleManager
+except ImportError:
+    pass
 
 __all__ = [
     'ConsoleCore',

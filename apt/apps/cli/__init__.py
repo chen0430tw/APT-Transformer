@@ -10,18 +10,27 @@ Command-line interface for APT model training and evaluation tool
 - 清晰的公共API
 """
 
-from apt.apps.cli.parser import parse_arguments, get_available_commands
-from apt.apps.cli.command_registry import (
-    CommandRegistry,
-    CommandMetadata,
-    command_registry,
-    register_command,
-    get_command,
-    execute_command
-)
+try:
+    from apt.apps.cli.parser import parse_arguments, get_available_commands
+except ImportError:
+    pass
+try:
+    from apt.apps.cli.command_registry import (
+        CommandRegistry,
+        CommandMetadata,
+        command_registry,
+        register_command,
+        get_command,
+        execute_command
+    )
+except ImportError:
+    pass
 
 # 导入命令（自动注册到命令注册中心）
-import apt.apps.cli.commands  # noqa: F401
+try:
+    import apt.apps.cli.commands  # noqa: F401
+except ImportError:
+    pass
 
 # Import APX commands and register them
 try:

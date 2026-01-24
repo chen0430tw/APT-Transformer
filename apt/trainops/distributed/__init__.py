@@ -11,12 +11,15 @@ Distributed Training
 - Extreme scale training (100K+ GPUs)
 """
 
-from apt.trainops.distributed.extreme_scale_training import (
-    ExtremeScaleTrainer,
-    ParallelismConfig,
-    NetworkTopology,
-    create_extreme_scale_trainer,
-)
+try:
+    from apt.trainops.distributed.extreme_scale_training import (
+        ExtremeScaleTrainer,
+        ParallelismConfig,
+        NetworkTopology,
+        create_extreme_scale_trainer,
+    )
+except ImportError:
+    pass
 
 __all__ = [
     'ExtremeScaleTrainer',

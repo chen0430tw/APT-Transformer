@@ -14,9 +14,18 @@ APT Model Domain
 - extensions: 核心扩展（RAG, KG, MCP等）
 
 使用示例：
-    from apt.model.architectures import APTLargeModel
-    from apt.model.tokenization import ChineseTokenizer
-    from apt.model.losses import APTLoss
+    try:
+        from apt.model.architectures import APTLargeModel
+    except ImportError:
+        pass
+    try:
+        from apt.model.tokenization import ChineseTokenizer
+    except ImportError:
+        pass
+    try:
+        from apt.model.losses import APTLoss
+    except ImportError:
+        pass
 """
 
 __version__ = '2.0.0-alpha'

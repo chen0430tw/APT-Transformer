@@ -24,10 +24,22 @@ warnings.warn(
 )
 
 # 重导出所有训练组件（保持向后兼容）
-from apt.trainops.engine import *  # noqa: F401, F403
-from apt.trainops.data import *  # noqa: F401, F403
-from apt.trainops.checkpoints import *  # noqa: F401, F403
-from apt.trainops.eval import *  # noqa: F401, F403
+try:
+    from apt.trainops.engine import *  # noqa: F401, F403
+except ImportError:
+    pass
+try:
+    from apt.trainops.data import *  # noqa: F401, F403
+except ImportError:
+    pass
+try:
+    from apt.trainops.checkpoints import *  # noqa: F401, F403
+except ImportError:
+    pass
+try:
+    from apt.trainops.eval import *  # noqa: F401, F403
+except ImportError:
+    pass
 
 # 导出__all__
 try:

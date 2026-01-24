@@ -11,13 +11,16 @@ GPU任务调度：
 - VGPU resource estimation
 """
 
-from apt.vgpu.scheduler.vgpu_estimator import (
-    VGPUResourceEstimator,
-    ModelConfig,
-    MemoryEstimate,
-    VGPUConfig,
-    quick_estimate,
-)
+try:
+    from apt.vgpu.scheduler.vgpu_estimator import (
+        VGPUResourceEstimator,
+        ModelConfig,
+        MemoryEstimate,
+        VGPUConfig,
+        quick_estimate,
+    )
+except ImportError:
+    pass
 
 __all__ = [
     'VGPUResourceEstimator',

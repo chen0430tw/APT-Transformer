@@ -24,10 +24,22 @@ warnings.warn(
 )
 
 # 重导出所有模型（保持向后兼容）
-from apt.model.architectures import *  # noqa: F401, F403
-from apt.model.layers import *  # noqa: F401, F403
-from apt.model.tokenization import *  # noqa: F401, F403
-from apt.model.extensions import *  # noqa: F401, F403
+try:
+    from apt.model.architectures import *  # noqa: F401, F403
+except ImportError:
+    pass
+try:
+    from apt.model.layers import *  # noqa: F401, F403
+except ImportError:
+    pass
+try:
+    from apt.model.tokenization import *  # noqa: F401, F403
+except ImportError:
+    pass
+try:
+    from apt.model.extensions import *  # noqa: F401, F403
+except ImportError:
+    pass
 
 # 导出__all__
 try:

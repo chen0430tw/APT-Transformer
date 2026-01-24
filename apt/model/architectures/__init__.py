@@ -10,16 +10,40 @@ Model Architectures
 """
 
 # 核心模型
-from apt.model.architectures.apt_model import APTLargeModel
-from apt.model.architectures.multimodal_model import MultimodalAPTModel
-from apt.model.architectures.elastic_transformer import ElasticTransformer
+try:
+    from apt.model.architectures.apt_model import APTLargeModel
+except ImportError:
+    pass
+try:
+    from apt.model.architectures.multimodal_model import MultimodalAPTModel
+except ImportError:
+    pass
+try:
+    from apt.model.architectures.elastic_transformer import ElasticTransformer
+except ImportError:
+    pass
 
 # 特定模型实现
-from apt.model.architectures.claude4_model import Claude4Model
-from apt.model.architectures.gpt5_model import GPT5Model
-from apt.model.architectures.gpt4o_model import GPT4oModel
-from apt.model.architectures.gpto3_model import GPTo3Model
-from apt.model.architectures.vft_tva_model import VFTTVAModel
+try:
+    from apt.model.architectures.claude4_model import Claude4Model
+except ImportError:
+    pass
+try:
+    from apt.model.architectures.gpt5_model import GPT5Model
+except ImportError:
+    pass
+try:
+    from apt.model.architectures.gpt4o_model import GPT4oModel
+except ImportError:
+    pass
+try:
+    from apt.model.architectures.gpto3_model import GPTo3Model
+except ImportError:
+    pass
+try:
+    from apt.model.architectures.vft_tva_model import VFTTVAModel
+except ImportError:
+    pass
 
 __all__ = [
     # Core models

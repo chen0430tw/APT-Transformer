@@ -17,8 +17,14 @@ APT Studio
 - 交互式调试
 
 使用示例：
-    from apt.apps.studio import launch_studio
-    from apt.apps.studio.visualization import plot_training_curves
+    try:
+        from apt.apps.studio import launch_studio
+    except ImportError:
+        pass
+    try:
+        from apt.apps.studio.visualization import plot_training_curves
+    except ImportError:
+        pass
 """
 
 __version__ = '2.0.0-alpha'

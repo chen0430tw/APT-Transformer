@@ -16,10 +16,22 @@ Model Extensions
 - 核心团队维护
 """
 
-from apt.model.extensions.rag_integration import RAGIntegration
-from apt.model.extensions.knowledge_graph import KnowledgeGraph
-from apt.model.extensions.kg_rag_integration import KGRAGIntegration
-from apt.model.extensions.mcp_integration import MCPIntegration
+try:
+    from apt.model.extensions.rag_integration import RAGIntegration
+except ImportError:
+    pass
+try:
+    from apt.model.extensions.knowledge_graph import KnowledgeGraph
+except ImportError:
+    pass
+try:
+    from apt.model.extensions.kg_rag_integration import KGRAGIntegration
+except ImportError:
+    pass
+try:
+    from apt.model.extensions.mcp_integration import MCPIntegration
+except ImportError:
+    pass
 
 __all__ = [
     'RAGIntegration',

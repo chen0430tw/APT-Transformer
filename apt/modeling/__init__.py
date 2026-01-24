@@ -6,7 +6,10 @@ APT Modeling Module
 Model assembly and component management for APT architecture.
 """
 
-from apt.modeling.compose import ModelBuilder
+try:
+    from apt.modeling.compose import ModelBuilder
+except ImportError:
+    pass
 
 __all__ = [
     'ModelBuilder',

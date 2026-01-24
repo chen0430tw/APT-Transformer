@@ -11,12 +11,18 @@ Model Layers
 - Custom blocks
 """
 
-from apt.model.layers.embeddings import (
-    PositionalEncoding,
-    TokenEmbedding,
-    ImageEmbedding,
-)
-from apt.model.layers.advanced_rope import AdvancedRoPE
+try:
+    from apt.model.layers.embeddings import (
+        PositionalEncoding,
+        TokenEmbedding,
+        ImageEmbedding,
+    )
+except ImportError:
+    pass
+try:
+    from apt.model.layers.advanced_rope import AdvancedRoPE
+except ImportError:
+    pass
 
 # 尝试导入可选模块（如果导入失败则跳过）
 try:
