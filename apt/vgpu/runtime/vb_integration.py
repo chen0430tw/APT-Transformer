@@ -175,6 +175,14 @@ if TORCH_AVAILABLE:
             """前向传播"""
             return self.model(*args, **kwargs)
 
+        def __getattr__(self, name):
+            """代理所有未定义的方法到内部模型"""
+            try:
+                return super().__getattr__(name)
+            except AttributeError:
+                # 代理到内部模型
+                return getattr(self.model, name)
+
         def get_all_stats(self) -> Dict:
             """获取所有VB层的统计信息"""
             stats = {}
