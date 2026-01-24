@@ -359,6 +359,16 @@ def run_chat_command(args):
     返回:
         int: 退出码
     """
+    # 延迟导入聊天函数
+    try:
+        from apt.apps.interactive.chat import chat_with_model
+    except ImportError as e:
+        print(f"❌ 错误: 无法导入聊天模块")
+        print(f"   {e}")
+        print("\n请确保项目结构完整，或者尝试重新安装:")
+        print("   pip install -e .")
+        return 1
+
     # 设置日志
     log_file = f"apt_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     logger = setup_logging(log_file=log_file)

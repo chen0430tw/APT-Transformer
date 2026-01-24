@@ -118,6 +118,11 @@ class CLICommandTester:
             test_args.batch_size = 1
             test_args.learning_rate = 1e-4
 
+            # Generation/Chat相关参数
+            test_args.temperature = 0.7
+            test_args.top_p = 0.9
+            test_args.max_length = 50
+
             # Evaluate相关参数
             test_args.output_dir = None
             test_args.eval_sets = None
