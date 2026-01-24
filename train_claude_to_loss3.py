@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
 import time
+import os
 from apt.model.architectures.claude4_model import create_claude_unified
 from apt.vgpu.runtime.vb_integration import VBModelWrapper
 import sys
 
-output_file = '/tmp/claude_loss3_training.txt'
+# 使用当前目录，跨平台兼容
+output_file = os.path.join(os.getcwd(), 'claude_loss3_training.txt')
 
 with open(output_file, 'w') as f:
     f.write("="*80 + "\n")
