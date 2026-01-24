@@ -84,13 +84,39 @@ def setup_logging(log_file=None, level=logging.INFO):
 
 
 class DummyLanguageManager:
-    """简化的语言管理器，用于替代已废弃的LanguageManager"""
+    """
+    简化的语言管理器（临时方案）
+    完整版本请使用: archived/apt_model/utils/language_manager.py
 
-    def __init__(self):
-        self.translations = {}
+    TODO: 将完整的LanguageManager迁移到apt/core/i18n/
+    """
+
+    def __init__(self, language: str = "en_US"):
+        self.language = language
+        # 内置基本翻译
+        self.translations = {
+            "training.start": "Starting training...",
+            "training.complete": "Training complete",
+            "training.error": "Training failed",
+            "evaluation.start": "Starting evaluation...",
+            "evaluation.complete": "Evaluation complete",
+        }
+
+        # 如果是中文，加载中文翻译
+        if language.startswith("zh"):
+            self.translations.update({
+                "training.start": "开始训练...",
+                "training.complete": "训练完成",
+                "training.error": "训练失败",
+                "evaluation.start": "开始评估...",
+                "evaluation.complete": "评估完成",
+            })
 
     def get(self, key, default=None):
         """获取翻译文本，如果不存在则返回key本身"""
+        # 支持层级键（如 "menu.file.open"）
+        if "." in key:
+            return self.translations.get(key, default or key)
         return self.translations.get(key, default or key)
 
 
