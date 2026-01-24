@@ -128,7 +128,38 @@ with open(output_file, 'w', encoding='utf-8') as f:
         f.flush()
 
         # 也输出到控制台
-        print(f"\n[Epoch {epoch+1} Complete] Loss: {avg_loss:.4f} | Best: {best_loss:.4f} | Time: {epoch_time:.1f}s\n", flush=True)
+        print(f"\n[Epoch {epoch+1} Complete] Loss: {avg_loss:.4f} | Best: {best_loss:.4f} | Time: {epoch_time:.1f}s", flush=True)
+
+        # 实时显示 VB 统计（检查是否在工作）
+        try:
+            all_stats = wrapper.get_all_stats()
+
+            # 汇总统计
+            total_gpu_hits = 0
+            total_gpu_calls = 0
+            total_fp4_hits = 0
+            total_fp4_calls = 0
+
+            for name, stats in all_stats.items():
+                if 'layer1_vgpu' in stats:
+                    vgpu = stats['layer1_vgpu']
+                    total_gpu_hits += vgpu.get('gpu_hits', 0)
+                    total_gpu_calls += vgpu.get('total', 0)
+
+                if 'layer2_fp4' in stats:
+                    fp4 = stats['layer2_fp4']
+                    total_fp4_hits += fp4.get('fp4_hits', 0)
+                    total_fp4_calls += fp4.get('total_calls', 0)
+
+            fp4_rate = (total_fp4_hits / total_fp4_calls * 100) if total_fp4_calls > 0 else 0
+            gpu_rate = (total_gpu_hits / total_gpu_calls * 100) if total_gpu_calls > 0 else 0
+
+            print(f"[VB Status] FP4: {total_fp4_hits}/{total_fp4_calls} ({fp4_rate:.1f}%) | GPU: {total_gpu_hits}/{total_gpu_calls} ({gpu_rate:.1f}%)", flush=True)
+        except Exception as e:
+            # 如果获取统计失败，至少显示层数
+            print(f"[VB Status] {vb_count} virtual GPUs active (stats unavailable: {e})", flush=True)
+
+        print("", flush=True)  # 空行分隔
 
         # 每10个epoch打印详细信息
         if (epoch + 1) % 10 == 0:
