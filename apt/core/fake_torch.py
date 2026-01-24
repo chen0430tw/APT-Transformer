@@ -182,6 +182,23 @@ class FakeTorch:
 
     class optim:
         """Fake optim module"""
+        class Optimizer:
+            """Fake base Optimizer class"""
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def zero_grad(self):
+                pass
+
+            def step(self):
+                pass
+
+            def state_dict(self):
+                return {}
+
+            def load_state_dict(self, state_dict):
+                pass
+
         class Adam:
             def __init__(self, *args, **kwargs):
                 pass
@@ -201,6 +218,32 @@ class FakeTorch:
 
             def step(self):
                 pass
+
+    class utils:
+        """Fake utils module"""
+        class data:
+            """Fake data module"""
+            class Dataset:
+                """Fake Dataset class"""
+                def __init__(self):
+                    pass
+
+                def __len__(self):
+                    return 0
+
+                def __getitem__(self, idx):
+                    return None
+
+            class DataLoader:
+                """Fake DataLoader class"""
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                def __iter__(self):
+                    return iter([])
+
+                def __len__(self):
+                    return 0
 
     class Tensor:
         """Fake tensor class"""
