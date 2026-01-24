@@ -49,6 +49,106 @@ TrainingTimeEstimator = None
 # 辅助函数 - 公共代码提取
 # ============================================================================
 
+def setup_logging(log_file=None, level=logging.INFO):
+    """
+    设置日志系统（替代已废弃的 apt.apt_model.utils.logging_utils.setup_logging）
+
+    Args:
+        log_file: 日志文件路径（可选）
+        level: 日志级别
+
+    Returns:
+        logger: 配置好的logger对象
+    """
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level)
+
+    # 清除已有的处理器
+    logger.handlers.clear()
+
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # 文件处理器（如果指定了log_file）
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    return logger
+
+
+class DummyLanguageManager:
+    """
+    简化的语言管理器（临时方案）
+    完整版本请使用: archived/apt_model/utils/language_manager.py
+
+    TODO: 将完整的LanguageManager迁移到apt/core/i18n/
+    """
+
+    def __init__(self, language: str = "en_US"):
+        self.language = language
+        # 内置基本翻译
+        self.translations = {
+            "training.start": "Starting training...",
+            "training.complete": "Training complete",
+            "training.error": "Training failed",
+            "evaluation.start": "Starting evaluation...",
+            "evaluation.complete": "Evaluation complete",
+        }
+
+        # 如果是中文，加载中文翻译
+        if language.startswith("zh"):
+            self.translations.update({
+                "training.start": "开始训练...",
+                "training.complete": "训练完成",
+                "training.error": "训练失败",
+                "evaluation.start": "开始评估...",
+                "evaluation.complete": "评估完成",
+            })
+
+    def get(self, key, default=None):
+        """获取翻译文本，如果不存在则返回key本身"""
+        # 支持层级键（如 "menu.file.open"）
+        if "." in key:
+            return self.translations.get(key, default or key)
+        return self.translations.get(key, default or key)
+
+
+def _initialize_common(args):
+    """
+    通用初始化函数（替代已废弃的 apt.apt_model.utils.common._initialize_common）
+
+    Args:
+        args: 命令行参数
+
+    Returns:
+        tuple: (logger, language_manager, device)
+    """
+    # 设置日志
+    logger = logging.getLogger(__name__)
+
+    # 语言管理器（简化版）
+    language_manager = DummyLanguageManager()
+
+    # 设备检测
+    device = 'cpu'  # 默认CPU
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = 'mps'
+    except ImportError:
+        pass
+
+    return logger, language_manager, device
+
 def _setup_resource_monitor(args, logger):
     """设置资源监控器（如果启用）"""
     if args.monitor_resources:
@@ -142,9 +242,15 @@ def run_train_command(args):
 
     logger.info(_("training.start"))
 
-    # 检查硬件兼容性
-    model_config = APTConfig()
-    check_hardware_compatibility(model_config, logger)
+    # 检查硬件兼容性（延迟导入）
+    try:
+        from apt.core.config.apt_config import APTConfig
+        from apt.core.hardware import check_hardware_compatibility
+        model_config = APTConfig()
+        check_hardware_compatibility(model_config, logger)
+    except ImportError:
+        # 如果模块不存在，跳过硬件检查
+        logger.warning("Hardware compatibility check skipped (modules not available)")
 
     # 设置资源监控
     resource_monitor = _setup_resource_monitor(args, logger)
@@ -326,8 +432,19 @@ def run_visualize_command(args):
     """
     执行 visualize 命令，生成模型评估可视化图表
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError as e:
+        print("=" * 60)
+        print("❌ 错误: 缺少依赖")
+        print("=" * 60)
+        print()
+        print(f"可视化功能需要matplotlib和numpy库")
+        print(f"请安装: pip install matplotlib numpy")
+        print()
+        print(f"详细错误: {e}")
+        return 1
 
     print("=" * 60)
     print("Starting visualization command")
@@ -636,7 +753,12 @@ def run_estimate_command(args):
                 dataset_size = len(custom_data)
             except Exception:
                 pass
-        model_config = APTConfig()
+        try:
+            from apt.core.config.apt_config import APTConfig
+            model_config = APTConfig()
+        except ImportError:
+            model_config = None  # 使用默认配置
+
         estimator = TrainingTimeEstimator(
             model_config=model_config,
             dataset_size=dataset_size,
