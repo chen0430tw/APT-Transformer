@@ -36,7 +36,7 @@ def patch_apt_models(verbose: bool = True):
 
     if _patched:
         if verbose:
-            print("⚠️ APT模型已经被patch过")
+            print("[!] APT模型已经被patch过")
         return
 
     try:
@@ -102,7 +102,7 @@ def patch_apt_models(verbose: bool = True):
 
                 config = vb_global.get_config()
                 if config.get('verbose', True):
-                    print(f"✓ 自动优化模型: {layer_count} 个线性层")
+                    print(f"[OK] 自动优化模型: {layer_count} 个线性层")
 
         class VBAPTLargeModel(APTLargeModel):
             """自动应用VGPU优化的APTLargeModel"""
@@ -158,7 +158,7 @@ def patch_apt_models(verbose: bool = True):
 
                 config = vb_global.get_config()
                 if config.get('verbose', True) and layer_count > 0:
-                    print(f"✓ 自动优化模型: {layer_count} 个线性层")
+                    print(f"[OK] 自动优化模型: {layer_count} 个线性层")
 
         # 替换模块中的类
         import apt.core.modeling.apt_model as apt_module
@@ -175,13 +175,13 @@ def patch_apt_models(verbose: bool = True):
 
         if verbose:
             print("\n" + "="*70)
-            print("✅ APT模型已自动patch")
+            print("[OK] APT模型已自动patch")
             print("="*70)
             print("所有新创建的APTModel/APTLargeModel将自动应用VGPU优化")
             print("="*70 + "\n")
 
     except Exception as e:
-        print(f"❌ Patch失败: {e}")
+        print(f"[X] Patch失败: {e}")
         import traceback
         traceback.print_exc()
 
@@ -192,7 +192,7 @@ def unpatch_apt_models(verbose: bool = True):
 
     if not _patched:
         if verbose:
-            print("⚠️ APT模型未被patch")
+            print("[!] APT模型未被patch")
         return
 
     try:
@@ -210,10 +210,10 @@ def unpatch_apt_models(verbose: bool = True):
         _patched = False
 
         if verbose:
-            print("✅ APT模型已恢复原始版本")
+            print("[OK] APT模型已恢复原始版本")
 
     except Exception as e:
-        print(f"❌ Unpatch失败: {e}")
+        print(f"[X] Unpatch失败: {e}")
 
 
 def is_patched() -> bool:
