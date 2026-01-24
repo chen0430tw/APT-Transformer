@@ -314,8 +314,8 @@ if __name__ == "__main__":
     for i in range(16):
         Y = adapter.compress(W, X, 'test')
         if (i+1) % 4 == 0:
-            print(f"  ✓ Batch {i+1}/16 完成")
+            print(f"  [OK] Batch {i+1}/16 完成")
 
     adapter.print_stats()
 
-    print("✅ 测试完成！")
+    print("[OK] 测试完成！")

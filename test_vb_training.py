@@ -141,13 +141,13 @@ def main():
     print(f"  吞吐量: {20/time_vb:.2f} batch/s")
 
     print(f"\n加速效果:")
-    print(f"  {'🚀 ' if speedup > 1 else '⚠️  '}时间加速: {speedup:.2f}×")
-    print(f"  {'🚀 ' if throughput_improvement > 1 else '⚠️  '}吞吐量提升: {throughput_improvement:.2f}×")
+    print(f"  {'[>>] ' if speedup > 1 else '[!]  '}时间加速: {speedup:.2f}×")
+    print(f"  {'[>>] ' if throughput_improvement > 1 else '[!]  '}吞吐量提升: {throughput_improvement:.2f}×")
 
     if speedup > 1:
-        print(f"\n✅ Virtual Blackwell 比标准PyTorch快 {(speedup-1)*100:.1f}%")
+        print(f"\n[OK] Virtual Blackwell 比标准PyTorch快 {(speedup-1)*100:.1f}%")
     else:
-        print(f"\n⚠️  Virtual Blackwell 比标准PyTorch慢 {(1-speedup)*100:.1f}%")
+        print(f"\n[!]  Virtual Blackwell 比标准PyTorch慢 {(1-speedup)*100:.1f}%")
         print(f"   (这可能是因为模型太小，FP4编解码开销超过了收益)")
 
     # 精度对比

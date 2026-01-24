@@ -206,39 +206,39 @@ def enable(use_fp4: bool = False,
         }.get(device_type, '⚫ 未知设备')
 
         print("\n" + "="*70)
-        print("🚀 虚拟Blackwell已全局启用（增强版）")
+        print("[>>] 虚拟Blackwell已全局启用（增强版）")
         print("="*70)
         print(f"加速设备:        {device_emoji}")
 
         # 量化选项
         if use_mxfp4:
-            print(f"MXFP4量化:       ✅ 启用 (4-bit, block_size={mxfp4_block_size})")
+            print(f"MXFP4量化:       [OK] 启用 (4-bit, block_size={mxfp4_block_size})")
         elif use_fp4:
-            print(f"FP4量化:         ✅ 启用")
+            print(f"FP4量化:         [OK] 启用")
         else:
-            print(f"量化:            ❌ 禁用")
+            print(f"量化:            [X] 禁用")
 
         # 其他优化
-        print(f"Flash Attention: {'✅ 启用' if use_flash_attn else '❌ 禁用'}")
-        print(f"混合精度:        {'✅ 启用' if mixed_precision else '❌ 禁用'}")
-        print(f"梯度检查点:      {'✅ 启用' if gradient_checkpointing else '❌ 禁用'}")
+        print(f"Flash Attention: {'[OK] 启用' if use_flash_attn else '[X] 禁用'}")
+        print(f"混合精度:        {'[OK] 启用' if mixed_precision else '[X] 禁用'}")
+        print(f"梯度检查点:      {'[OK] 启用' if gradient_checkpointing else '[X] 禁用'}")
 
         # 新增特性
         if use_moe_optimized:
-            print(f"GPU优化MoE:      ✅ 启用 ({moe_num_experts}专家, top-{moe_top_k})")
+            print(f"GPU优化MoE:      [OK] 启用 ({moe_num_experts}专家, top-{moe_top_k})")
         else:
-            print(f"GPU优化MoE:      ❌ 禁用")
+            print(f"GPU优化MoE:      [X] 禁用")
 
         if enable_extreme_scale:
-            print(f"100K GPU训练:    ✅ 启用 ({extreme_scale_total_gpus:,} GPUs)")
-            print(f"  ├─ 3D并行:     ✅")
-            print(f"  ├─ DeepSpeed:  ✅")
-            print(f"  ├─ NVLink 5:   ✅ 1.8TB/s per GPU")
-            print(f"  └─ GB200支持:  ✅ 72 GPUs per rack")
+            print(f"100K GPU训练:    [OK] 启用 ({extreme_scale_total_gpus:,} GPUs)")
+            print(f"  ├─ 3D并行:     [OK]")
+            print(f"  ├─ DeepSpeed:  [OK]")
+            print(f"  ├─ NVLink 5:   [OK] 1.8TB/s per GPU")
+            print(f"  └─ GB200支持:  [OK] 72 GPUs per rack")
         else:
-            print(f"100K GPU训练:    ❌ 禁用")
+            print(f"100K GPU训练:    [X] 禁用")
 
-        print(f"自动估算:        {'✅ 启用' if auto_estimate else '❌ 禁用'}")
+        print(f"自动估算:        {'[OK] 启用' if auto_estimate else '[X] 禁用'}")
         print("="*70 + "\n")
 
 
@@ -308,7 +308,7 @@ def optimize_model(model: nn.Module, model_name: str = "model") -> nn.Module:
     optimized_model.base_model.load_state_dict(model.state_dict())
 
     if verbose:
-        print(f"✓ 已优化 {len(optimized_model.optimized_layers)} 个线性层")
+        print(f"[OK] 已优化 {len(optimized_model.optimized_layers)} 个线性层")
 
     return optimized_model
 
@@ -585,7 +585,7 @@ if os.getenv('ENABLE_VIRTUAL_BLACKWELL', '').lower() in ('1', 'true', 'yes'):
     else:
         enable_balanced_mode()
 
-    print(f"✅ 通过环境变量自动启用虚拟Blackwell ({mode}模式)")
+    print(f"[OK] 通过环境变量自动启用虚拟Blackwell ({mode}模式)")
 
 
 if __name__ == "__main__":

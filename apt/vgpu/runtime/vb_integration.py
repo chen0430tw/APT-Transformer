@@ -162,7 +162,7 @@ if TORCH_AVAILABLE:
                 setattr(self.model, attr_name, vb_linear)
 
             self.replaced_layers.append(name)
-            print(f"✓ 替换层: {name} ({module.in_features} -> {module.out_features})")
+            print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
 
         def _get_parent_and_attr(self, name: str):
             """获取父模块和属性名"""
@@ -273,7 +273,7 @@ if TORCH_AVAILABLE:
             replace_pattern=replace_pattern
         )
 
-        print(f"\n✅ 成功替换 {len(wrapper.replaced_layers)} 个线性层")
+        print(f"\n[OK] 成功替换 {len(wrapper.replaced_layers)} 个线性层")
         print("="*70 + "\n")
 
         return wrapper
