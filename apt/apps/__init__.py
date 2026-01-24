@@ -22,7 +22,10 @@ APT Apps Module (L3 Product Layer)
 # WebUI
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.webui.app import launch_webui
+    try:
+        from apt.apps.webui.app import launch_webui
+    except ImportError:
+        launch_webui = None
 except ImportError:
     launch_webui = None
 
@@ -30,7 +33,10 @@ except ImportError:
 # API Server
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.api.server import create_api_server
+    try:
+        from apt.apps.api.server import create_api_server
+    except ImportError:
+        create_api_server = None
 except ImportError:
     create_api_server = None
 
@@ -38,12 +44,18 @@ except ImportError:
 # CLI
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.cli.commands import APTCommand
+    try:
+        from apt.apps.cli.commands import APTCommand
+    except ImportError:
+        APTCommand = None
 except ImportError:
     APTCommand = None
 
 try:
-    from apt.apps.cli.parser import parse_args
+    try:
+        from apt.apps.cli.parser import parse_args
+    except ImportError:
+        parse_args = None
 except ImportError:
     parse_args = None
 
@@ -51,12 +63,18 @@ except ImportError:
 # Console System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.console.core import Console
+    try:
+        from apt.apps.console.core import Console
+    except ImportError:
+        Console = None
 except ImportError:
     Console = None
 
 try:
-    from apt.apps.console.plugin_bus import PluginBus
+    try:
+        from apt.apps.console.plugin_bus import PluginBus
+    except ImportError:
+        PluginBus = None
 except ImportError:
     PluginBus = None
 
@@ -64,17 +82,26 @@ except ImportError:
 # Plugin System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.plugins.compression_plugin import CompressionPlugin
+    try:
+        from apt.apps.plugins.compression_plugin import CompressionPlugin
+    except ImportError:
+        CompressionPlugin = None
 except ImportError:
     CompressionPlugin = None
 
 try:
-    from apt.apps.plugins.teacher_api import TeacherAPIPlugin
+    try:
+        from apt.apps.plugins.teacher_api import TeacherAPIPlugin
+    except ImportError:
+        TeacherAPIPlugin = None
 except ImportError:
     TeacherAPIPlugin = None
 
 try:
-    from apt.apps.plugins.version_manager import PluginVersionManager
+    try:
+        from apt.apps.plugins.version_manager import PluginVersionManager
+    except ImportError:
+        PluginVersionManager = None
 except ImportError:
     PluginVersionManager = None
 
@@ -82,12 +109,18 @@ except ImportError:
 # Agent System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.agent.agent_loop import AgentLoop
+    try:
+        from apt.apps.agent.agent_loop import AgentLoop
+    except ImportError:
+        AgentLoop = None
 except ImportError:
     AgentLoop = None
 
 try:
-    from apt.apps.agent.tool_system import ToolSystem
+    try:
+        from apt.apps.agent.tool_system import ToolSystem
+    except ImportError:
+        ToolSystem = None
 except ImportError:
     ToolSystem = None
 
@@ -95,17 +128,26 @@ except ImportError:
 # Evaluation & RL
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.apps.evaluation.unified import UnifiedEvaluator
+    try:
+        from apt.apps.evaluation.unified import UnifiedEvaluator
+    except ImportError:
+        UnifiedEvaluator = None
 except ImportError:
     UnifiedEvaluator = None
 
 try:
-    from apt.apps.rl.grpo_trainer import GRPOTrainer
+    try:
+        from apt.apps.rl.grpo_trainer import GRPOTrainer
+    except ImportError:
+        GRPOTrainer = None
 except ImportError:
     GRPOTrainer = None
 
 try:
-    from apt.apps.rl.dpo_trainer import DPOTrainer
+    try:
+        from apt.apps.rl.dpo_trainer import DPOTrainer
+    except ImportError:
+        DPOTrainer = None
 except ImportError:
     DPOTrainer = None
 

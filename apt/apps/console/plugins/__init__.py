@@ -12,15 +12,15 @@ This directory contains example plugins demonstrating the plugin system:
 try:
     from apt.apps.console.plugins.grpo_plugin import GRPOPlugin
 except ImportError:
-    pass
+    GRPOPlugin = None
 try:
     from apt.apps.console.plugins.eqi_reporter_plugin import EQIReporterPlugin
 except ImportError:
-    pass
+    EQIReporterPlugin = None
 try:
     from apt.apps.console.plugins.route_optimizer_plugin import RouteOptimizerPlugin
 except ImportError:
-    pass
+    RouteOptimizerPlugin = None
 
 __all__ = [
     'GRPOPlugin',

@@ -20,15 +20,15 @@ APX特性：
     try:
         from apt.apx.packaging import package_model
     except ImportError:
-        pass
+        package_model = None
     try:
         from apt.apx.distribution import publish_model
     except ImportError:
-        pass
+        publish_model = None
     try:
         from apt.apx.validation import validate_package
     except ImportError:
-        pass
+        validate_package = None
 """
 
 __version__ = '2.0.0-alpha'

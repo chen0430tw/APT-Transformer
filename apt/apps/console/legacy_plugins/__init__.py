@@ -16,7 +16,14 @@ try:
         create_debugging_adapter,
     )
 except ImportError:
-    pass
+    create_huggingface_adapter = None
+    create_cloud_storage_adapter = None
+    create_ollama_export_adapter = None
+    create_distillation_adapter = None
+    create_pruning_adapter = None
+    create_multimodal_adapter = None
+    create_data_processors_adapter = None
+    create_debugging_adapter = None
 
 __all__ = [
     'create_huggingface_adapter',

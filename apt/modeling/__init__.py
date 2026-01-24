@@ -9,7 +9,7 @@ Model assembly and component management for APT architecture.
 try:
     from apt.modeling.compose import ModelBuilder
 except ImportError:
-    pass
+    ModelBuilder = None
 
 __all__ = [
     'ModelBuilder',

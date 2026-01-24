@@ -19,7 +19,11 @@ try:
         create_dataset,
     )
 except ImportError:
-    pass
+    create_dataloader = None
+    APTDataLoader = None
+    PretrainingDataset = None
+    FinetuningDataset = None
+    create_dataset = None
 
 __all__ = [
     'create_dataloader',

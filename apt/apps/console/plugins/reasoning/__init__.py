@@ -14,15 +14,15 @@ Advanced reasoning techniques implemented as plugins:
 try:
     from apt.apps.console.plugins.reasoning.self_consistency_plugin import SelfConsistencyPlugin
 except ImportError:
-    pass
+    SelfConsistencyPlugin = None
 try:
     from apt.apps.console.plugins.reasoning.beam_search_plugin import BeamSearchReasoningPlugin
 except ImportError:
-    pass
+    BeamSearchReasoningPlugin = None
 try:
     from apt.apps.console.plugins.reasoning.program_aided_plugin import ProgramAidedReasoningPlugin
 except ImportError:
-    pass
+    ProgramAidedReasoningPlugin = None
 
 __all__ = [
     'SelfConsistencyPlugin',

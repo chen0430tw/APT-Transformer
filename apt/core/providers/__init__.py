@@ -17,23 +17,23 @@ Available Provider Types:
 try:
     from apt.core.providers.attention import AttentionProvider
 except ImportError:
-    pass
+    AttentionProvider = None
 try:
     from apt.core.providers.ffn import FFNProvider
 except ImportError:
-    pass
+    FFNProvider = None
 try:
     from apt.core.providers.router import RouterProvider
 except ImportError:
-    pass
+    RouterProvider = None
 try:
     from apt.core.providers.align import AlignProvider
 except ImportError:
-    pass
+    AlignProvider = None
 try:
     from apt.core.providers.retrieval import RetrievalProvider
 except ImportError:
-    pass
+    RetrievalProvider = None
 
 __all__ = [
     'AttentionProvider',

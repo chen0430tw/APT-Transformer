@@ -24,7 +24,9 @@ try:
         APXPackagingError,
     )
 except ImportError:
-    pass
+    pack_apx = None
+    detect_framework = None
+    APXPackagingError = None
 try:
     from apt.apps.tools.apx.detectors import (
         detect_capabilities,
@@ -36,14 +38,21 @@ try:
         detect_tva_vft,
     )
 except ImportError:
-    pass
+    detect_capabilities = None
+    detect_moe = None
+    detect_rag = None
+    detect_rl = None
+    detect_safety = None
+    detect_quant_distill = None
+    detect_tva_vft = None
 try:
     from apt.apps.tools.apx.adapters import (
         AdapterType,
         get_adapter_code,
     )
 except ImportError:
-    pass
+    AdapterType = None
+    get_adapter_code = None
 
 __all__ = [
     # Main packaging function

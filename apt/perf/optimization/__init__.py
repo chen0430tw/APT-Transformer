@@ -14,7 +14,11 @@ try:
         HAS_TRITON
     )
 except ImportError:
-    pass
+    FP4Codec = None
+    FusedFP4Linear = None
+    FlashAttention = None
+    OptimizedTransformerBlock = None
+    HAS_TRITON = None
 
 # 旧版虚拟Blackwell（已弃用，仅兼容）
 try:
@@ -24,7 +28,9 @@ try:
         CompressedLinear
     )
 except ImportError:
-    pass
+    AutoCompressor = None
+    compress = None
+    CompressedLinear = None
 
 # ⚠️ Virtual Blackwell已迁移到apt.vgpu域
 # 为保持向后兼容，从新位置重导出
@@ -52,7 +58,15 @@ try:
         create_vgpu_stack,
     )
 except ImportError:
-    pass
+    VirtualBlackwellAdapter = None
+    create_virtual_blackwell = None
+    VBOptimizedLinear = None
+    VBModelWrapper = None
+    enable_vb_optimization = None
+    VGPUStack = None
+    VGPULevel = None
+    VGPUStackLinear = None
+    create_vgpu_stack = None
 try:
     from apt.vgpu.scheduler import (
         VGPUResourceEstimator,
@@ -62,11 +76,18 @@ try:
         quick_estimate,
     )
 except ImportError:
-    pass
+    VGPUResourceEstimator = None
+    ModelConfig = None
+    MemoryEstimate = None
+    VGPUConfig = None
+    quick_estimate = None
 
 # 暂时保留旧导入方式（用于gradual migration）
 try:
-    from apt.vgpu.runtime.vb_integration import TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+    try:
+        from apt.vgpu.runtime.vb_integration import TORCH_AVAILABLE as VB_TORCH_AVAILABLE
+    except ImportError:
+        VB_TORCH_AVAILABLE = None
 except ImportError:
     VB_TORCH_AVAILABLE = False
 
@@ -87,7 +108,16 @@ try:
         get_all_accelerator_types,
     )
 except ImportError:
-    pass
+    DeviceBackend = None
+    UnifiedDeviceManager = None
+    get_device_manager = None
+    get_unified_backend = None
+    # 设备检测 is_cuda_available = None
+    is_npu_available = None
+    is_hpu_available = None
+    is_xpu_available = None
+    # 工具函数 get_accelerator_type = None
+    get_all_accelerator_types = None
 
 # 云端NPU适配器（无需购买硬件，通过API调用远程NPU）
 try:
@@ -100,7 +130,12 @@ try:
         enable_cloud_npu,
     )
 except ImportError:
-    pass
+    CloudNPUBackend = None
+    HuaweiModelArtsNPU = None
+    CloudNPULinear = None
+    CloudNPUManager = None
+    get_cloud_npu_manager = None
+    enable_cloud_npu = None
 
 __all__ = [
     # GPU Flash优化（推荐使用）

@@ -26,7 +26,11 @@ Usage:
             TokenizerProvider
         )
     except ImportError:
-        pass
+        Language = None
+        get_language = None
+        list_languages = None
+        detect_language = None
+        TokenizerProvider = None
 
     # Get a language
     chinese = get_language('zh')
@@ -69,7 +73,26 @@ try:
         RTL_LANGUAGES,
     )
 except ImportError:
-    pass
+    Language = None
+    Script = None
+    Direction = None
+    LanguageFeatures = None
+    # Predefined languages ENGLISH = None
+    CHINESE_SIMPLIFIED = None
+    CHINESE_TRADITIONAL = None
+    JAPANESE = None
+    KOREAN = None
+    SPANISH = None
+    FRENCH = None
+    GERMAN = None
+    RUSSIAN = None
+    ARABIC = None
+    HINDI = None
+    MULTILINGUAL = None
+    # Language groups PREDEFINED_LANGUAGES = None
+    EAST_ASIAN_LANGUAGES = None
+    EUROPEAN_LANGUAGES = None
+    RTL_LANGUAGES = None
 
 # Tokenizer interface
 try:
@@ -79,7 +102,9 @@ try:
         get_tokenizer_for_language,
     )
 except ImportError:
-    pass
+    TokenizerProvider = None
+    TokenizerConfig = None
+    get_tokenizer_for_language = None
 
 # Language registry
 try:
@@ -92,7 +117,12 @@ try:
         is_language_supported,
     )
 except ImportError:
-    pass
+    LanguageRegistry = None
+    language_registry = None
+    get_language = None
+    list_languages = None
+    get_vocab_size = None
+    is_language_supported = None
 
 # Language detection
 try:
@@ -104,7 +134,11 @@ try:
         is_mixed_language,
     )
 except ImportError:
-    pass
+    LanguageDetector = None
+    language_detector = None
+    detect_language = None
+    detect_script = None
+    is_mixed_language = None
 
 __all__ = [
     # Core classes

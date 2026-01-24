@@ -19,19 +19,19 @@ Model Extensions
 try:
     from apt.model.extensions.rag_integration import RAGIntegration
 except ImportError:
-    pass
+    RAGIntegration = None
 try:
     from apt.model.extensions.knowledge_graph import KnowledgeGraph
 except ImportError:
-    pass
+    KnowledgeGraph = None
 try:
     from apt.model.extensions.kg_rag_integration import KGRAGIntegration
 except ImportError:
-    pass
+    KGRAGIntegration = None
 try:
     from apt.model.extensions.mcp_integration import MCPIntegration
 except ImportError:
-    pass
+    MCPIntegration = None
 
 __all__ = [
     'RAGIntegration',

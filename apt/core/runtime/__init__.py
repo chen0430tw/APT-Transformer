@@ -12,6 +12,6 @@ Provides runtime components for inference and generation:
 try:
     from apt.core.runtime import decoder
 except ImportError:
-    pass
+    decoder = None
 
 __all__ = ['decoder']

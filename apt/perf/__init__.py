@@ -20,32 +20,49 @@ APT Performance Module (L1 Performance Layer)
 # Virtual Blackwell Stack
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.perf.optimization.virtual_blackwell_adapter import (
-        VirtualBlackwellAdapter,
-        enable_virtual_blackwell
-    )
+    try:
+        from apt.perf.optimization.virtual_blackwell_adapter import (
+            VirtualBlackwellAdapter,
+            enable_virtual_blackwell
+        )
+    except ImportError:
+        VirtualBlackwellAdapter = None
+        enable_virtual_blackwell = None
 except ImportError:
     VirtualBlackwellAdapter = None
     enable_virtual_blackwell = None
 
 try:
-    from apt.perf.optimization.vgpu_stack import VGPUStack, VGPUConfig
+    try:
+        from apt.perf.optimization.vgpu_stack import VGPUStack, VGPUConfig
+    except ImportError:
+        VGPUStack = None
+        VGPUConfig = None
 except ImportError:
     VGPUStack = None
     VGPUConfig = None
 
 try:
-    from apt.perf.optimization.vgpu_estimator import VGPUEstimator
+    try:
+        from apt.perf.optimization.vgpu_estimator import VGPUEstimator
+    except ImportError:
+        VGPUEstimator = None
 except ImportError:
     VGPUEstimator = None
 
 try:
-    from apt.perf.optimization.microvm_compression import MicroVMCompression
+    try:
+        from apt.perf.optimization.microvm_compression import MicroVMCompression
+    except ImportError:
+        MicroVMCompression = None
 except ImportError:
     MicroVMCompression = None
 
 try:
-    from apt.perf.optimization.mxfp4_quantization import MXFP4Quantizer
+    try:
+        from apt.perf.optimization.mxfp4_quantization import MXFP4Quantizer
+    except ImportError:
+        MXFP4Quantizer = None
 except ImportError:
     MXFP4Quantizer = None
 
@@ -53,12 +70,18 @@ except ImportError:
 # NPU Infrastructure
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.perf.infrastructure.npu_manager import NPUManager
+    try:
+        from apt.perf.infrastructure.npu_manager import NPUManager
+    except ImportError:
+        NPUManager = None
 except ImportError:
     NPUManager = None
 
 try:
-    from apt.perf.infrastructure.cloud_npu import CloudNPUAdapter
+    try:
+        from apt.perf.infrastructure.cloud_npu import CloudNPUAdapter
+    except ImportError:
+        CloudNPUAdapter = None
 except ImportError:
     CloudNPUAdapter = None
 
@@ -66,12 +89,18 @@ except ImportError:
 # Training Optimizations
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.perf.training.mixed_precision import MixedPrecisionTrainer
+    try:
+        from apt.perf.training.mixed_precision import MixedPrecisionTrainer
+    except ImportError:
+        MixedPrecisionTrainer = None
 except ImportError:
     MixedPrecisionTrainer = None
 
 try:
-    from apt.perf.training.checkpoint import AtomicCheckpoint
+    try:
+        from apt.perf.training.checkpoint import AtomicCheckpoint
+    except ImportError:
+        AtomicCheckpoint = None
 except ImportError:
     AtomicCheckpoint = None
 

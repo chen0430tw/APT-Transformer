@@ -13,37 +13,37 @@ Model Architectures
 try:
     from apt.model.architectures.apt_model import APTLargeModel
 except ImportError:
-    pass
+    APTLargeModel = None
 try:
     from apt.model.architectures.multimodal_model import MultimodalAPTModel
 except ImportError:
-    pass
+    MultimodalAPTModel = None
 try:
     from apt.model.architectures.elastic_transformer import ElasticTransformer
 except ImportError:
-    pass
+    ElasticTransformer = None
 
 # 特定模型实现
 try:
     from apt.model.architectures.claude4_model import Claude4Model
 except ImportError:
-    pass
+    Claude4Model = None
 try:
     from apt.model.architectures.gpt5_model import GPT5Model
 except ImportError:
-    pass
+    GPT5Model = None
 try:
     from apt.model.architectures.gpt4o_model import GPT4oModel
 except ImportError:
-    pass
+    GPT4oModel = None
 try:
     from apt.model.architectures.gpto3_model import GPTo3Model
 except ImportError:
-    pass
+    GPTo3Model = None
 try:
     from apt.model.architectures.vft_tva_model import VFTTVAModel
 except ImportError:
-    pass
+    VFTTVAModel = None
 
 __all__ = [
     # Core models

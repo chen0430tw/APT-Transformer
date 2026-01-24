@@ -13,15 +13,15 @@ Evaluation and Validation
 try:
     from apt.trainops.eval.training_monitor import TrainingMonitor
 except ImportError:
-    pass
+    TrainingMonitor = None
 try:
     from apt.trainops.eval.training_guard import TrainingGuard
 except ImportError:
-    pass
+    TrainingGuard = None
 try:
     from apt.trainops.eval.gradient_monitor import GradientMonitor
 except ImportError:
-    pass
+    GradientMonitor = None
 
 __all__ = [
     'TrainingMonitor',

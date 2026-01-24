@@ -12,7 +12,9 @@ try:
         VeinSubspaceShared,  # Alias for backward compatibility
     )
 except ImportError:
-    pass
+    VeinProjector = None
+    VeinSubspaceShared = None
+    # Alias for backward compatibility = None
 
 try:
     from apt.model.layers.blocks.vft_tva import (
@@ -25,7 +27,13 @@ try:
         _off_plane_eps,
     )
 except ImportError:
-    pass
+    TVAAttention = None
+    VFTFeedForward = None
+    NormalCompensator = None
+    VFTBlock = None
+    create_vft_block = None
+    _stable_softmax = None
+    _off_plane_eps = None
 
 __all__ = [
     # Vein projector

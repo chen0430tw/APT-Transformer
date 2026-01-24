@@ -9,6 +9,6 @@
 try:
     from apt.core.dev_tools.dependency_checker import DependencyChecker
 except ImportError:
-    pass
+    DependencyChecker = None
 
 __all__ = ['DependencyChecker']

@@ -3,15 +3,15 @@
 try:
     from apt.core.config.apt_config import APTConfig
 except ImportError:
-    pass
+    APTConfig = None
 try:
     from apt.core.config.multimodal_config import MultimodalConfig
 except ImportError:
-    pass
+    MultimodalConfig = None
 try:
     from apt.core.config.hardware_profile import HardwareProfile
 except ImportError:
-    pass
+    HardwareProfile = None
 
 # APT 2.0 Profile配置系统
 try:
@@ -26,4 +26,11 @@ try:
         VGPUConfig,
     )
 except ImportError:
-    pass
+    load_profile = None
+    list_profiles = None
+    APTProfile = None
+    ProfileLoader = None
+    ModelConfig = None
+    TrainingConfig = None
+    DistributedConfig = None
+    VGPUConfig = None

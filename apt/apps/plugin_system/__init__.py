@@ -15,7 +15,8 @@ Usage:
     try:
         from apt.plugins import plugin_manager, Plugin
     except ImportError:
-        pass
+        plugin_manager = None
+        Plugin = None
 
     # Define a plugin
     class MyPlugin(Plugin):
@@ -47,11 +48,13 @@ Usage:
 try:
     from apt.plugins.base import Plugin, PluginMetadata
 except ImportError:
-    pass
+    Plugin = None
+    PluginMetadata = None
 try:
     from apt.plugins.manager import PluginManager, plugin_manager
 except ImportError:
-    pass
+    PluginManager = None
+    plugin_manager = None
 try:
     from apt.plugins.hooks import (
         HookManager,
@@ -65,7 +68,15 @@ try:
         before_epoch
     )
 except ImportError:
-    pass
+    HookManager = None
+    hook_manager = None
+    Hook = None
+    HookEvents = None
+    hook = None
+    every_n_epochs = None
+    every_n_steps = None
+    after_epoch = None
+    before_epoch = None
 
 __all__ = [
     # Base classes

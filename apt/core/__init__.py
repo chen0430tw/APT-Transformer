@@ -20,13 +20,20 @@ APT Core Module (L0 Kernel Layer)
 # Registry System (旧代码兼容)
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.registry import (
-        Provider,
-        Registry,
-        registry,
-        register_provider,
-        get_provider
-    )
+    try:
+        from apt.core.registry import (
+            Provider,
+            Registry,
+            registry,
+            register_provider,
+            get_provider
+        )
+    except ImportError:
+        Provider = None
+        Registry = None
+        registry = None
+        register_provider = None
+        get_provider = None
 except ImportError:
     Provider = None
     Registry = None
@@ -38,18 +45,30 @@ except ImportError:
 # Configuration System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.config import config as APTConfig
+    try:
+        from apt.core.config import config as APTConfig
+    except ImportError:
+        APTConfig = None
 except ImportError:
     try:
-        from apt.core.config import APTConfig
+        try:
+            from apt.core.config import APTConfig
+        except ImportError:
+            APTConfig = None
     except ImportError:
         APTConfig = None
 
 try:
-    from apt.core.config import multimodal_config as MultimodalConfig
+    try:
+        from apt.core.config import multimodal_config as MultimodalConfig
+    except ImportError:
+        MultimodalConfig = None
 except ImportError:
     try:
-        from apt.core.config import MultimodalConfig
+        try:
+            from apt.core.config import MultimodalConfig
+        except ImportError:
+            MultimodalConfig = None
     except ImportError:
         MultimodalConfig = None
 
@@ -57,17 +76,26 @@ except ImportError:
 # Core Models (从迁移的 modeling/ 导入)
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.model.architectures.apt_model import APTLargeModel as APTModel
+    try:
+        from apt.model.architectures.apt_model import APTLargeModel as APTModel
+    except ImportError:
+        APTModel = None
 except ImportError:
     APTModel = None
 
 try:
-    from apt.apt_model.modeling.multimodal_model import MultimodalAPTModel
+    try:
+        from apt.apt_model.modeling.multimodal_model import MultimodalAPTModel
+    except ImportError:
+        MultimodalAPTModel = None
 except ImportError:
     MultimodalAPTModel = None
 
 try:
-    from apt.apt_model.modeling.embeddings import APTEmbedding
+    try:
+        from apt.apt_model.modeling.embeddings import APTEmbedding
+    except ImportError:
+        APTEmbedding = None
 except ImportError:
     APTEmbedding = None
 
@@ -83,21 +111,26 @@ def _get_train_model():
     if train_model is None:
         try:
             from apt.trainops.engine.trainer import train_model as _train_model
-            train_model = _train_model
         except ImportError:
-            pass
+            _train_model = None
     return train_model
 
 # ═══════════════════════════════════════════════════════════
 # Generation System
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.generation.generator import Generator
+    try:
+        from apt.core.generation.generator import Generator
+    except ImportError:
+        Generator = None
 except ImportError:
     Generator = None
 
 try:
-    from apt.core.generation.evaluator import Evaluator
+    try:
+        from apt.core.generation.evaluator import Evaluator
+    except ImportError:
+        Evaluator = None
 except ImportError:
     Evaluator = None
 
@@ -105,12 +138,18 @@ except ImportError:
 # Exceptions
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.exceptions import (
-        APTError,
-        ConfigError,
-        ModelError,
-        TrainingError
-    )
+    try:
+        from apt.core.exceptions import (
+            APTError,
+            ConfigError,
+            ModelError,
+            TrainingError
+        )
+    except ImportError:
+        APTError = None
+        ConfigError = None
+        ModelError = None
+        TrainingError = None
 except ImportError:
     APTError = None
     ConfigError = None
@@ -121,17 +160,28 @@ except ImportError:
 # System, Hardware, and Resources
 # ═══════════════════════════════════════════════════════════
 try:
-    from apt.core.system import (
-        get_device,
-        get_device_info,
-        set_device,
-        set_seed,
-        memory_cleanup,
-        get_memory_info,
-        SystemInitializer,
-        _initialize_common,
-        device,
-    )
+    try:
+        from apt.core.system import (
+            get_device,
+            get_device_info,
+            set_device,
+            set_seed,
+            memory_cleanup,
+            get_memory_info,
+            SystemInitializer,
+            _initialize_common,
+            device,
+        )
+    except ImportError:
+        get_device = None
+        get_device_info = None
+        set_device = None
+        set_seed = None
+        memory_cleanup = None
+        get_memory_info = None
+        SystemInitializer = None
+        _initialize_common = None
+        device = None
 except ImportError:
     get_device = None
     get_device_info = None
@@ -144,16 +194,26 @@ except ImportError:
     device = None
 
 try:
-    from apt.core.hardware import (
-        estimate_gpu_performance,
-        get_gpu_properties,
-        get_all_gpu_properties,
-        HardwareProfiler,
-        get_hardware_profile,
-        estimate_model_memory,
-        check_hardware_compatibility,
-        get_recommended_batch_size,
-    )
+    try:
+        from apt.core.hardware import (
+            estimate_gpu_performance,
+            get_gpu_properties,
+            get_all_gpu_properties,
+            HardwareProfiler,
+            get_hardware_profile,
+            estimate_model_memory,
+            check_hardware_compatibility,
+            get_recommended_batch_size,
+        )
+    except ImportError:
+        estimate_gpu_performance = None
+        get_gpu_properties = None
+        get_all_gpu_properties = None
+        HardwareProfiler = None
+        get_hardware_profile = None
+        estimate_model_memory = None
+        check_hardware_compatibility = None
+        get_recommended_batch_size = None
 except ImportError:
     estimate_gpu_performance = None
     get_gpu_properties = None
@@ -165,10 +225,14 @@ except ImportError:
     get_recommended_batch_size = None
 
 try:
-    from apt.core.resources import (
-        ResourceMonitor,
-        CacheManager,
-    )
+    try:
+        from apt.core.resources import (
+            ResourceMonitor,
+            CacheManager,
+        )
+    except ImportError:
+        ResourceMonitor = None
+        CacheManager = None
 except ImportError:
     ResourceMonitor = None
     CacheManager = None

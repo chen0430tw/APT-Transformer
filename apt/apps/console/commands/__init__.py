@@ -9,11 +9,11 @@ Console Commands (控制台命令)
 try:
     from apt.apps.console.commands.module_commands import register_module_commands
 except ImportError:
-    pass
+    register_module_commands = None
 try:
     from apt.apps.console.commands.system_commands import register_system_commands
 except ImportError:
-    pass
+    register_system_commands = None
 
 __all__ = [
     'register_module_commands',

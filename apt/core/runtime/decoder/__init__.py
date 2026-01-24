@@ -19,7 +19,9 @@ try:
         BudgetedHalting,
     )
 except ImportError:
-    pass
+    HaltingUnit = None
+    MultiCriteriaHalting = None
+    BudgetedHalting = None
 
 try:
     from apt.core.runtime.decoder.routing import (
@@ -29,7 +31,10 @@ try:
         SwitchRouter,
     )
 except ImportError:
-    pass
+    ExpertRouter = None
+    MiniExpert = None
+    MoELayer = None
+    SwitchRouter = None
 
 try:
     from apt.core.runtime.decoder.structured_reasoner import (
@@ -39,7 +44,10 @@ try:
         TreeOfThoughtsReasoner,
     )
 except ImportError:
-    pass
+    StructuredReasoner = None
+    ChainOfThoughtReasoner = None
+    SelfConsistencyReasoner = None
+    TreeOfThoughtsReasoner = None
 
 try:
     from apt.core.runtime.decoder.reasoning_controller import (
@@ -48,7 +56,9 @@ try:
         AdaptiveBudgetController,
     )
 except ImportError:
-    pass
+    ReasoningController = None
+    BudgetedReasoningController = None
+    AdaptiveBudgetController = None
 
 __all__ = [
     # Halting

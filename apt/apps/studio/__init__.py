@@ -20,11 +20,11 @@ APT Studio
     try:
         from apt.apps.studio import launch_studio
     except ImportError:
-        pass
+        launch_studio = None
     try:
         from apt.apps.studio.visualization import plot_training_curves
     except ImportError:
-        pass
+        plot_training_curves = None
 """
 
 __version__ = '2.0.0-alpha'

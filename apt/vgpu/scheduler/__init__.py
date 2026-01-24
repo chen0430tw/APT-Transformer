@@ -20,7 +20,11 @@ try:
         quick_estimate,
     )
 except ImportError:
-    pass
+    VGPUResourceEstimator = None
+    ModelConfig = None
+    MemoryEstimate = None
+    VGPUConfig = None
+    quick_estimate = None
 
 __all__ = [
     'VGPUResourceEstimator',

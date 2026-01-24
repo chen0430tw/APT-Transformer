@@ -7,6 +7,6 @@ APG (APT Plugin Package) Tools
 try:
     from apt.apps.tools.apg.packager import PluginPackager
 except ImportError:
-    pass
+    PluginPackager = None
 
 __all__ = ['PluginPackager']

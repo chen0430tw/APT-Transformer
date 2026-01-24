@@ -19,7 +19,10 @@ try:
         create_extreme_scale_trainer,
     )
 except ImportError:
-    pass
+    ExtremeScaleTrainer = None
+    ParallelismConfig = None
+    NetworkTopology = None
+    create_extreme_scale_trainer = None
 
 __all__ = [
     'ExtremeScaleTrainer',

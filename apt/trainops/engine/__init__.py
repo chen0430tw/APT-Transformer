@@ -16,29 +16,30 @@ Training Engine
 try:
     from apt.trainops.engine.trainer import Trainer, train_model
 except ImportError:
-    pass
+    Trainer = None
+    train_model = None
 try:
     from apt.trainops.engine.finetuner import Finetuner
 except ImportError:
-    pass
+    Finetuner = None
 
 # 特定训练器
 try:
     from apt.trainops.engine.claude_trainer import ClaudeTrainer
 except ImportError:
-    pass
+    ClaudeTrainer = None
 try:
     from apt.trainops.engine.gpt_trainer import GPTTrainer
 except ImportError:
-    pass
+    GPTTrainer = None
 try:
     from apt.trainops.engine.vft_tva_trainer import VFTTVATrainer
 except ImportError:
-    pass
+    VFTTVATrainer = None
 try:
     from apt.trainops.engine.train_reasoning import ReasoningTrainer
 except ImportError:
-    pass
+    ReasoningTrainer = None
 
 # 训练支持
 try:
@@ -48,31 +49,33 @@ try:
         LearningRateSchedulerCallback,
     )
 except ImportError:
-    pass
+    TrainingCallback = None
+    EarlyStoppingCallback = None
+    LearningRateSchedulerCallback = None
 try:
     from apt.trainops.engine.hooks import TrainingHook
 except ImportError:
-    pass
+    TrainingHook = None
 try:
     from apt.trainops.engine.training_events import TrainingEventManager
 except ImportError:
-    pass
+    TrainingEventManager = None
 try:
     from apt.trainops.engine.mixed_precision import MixedPrecisionManager
 except ImportError:
-    pass
+    MixedPrecisionManager = None
 try:
     from apt.trainops.engine.optimizer import get_optimizer
 except ImportError:
-    pass
+    get_optimizer = None
 try:
     from apt.trainops.engine.apt_integration import APTIntegration
 except ImportError:
-    pass
+    APTIntegration = None
 try:
     from apt.trainops.engine.sosa_core import SOSACore
 except ImportError:
-    pass
+    SOSACore = None
 
 __all__ = [
     # Main trainers

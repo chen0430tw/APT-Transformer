@@ -12,7 +12,7 @@ Tokenization
 try:
     from apt.model.tokenization.chinese_tokenizer import ChineseTokenizer
 except ImportError:
-    pass
+    ChineseTokenizer = None
 try:
     from apt.model.tokenization.chinese_tokenizer_integration import (
         integrate_chinese_tokenizer,
@@ -20,7 +20,9 @@ try:
         get_appropriate_tokenizer,
     )
 except ImportError:
-    pass
+    integrate_chinese_tokenizer = None
+    detect_language = None
+    get_appropriate_tokenizer = None
 
 __all__ = [
     'ChineseTokenizer',

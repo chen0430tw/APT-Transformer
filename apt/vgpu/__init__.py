@@ -21,15 +21,15 @@ Virtual Blackwell特性：
     try:
         from apt.vgpu.runtime import VirtualGPU
     except ImportError:
-        pass
+        VirtualGPU = None
     try:
         from apt.vgpu.scheduler import GPUScheduler
     except ImportError:
-        pass
+        GPUScheduler = None
     try:
         from apt.vgpu.memory import GPUMemoryManager
     except ImportError:
-        pass
+        GPUMemoryManager = None
 """
 
 __version__ = '2.0.0-alpha'
@@ -45,14 +45,20 @@ try:
         enable_vb_optimization,
     )
 except ImportError:
-    pass
+    VirtualBlackwellAdapter = None
+    create_virtual_blackwell = None
+    VGPUStack = None
+    create_vgpu_stack = None
+    VBOptimizedLinear = None
+    enable_vb_optimization = None
 try:
     from apt.vgpu.scheduler import (
         VGPUResourceEstimator,
         quick_estimate,
     )
 except ImportError:
-    pass
+    VGPUResourceEstimator = None
+    quick_estimate = None
 
 __all__ = [
     # Runtime

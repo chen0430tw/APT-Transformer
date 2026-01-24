@@ -13,7 +13,8 @@ Command-line interface for APT model training and evaluation tool
 try:
     from apt.apps.cli.parser import parse_arguments, get_available_commands
 except ImportError:
-    pass
+    parse_arguments = None
+    get_available_commands = None
 try:
     from apt.apps.cli.command_registry import (
         CommandRegistry,
@@ -24,17 +25,25 @@ try:
         execute_command
     )
 except ImportError:
-    pass
+    CommandRegistry = None
+    CommandMetadata = None
+    command_registry = None
+    register_command = None
+    get_command = None
+    execute_command = None
 
 # 导入命令（自动注册到命令注册中心）
 try:
     import apt.apps.cli.commands  # noqa: F401
 except ImportError:
-    pass
+    apt.apps.cli.commands = None
 
 # Import APX commands and register them
 try:
-    from apt.apps.cli.apx_commands import register_apx_commands
+    try:
+        from apt.apps.cli.apx_commands import register_apx_commands
+    except ImportError:
+        register_apx_commands = None
     register_apx_commands()
 except ImportError as e:
     import logging

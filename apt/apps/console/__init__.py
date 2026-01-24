@@ -37,11 +37,11 @@ __version__ = "1.0.0"
 try:
     from apt.apps.console.core import ConsoleCore
 except ImportError:
-    pass
+    ConsoleCore = None
 try:
     from apt.apps.console.module_manager import ModuleManager
 except ImportError:
-    pass
+    ModuleManager = None
 
 __all__ = [
     'ConsoleCore',

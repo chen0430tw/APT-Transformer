@@ -15,7 +15,9 @@ APT Core Codecs
     try:
         from apt.core.codecs import Codec, register_codec, get_codec
     except ImportError:
-        pass
+        Codec = None
+        register_codec = None
+        get_codec = None
 
     # 注册codec
     register_codec(MyCodec())
@@ -35,7 +37,8 @@ try:
         CodecConfig,
     )
 except ImportError:
-    pass
+    Codec = None
+    CodecConfig = None
 
 # 注册表
 try:
@@ -49,7 +52,13 @@ try:
         list_languages,
     )
 except ImportError:
-    pass
+    CodecRegistry = None
+    codec_registry = None
+    register_codec = None
+    get_codec = None
+    get_codec_for_language = None
+    list_codecs = None
+    list_languages = None
 
 # Unicode规范化
 try:
@@ -63,7 +72,13 @@ try:
         to_halfwidth,
     )
 except ImportError:
-    pass
+    UnicodeNormalizer = None
+    default_normalizer = None
+    normalize_unicode = None
+    nfc = None
+    nfkc = None
+    remove_accents = None
+    to_halfwidth = None
 
 __all__ = [
     # API

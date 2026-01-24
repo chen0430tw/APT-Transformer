@@ -27,26 +27,34 @@ warnings.warn(
 try:
     from apt.model.architectures import *  # noqa: F401, F403
 except ImportError:
-    pass
 try:
     from apt.model.layers import *  # noqa: F401, F403
 except ImportError:
-    pass
 try:
     from apt.model.tokenization import *  # noqa: F401, F403
 except ImportError:
-    pass
 try:
     from apt.model.extensions import *  # noqa: F401, F403
 except ImportError:
-    pass
 
 # 导出__all__
 try:
-    from apt.model.architectures import __all__ as _arch_all
-    from apt.model.layers import __all__ as _layers_all
-    from apt.model.tokenization import __all__ as _token_all
-    from apt.model.extensions import __all__ as _ext_all
+    try:
+        from apt.model.architectures import __all__ as _arch_all
+    except ImportError:
+        _arch_all = None
+    try:
+        from apt.model.layers import __all__ as _layers_all
+    except ImportError:
+        _layers_all = None
+    try:
+        from apt.model.tokenization import __all__ as _token_all
+    except ImportError:
+        _token_all = None
+    try:
+        from apt.model.extensions import __all__ as _ext_all
+    except ImportError:
+        _ext_all = None
     __all__ = _arch_all + _layers_all + _token_all + _ext_all
 except ImportError:
     __all__ = []

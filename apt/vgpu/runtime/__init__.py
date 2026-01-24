@@ -19,11 +19,12 @@ try:
         create_virtual_blackwell,
     )
 except ImportError:
-    pass
+    VirtualBlackwellAdapter = None
+    create_virtual_blackwell = None
 try:
     from apt.vgpu.runtime.vb_global import VBGlobalConfig
 except ImportError:
-    pass
+    VBGlobalConfig = None
 try:
     from apt.vgpu.runtime.vb_integration import (
         VBOptimizedLinear,
@@ -31,11 +32,13 @@ try:
         enable_vb_optimization,
     )
 except ImportError:
-    pass
+    VBOptimizedLinear = None
+    VBModelWrapper = None
+    enable_vb_optimization = None
 try:
     from apt.vgpu.runtime.vb_autopatch import VBAutoPatcher
 except ImportError:
-    pass
+    VBAutoPatcher = None
 
 # VGPU Stack Technology
 try:
@@ -46,7 +49,10 @@ try:
         create_vgpu_stack,
     )
 except ImportError:
-    pass
+    VGPUStack = None
+    VGPULevel = None
+    VGPUStackLinear = None
+    create_vgpu_stack = None
 
 __all__ = [
     # Virtual Blackwell
