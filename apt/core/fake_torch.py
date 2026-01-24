@@ -94,11 +94,26 @@ class FakeTorch:
 
     @staticmethod
     def no_grad():
+        """
+        Context manager/decorator for disabling gradient computation.
+        Returns a callable context manager that can be used as:
+        - Context manager: with torch.no_grad():
+        - Decorator: @torch.no_grad()
+        """
         class NoGrad:
             def __enter__(self):
                 return self
+
             def __exit__(self, *args):
                 pass
+
+            def __call__(self, func):
+                """Allow using as a decorator"""
+                def wrapper(*args, **kwargs):
+                    with self:
+                        return func(*args, **kwargs)
+                return wrapper
+
         return NoGrad()
 
     class nn:
@@ -179,6 +194,40 @@ class FakeTorch:
             @staticmethod
             def normalize(input, p=2, dim=1, eps=1e-12):
                 return input
+
+        # Common nn layers
+        class Linear(Module):
+            """Fake Linear layer"""
+            def __init__(self, in_features, out_features, bias=True):
+                super().__init__()
+                self.in_features = in_features
+                self.out_features = out_features
+
+        class LayerNorm(Module):
+            """Fake LayerNorm layer"""
+            def __init__(self, normalized_shape, eps=1e-5):
+                super().__init__()
+                self.normalized_shape = normalized_shape
+
+        class Embedding(Module):
+            """Fake Embedding layer"""
+            def __init__(self, num_embeddings, embedding_dim):
+                super().__init__()
+                self.num_embeddings = num_embeddings
+                self.embedding_dim = embedding_dim
+
+        class Dropout(Module):
+            """Fake Dropout layer"""
+            def __init__(self, p=0.5):
+                super().__init__()
+                self.p = p
+
+        class MultiheadAttention(Module):
+            """Fake MultiheadAttention layer"""
+            def __init__(self, embed_dim, num_heads, *args, **kwargs):
+                super().__init__()
+                self.embed_dim = embed_dim
+                self.num_heads = num_heads
 
     class optim:
         """Fake optim module"""
