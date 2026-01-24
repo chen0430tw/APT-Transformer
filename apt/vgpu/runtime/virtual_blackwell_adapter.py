@@ -90,9 +90,7 @@ class FlashFP4Layer:
         self.enable_fp4 = enable_fp4 and HAS_FP4
         self.weight_cache = {}  # {weight_id: (fp4_packed, scale)}
         self.stats = {'fp4_hits': 0, 'fp4_encode': 0, 'total_calls': 0}
-
-        if self.enable_fp4 and not HAS_FP4:
-            print("[Warning] FP4 requested but gpu_flash_optimization not available")
+        # FP4 自动回退到标准实现，无需警告
 
     def register_weight(self, weight_id: str, W: torch.Tensor):
         """注册权重并预编码为FP4"""

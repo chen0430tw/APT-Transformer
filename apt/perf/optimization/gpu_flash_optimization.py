@@ -21,7 +21,7 @@ try:
     HAS_TRITON = True
 except ImportError:
     HAS_TRITON = False
-    print("Warning: Triton not available, falling back to PyTorch")
+    # Triton 是可选依赖，自动回退到 PyTorch 实现
 
 
 # ============================================================================
