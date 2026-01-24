@@ -3264,6 +3264,176 @@ def run_train_reward_model_command(args):
         return 1
 
 
+def run_train_deepspeed_command(args):
+    """
+    DeepSpeed分布式训练命令
+
+    用法:
+        python -m apt_model train-deepspeed --zero-stage 2 --num-gpus 4
+    """
+    print("🚀 APT DeepSpeed Training")
+    print("=" * 60)
+    print()
+
+    zero_stage = getattr(args, 'zero_stage', 2)
+    num_gpus = getattr(args, 'num_gpus', 1)
+    cpu_offload = getattr(args, 'cpu_offload', False)
+    fp16 = getattr(args, 'fp16', True)
+
+    print(f"DeepSpeed Configuration:")
+    print(f"  ZeRO Stage: {zero_stage}")
+    print(f"  Number of GPUs: {num_gpus}")
+    print(f"  CPU Offload: {cpu_offload}")
+    print(f"  FP16 Precision: {fp16}")
+    print()
+
+    print("DeepSpeed Features:")
+    print("  • ZeRO-1: Optimizer state partitioning (4x memory)")
+    print("  • ZeRO-2: Optimizer + Gradient partitioning (8x memory)")
+    print("  • ZeRO-3: Optimizer + Gradient + Parameter (10-15x memory)")
+    print("  • CPU Offload: Support for 100B+ models")
+    print("  • Mixed Precision: FP16/BF16 training")
+    print()
+
+    print(f"Memory Optimization:")
+    if zero_stage == 1:
+        print("  ZeRO-1: 4x memory savings")
+    elif zero_stage == 2:
+        print("  ZeRO-2: 8x memory savings")
+    elif zero_stage == 3:
+        print("  ZeRO-3: 10-15x memory savings")
+    print()
+
+    print("To run DeepSpeed training:")
+    print(f"  deepspeed --num_gpus {num_gpus} examples/training_scripts/training/train_deepspeed.py \\")
+    print(f"    --zero-stage {zero_stage} \\")
+    if fp16:
+        print("    --fp16 \\")
+    if cpu_offload:
+        print("    --cpu-offload \\")
+    print("    --epochs 100")
+    print()
+
+    return 0
+
+
+def run_train_azure_command(args):
+    """
+    Azure ML云端训练命令
+
+    用法:
+        python -m apt_model train-azure --subscription-id <ID> --workspace <WS>
+    """
+    print("☁️  APT Azure ML Training")
+    print("=" * 60)
+    print()
+
+    subscription_id = getattr(args, 'subscription_id', None)
+    resource_group = getattr(args, 'resource_group', None)
+    workspace_name = getattr(args, 'workspace_name', None)
+    compute_name = getattr(args, 'compute_name', 'gpu-cluster')
+    vm_size = getattr(args, 'vm_size', 'Standard_NC6s_v3')
+
+    print("Azure ML Configuration:")
+    if subscription_id:
+        print(f"  Subscription ID: {subscription_id[:8]}...")
+    if workspace_name:
+        print(f"  Workspace: {workspace_name}")
+    print(f"  Compute: {compute_name}")
+    print(f"  VM Size: {vm_size}")
+    print()
+
+    print("Azure ML Features:")
+    print("  • Managed compute clusters")
+    print("  • MLflow experiment tracking")
+    print("  • Hyperparameter sweeps")
+    print("  • TensorBoard integration")
+    print("  • Cloud checkpoint management")
+    print()
+
+    print("Recommended VM Sizes:")
+    print("  • Standard_NC6s_v3  - 1x V100 16GB (single GPU)")
+    print("  • Standard_NC12s_v3 - 2x V100 16GB (multi-GPU)")
+    print("  • Standard_NC24s_v3 - 4x V100 16GB (large scale)")
+    print("  • Standard_ND40rs_v2 - 8x V100 32GB (超大模型)")
+    print()
+
+    if not subscription_id or not workspace_name:
+        print("⚠️  Required parameters:")
+        print("  --subscription-id <YOUR_AZURE_SUBSCRIPTION_ID>")
+        print("  --resource-group <YOUR_RESOURCE_GROUP>")
+        print("  --workspace-name <YOUR_WORKSPACE_NAME>")
+        print()
+
+    print("To submit Azure ML job:")
+    print("  python examples/training_scripts/training/train_azure_ml.py \\")
+    print("    --subscription-id <ID> \\")
+    print("    --resource-group <RG> \\")
+    print("    --workspace-name <WS> \\")
+    print("    --epochs 100")
+    print()
+
+    return 0
+
+
+def run_train_huggingface_command(args):
+    """
+    HuggingFace Trainer训练命令
+
+    用法:
+        python -m apt_model train-huggingface --wandb --fp16
+    """
+    print("🤗 APT HuggingFace Trainer")
+    print("=" * 60)
+    print()
+
+    wandb = getattr(args, 'wandb', False)
+    fp16 = getattr(args, 'fp16', False)
+    early_stopping = getattr(args, 'early_stopping', False)
+    push_to_hub = getattr(args, 'push_to_hub', False)
+
+    print("HuggingFace Trainer Configuration:")
+    print(f"  Weights & Biases: {wandb}")
+    print(f"  FP16 Precision: {fp16}")
+    print(f"  Early Stopping: {early_stopping}")
+    print(f"  Push to Hub: {push_to_hub}")
+    print()
+
+    print("HuggingFace Trainer Features:")
+    print("  • Best practices out of the box")
+    print("  • Weights & Biases integration")
+    print("  • TensorBoard logging")
+    print("  • Early stopping support")
+    print("  • HuggingFace Hub integration")
+    print("  • DeepSpeed support (via Trainer)")
+    print()
+
+    print("Integrations:")
+    if wandb:
+        print("  ✓ Weights & Biases enabled")
+        print("    Track experiments at wandb.ai")
+    if early_stopping:
+        print("  ✓ Early stopping enabled")
+        print("    Prevents overfitting automatically")
+    if push_to_hub:
+        print("  ✓ Hub upload enabled")
+        print("    Share models on huggingface.co")
+    print()
+
+    print("To run HuggingFace training:")
+    print("  python examples/training_scripts/training/train_hf_trainer.py \\")
+    if wandb:
+        print("    --wandb --wandb-project apt-training \\")
+    if fp16:
+        print("    --fp16 \\")
+    if early_stopping:
+        print("    --early-stopping --early-stopping-patience 5 \\")
+    print("    --epochs 100")
+    print()
+
+    return 0
+
+
 # ============================================================================
 # 命令注册
 # ============================================================================
@@ -3350,6 +3520,14 @@ def register_core_commands():
                     help_text="GRPO训练 - 组相对策略优化", aliases=["grpo"])
     register_command("train-reward-model", run_train_reward_model_command, category="rl",
                     help_text="奖励模型训练 - RLHF奖励模型", aliases=["reward-model"])
+
+    # 训练后端命令 (APT 2.0)
+    register_command("train-deepspeed", run_train_deepspeed_command, category="backends",
+                    help_text="DeepSpeed分布式训练", aliases=["deepspeed"])
+    register_command("train-azure", run_train_azure_command, category="backends",
+                    help_text="Azure ML云端训练", aliases=["azure"])
+    register_command("train-huggingface", run_train_huggingface_command, category="backends",
+                    help_text="HuggingFace Trainer训练", aliases=["hf-train"])
 
     # 配置和调试命令
     register_command("config", run_config_command, category="tools",

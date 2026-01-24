@@ -84,6 +84,11 @@ def show_help():
   train-grpo         GRPO - Group Relative Policy Optimization
   train-reward-model Reward Model - For RLHF training
 
+🏗️ TRAINING BACKENDS - 🆕 NEW in 2.0:
+  train-deepspeed    DeepSpeed - Multi-GPU distributed training (ZeRO 1/2/3)
+  train-azure        Azure ML - Cloud training with MLflow tracking
+  train-huggingface  HuggingFace Trainer - W&B, Hub, best practices
+
 📋 PROFILE SYSTEM - 🆕 NEW in 2.0:
   --profile PROFILE  Use profile config (lite/standard/pro/full)
                      • lite     - Lightweight, fast startup
@@ -147,6 +152,11 @@ def show_help():
     python -m apt_model train-grpo --model-path ./my_model --group-size 4
     python -m apt_model train-reward-model --model-path ./my_model
 
+  Training Backends (🆕 NEW):
+    python -m apt_model train-deepspeed --zero-stage 2 --num-gpus 4
+    python -m apt_model train-azure --subscription-id <ID> --workspace <WS>
+    python -m apt_model train-huggingface --wandb --fp16
+
   Export:
     python -m apt_model export-ollama --model-path ./my_model
 
@@ -186,10 +196,14 @@ def show_help():
      python -m apt_model train-rlhf --model-path ./model
      python -m apt_model train-dpo --model-path ./model
 
-  10. Auto-detection - Automatically detect model capabilities
+  10. Training Backends - DeepSpeed, Azure ML, HuggingFace integration
+      python -m apt_model train-deepspeed --zero-stage 2 --num-gpus 4
+      python -m apt_model train-azure --subscription-id <ID>
+
+  11. Auto-detection - Automatically detect model capabilities
       python -m apt_model detect-capabilities --src ./model
 
-  11. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
+  12. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
       See: docs/ARCHITECTURE_2.0.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
