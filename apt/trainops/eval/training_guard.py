@@ -18,6 +18,16 @@ from apt.core.fake_torch import get_torch
 torch = get_torch()
 import time
 import psutil
+
+
+def safe_print(*args, **kwargs):
+    """Print with error handling for bad file descriptors"""
+    import builtins
+    try:
+        builtins.print(*args, **kwargs)
+    except OSError:
+        # Ignore bad file descriptor errors
+        pass
 import os
 from typing import Optional, Dict, List, Callable, Any
 from datetime import datetime, timedelta
@@ -73,16 +83,16 @@ class EarlyStopping:
             self.best_score = score
             self.counter = 0
             if self.verbose:
-                print(f"✓ 验证指标改善: {score:.4f}")
+                safe_print(f"✓ 验证指标改善: {score:.4f}")
         else:
             self.counter += 1
             if self.verbose:
-                print(f"⚠ 验证指标未改善 ({self.counter}/{self.patience})")
+                safe_print(f"⚠ 验证指标未改善 ({self.counter}/{self.patience})")
 
             if self.counter >= self.patience:
                 self.early_stop = True
                 if self.verbose:
-                    print(f"🛑 Early stopping triggered (patience={self.patience})")
+                    safe_print(f"🛑 Early stopping triggered (patience={self.patience})")
                 return True
 
         return False
@@ -154,14 +164,14 @@ class TrainingGuard:
         self.stop_reason = None
 
         if self.verbose:
-            print("🛡️ Training Guard 已启动")
+            safe_print("🛡️ Training Guard 已启动")
             if self.max_steps:
-                print(f"  最大步数: {self.max_steps}")
+                safe_print(f"  最大步数: {self.max_steps}")
             if self.max_time_hours:
-                print(f"  最大时间: {self.max_time_hours:.1f} 小时")
-            print(f"  内存限制: {self.max_memory_percent}%")
+                safe_print(f"  最大时间: {self.max_time_hours:.1f} 小时")
+            safe_print(f"  内存限制: {self.max_memory_percent}%")
             if self.early_stopping:
-                print(f"  Early Stopping: patience={self.early_stopping.patience}")
+                safe_print(f"  Early Stopping: patience={self.early_stopping.patience}")
 
     def step(
         self,
@@ -213,7 +223,7 @@ class TrainingGuard:
         # 7. MCP 检查点提醒
         if self.step_count % self.mcp_checkpoint_interval == 0:
             if self.verbose:
-                print(f"💾 建议保存检查点 (步数: {self.step_count})")
+                safe_print(f"💾 建议保存检查点 (步数: {self.step_count})")
 
         return True
 
@@ -311,7 +321,7 @@ class TrainingGuard:
         self.stats['cleanups'] += 1
 
         if self.verbose and self.step_count % (self.auto_cleanup_every * 10) == 0:
-            print(f"🧹 自动清理 (第 {self.stats['cleanups']} 次)")
+            safe_print(f"🧹 自动清理 (第 {self.stats['cleanups']} 次)")
 
     def _stop(self, reason: str):
         """停止训练"""
@@ -319,10 +329,10 @@ class TrainingGuard:
         self.stop_reason = reason
 
         if self.verbose:
-            print(f"\n🛑 训练停止: {reason}")
-            print(f"   总步数: {self.step_count}")
+            safe_print(f"\n🛑 训练停止: {reason}")
+            safe_print(f"   总步数: {self.step_count}")
             elapsed = time.time() - self.start_time
-            print(f"   训练时间: {elapsed/3600:.2f} 小时")
+            safe_print(f"   训练时间: {elapsed/3600:.2f} 小时")
 
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
@@ -367,18 +377,18 @@ class SafeTrainingContext:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.guard.verbose:
             stats = self.guard.get_stats()
-            print("\n" + "="*80)
-            print("训练保护统计:")
-            print(f"  总步数: {stats['total_steps']}")
-            print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
-            print(f"  NaN 损失: {stats['nan_losses']}")
-            print(f"  Inf 损失: {stats['inf_losses']}")
-            print(f"  梯度爆炸: {stats['gradient_explosions']}")
-            print(f"  内存警告: {stats['memory_warnings']}")
-            print(f"  自动清理: {stats['cleanups']}")
+            safe_print("\n" + "="*80)
+            safe_print("训练保护统计:")
+            safe_print(f"  总步数: {stats['total_steps']}")
+            safe_print(f"  训练时间: {stats['elapsed_hours']:.2f} 小时")
+            safe_print(f"  NaN 损失: {stats['nan_losses']}")
+            safe_print(f"  Inf 损失: {stats['inf_losses']}")
+            safe_print(f"  梯度爆炸: {stats['gradient_explosions']}")
+            safe_print(f"  内存警告: {stats['memory_warnings']}")
+            safe_print(f"  自动清理: {stats['cleanups']}")
             if stats['stopped']:
-                print(f"  停止原因: {stats['stop_reason']}")
-            print("="*80)
+                safe_print(f"  停止原因: {stats['stop_reason']}")
+            safe_print("="*80)
 
 
 # ==================== MCP-Aware Training ====================
@@ -446,7 +456,7 @@ class MCPSafeTrainer:
         # 清理旧检查点
         self._cleanup_old_checkpoints()
 
-        print(f"💾 检查点已保存: {checkpoint_path}")
+        safe_print(f"💾 检查点已保存: {checkpoint_path}")
 
     def _cleanup_old_checkpoints(self):
         """清理旧检查点"""
@@ -472,9 +482,9 @@ class MCPSafeTrainer:
             if hasattr(self.trainer, 'load_model'):
                 try:
                     self.trainer.load_model(latest)
-                    print(f"♻️ 从检查点恢复: {latest}")
+                    safe_print(f"♻️ 从检查点恢复: {latest}")
                 except Exception as e:
-                    print(f"⚠️ 恢复失败: {e}")
+                    safe_print(f"⚠️ 恢复失败: {e}")
 
 
 # ==================== Example Usage ====================
@@ -488,11 +498,11 @@ if __name__ == "__main__":
         val_loss = 0.5 / (epoch + 1) + (0.01 if epoch > 10 else 0)
 
         if early_stop(val_loss):
-            print(f"Training stopped at epoch {epoch}")
+            safe_print(f"Training stopped at epoch {epoch}")
             break
 
     # Example 2: Training Guard
-    print("\n" + "="*80)
+    safe_print("\n" + "="*80)
 
     guard = TrainingGuard(
         max_steps=100,
@@ -514,4 +524,4 @@ if __name__ == "__main__":
             if not guard.validate(val_loss):
                 break
 
-    print(guard.get_stats())
+    safe_print(guard.get_stats())
