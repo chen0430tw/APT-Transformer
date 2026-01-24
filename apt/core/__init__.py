@@ -74,10 +74,19 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════
 # Training System
 # ═══════════════════════════════════════════════════════════
-try:
-    from apt.trainops.engine.trainer import train_model
-except ImportError:
-    train_model = None
+# Note: Lazy import to avoid circular dependency
+train_model = None
+
+def _get_train_model():
+    """Lazy import train_model to avoid circular dependency"""
+    global train_model
+    if train_model is None:
+        try:
+            from apt.trainops.engine.trainer import train_model as _train_model
+            train_model = _train_model
+        except ImportError:
+            pass
+    return train_model
 
 # ═══════════════════════════════════════════════════════════
 # Generation System
