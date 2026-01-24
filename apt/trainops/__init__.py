@@ -22,10 +22,32 @@ APT TrainOps Domain
 __version__ = '2.0.0-alpha'
 
 # 主要模块导出
-from apt.trainops.engine import Trainer, Finetuner, train_model
-from apt.trainops.data import create_dataloader, APTDataLoader
-from apt.trainops.checkpoints import CheckpointManager, save_checkpoint, load_checkpoint
-from apt.trainops.eval import TrainingMonitor, TrainingGuard
+# Note: Using try-except to handle potential import errors
+try:
+    from apt.trainops.engine import Trainer, Finetuner, train_model
+except ImportError:
+    Trainer = None
+    Finetuner = None
+    train_model = None
+
+try:
+    from apt.trainops.data import create_dataloader, APTDataLoader
+except ImportError:
+    create_dataloader = None
+    APTDataLoader = None
+
+try:
+    from apt.trainops.checkpoints import CheckpointManager, save_checkpoint, load_checkpoint
+except ImportError:
+    CheckpointManager = None
+    save_checkpoint = None
+    load_checkpoint = None
+
+try:
+    from apt.trainops.eval import TrainingMonitor, TrainingGuard
+except ImportError:
+    TrainingMonitor = None
+    TrainingGuard = None
 
 __all__ = [
     # Engine
