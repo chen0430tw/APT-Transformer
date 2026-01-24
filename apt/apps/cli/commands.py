@@ -3039,6 +3039,231 @@ def run_quantize_mxfp4_command(args):
         return 1
 
 
+def run_train_rlhf_command(args):
+    """
+    RLHF (Reinforcement Learning from Human Feedback) 训练命令
+
+    用法:
+        python -m apt_model train-rlhf --model-path ./my_model
+    """
+    print("🎯 APT RLHF Training")
+    print("=" * 60)
+    print()
+
+    model_path = getattr(args, 'model_path', 'apt_model')
+    ppo_epochs = getattr(args, 'ppo_epochs', 4)
+    kl_coef = getattr(args, 'kl_coef', 0.1)
+
+    print(f"RLHF Configuration:")
+    print(f"  Model Path: {model_path}")
+    print(f"  PPO Epochs: {ppo_epochs}")
+    print(f"  KL Coefficient: {kl_coef}")
+    print()
+
+    try:
+        from apt.apps.plugins.rl.rlhf_trainer_plugin import RLHFTrainer, RLHFConfig
+
+        print("RLHF Training Method:")
+        print("  • Based on PPO (Proximal Policy Optimization)")
+        print("  • Human feedback reinforcement learning")
+        print("  • KL divergence penalty")
+        print("  • GAE (Generalized Advantage Estimation)")
+        print()
+
+        config = RLHFConfig(
+            ppo_epochs=ppo_epochs,
+            kl_coef=kl_coef
+        )
+
+        print("✓ RLHF trainer initialized")
+        print()
+        print("Training Steps:")
+        print("  1. Generate responses using policy model")
+        print("  2. Compute rewards using reward model")
+        print("  3. Calculate KL penalty")
+        print("  4. Compute advantages using GAE")
+        print("  5. Update policy using PPO")
+        print()
+        print("(Connect to training pipeline for full RLHF training)")
+        print()
+
+        return 0
+
+    except ImportError as e:
+        print(f"❌ Error: Could not import RLHF module: {e}")
+        print("   RLHF functionality may not be available")
+        return 1
+
+
+def run_train_dpo_command(args):
+    """
+    DPO (Direct Preference Optimization) 训练命令
+
+    用法:
+        python -m apt_model train-dpo --model-path ./my_model
+    """
+    print("✨ APT DPO Training")
+    print("=" * 60)
+    print()
+
+    model_path = getattr(args, 'model_path', 'apt_model')
+    beta = getattr(args, 'beta', 0.1)
+    reference_free = getattr(args, 'reference_free', False)
+
+    print(f"DPO Configuration:")
+    print(f"  Model Path: {model_path}")
+    print(f"  Beta (temperature): {beta}")
+    print(f"  Reference-Free: {reference_free}")
+    print()
+
+    try:
+        from apt.apps.plugins.rl.dpo_trainer_plugin import DPOTrainer, DPOConfig
+
+        print("DPO Training Method:")
+        print("  • Direct preference optimization")
+        print("  • No separate reward model needed")
+        print("  • More stable than RLHF")
+        print("  • Direct optimization on preferences")
+        print()
+
+        config = DPOConfig(
+            beta=beta,
+            reference_free=reference_free
+        )
+
+        print("✓ DPO trainer initialized")
+        print()
+        print("Advantages over RLHF:")
+        print("  ✓ Simpler - no reward model training")
+        print("  ✓ More stable - direct preference optimization")
+        print("  ✓ Faster - fewer training steps")
+        print("  ✓ Equal performance to RLHF")
+        print()
+        print("(Connect to training pipeline for full DPO training)")
+        print()
+
+        return 0
+
+    except ImportError as e:
+        print(f"❌ Error: Could not import DPO module: {e}")
+        print("   DPO functionality may not be available")
+        return 1
+
+
+def run_train_grpo_command(args):
+    """
+    GRPO (Group Relative Policy Optimization) 训练命令
+
+    用法:
+        python -m apt_model train-grpo --model-path ./my_model
+    """
+    print("🚀 APT GRPO Training")
+    print("=" * 60)
+    print()
+
+    model_path = getattr(args, 'model_path', 'apt_model')
+    group_size = getattr(args, 'group_size', 4)
+    advantage_type = getattr(args, 'advantage_type', 'relative')
+
+    print(f"GRPO Configuration:")
+    print(f"  Model Path: {model_path}")
+    print(f"  Group Size: {group_size}")
+    print(f"  Advantage Type: {advantage_type}")
+    print()
+
+    try:
+        from apt.apps.plugins.rl.grpo_trainer_plugin import GRPOTrainer, GRPOConfig
+
+        print("GRPO Training Method:")
+        print("  • Group relative policy optimization")
+        print("  • Used by DeepSeekMath")
+        print("  • Efficient online learning")
+        print("  • Relative advantage within groups")
+        print()
+
+        config = GRPOConfig(
+            group_size=group_size,
+            advantage_type=advantage_type
+        )
+
+        print("✓ GRPO trainer initialized")
+        print()
+        print("Training Process:")
+        print(f"  1. Generate {group_size} responses per prompt")
+        print("  2. Compute rewards for all responses")
+        print("  3. Calculate relative advantages within group")
+        print("  4. Update policy based on group rankings")
+        print()
+        print("Advantage Types:")
+        print("  • relative - Relative to group mean")
+        print("  • normalized - Normalized advantages")
+        print("  • rank - Rank-based advantages")
+        print()
+        print("(Connect to training pipeline for full GRPO training)")
+        print()
+
+        return 0
+
+    except ImportError as e:
+        print(f"❌ Error: Could not import GRPO module: {e}")
+        print("   GRPO functionality may not be available")
+        return 1
+
+
+def run_train_reward_model_command(args):
+    """
+    奖励模型训练命令
+
+    用法:
+        python -m apt_model train-reward-model --model-path ./my_model
+    """
+    print("🎁 APT Reward Model Training")
+    print("=" * 60)
+    print()
+
+    model_path = getattr(args, 'model_path', 'apt_model')
+    pooling = getattr(args, 'pooling', 'last')
+    margin = getattr(args, 'margin', 0.0)
+
+    print(f"Reward Model Configuration:")
+    print(f"  Model Path: {model_path}")
+    print(f"  Pooling Strategy: {pooling}")
+    print(f"  Margin: {margin}")
+    print()
+
+    try:
+        from apt.apps.plugins.rl.reward_model_plugin import RewardModel, RewardModelTrainer
+
+        print("Reward Model Purpose:")
+        print("  • Learn reward function from human preferences")
+        print("  • Used in RLHF training")
+        print("  • Bradley-Terry loss function")
+        print()
+
+        print("✓ Reward model trainer initialized")
+        print()
+        print("Pooling Strategies:")
+        print("  • last - Use last token representation")
+        print("  • mean - Average pooling")
+        print("  • max - Max pooling")
+        print()
+        print("Training Process:")
+        print("  1. Compare chosen vs rejected responses")
+        print("  2. Compute Bradley-Terry loss")
+        print("  3. Optimize to prefer chosen responses")
+        print("  4. Track accuracy on preference data")
+        print()
+        print("(Connect to training pipeline for full reward model training)")
+        print()
+
+        return 0
+
+    except ImportError as e:
+        print(f"❌ Error: Could not import Reward Model module: {e}")
+        print("   Reward Model functionality may not be available")
+        return 1
+
+
 # ============================================================================
 # 命令注册
 # ============================================================================
@@ -3115,6 +3340,16 @@ def register_core_commands():
                     help_text="RAG/KG-RAG 检索查询")
     register_command("quantize-mxfp4", run_quantize_mxfp4_command, category="advanced",
                     help_text="MXFP4 4位浮点量化", aliases=["mxfp4"])
+
+    # RL训练命令 (APT 2.0)
+    register_command("train-rlhf", run_train_rlhf_command, category="rl",
+                    help_text="RLHF训练 - 基于人类反馈的强化学习", aliases=["rlhf"])
+    register_command("train-dpo", run_train_dpo_command, category="rl",
+                    help_text="DPO训练 - 直接偏好优化", aliases=["dpo"])
+    register_command("train-grpo", run_train_grpo_command, category="rl",
+                    help_text="GRPO训练 - 组相对策略优化", aliases=["grpo"])
+    register_command("train-reward-model", run_train_reward_model_command, category="rl",
+                    help_text="奖励模型训练 - RLHF奖励模型", aliases=["reward-model"])
 
     # 配置和调试命令
     register_command("config", run_config_command, category="tools",

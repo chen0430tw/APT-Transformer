@@ -78,6 +78,12 @@ def show_help():
   rag-query          RAG/KG-RAG retrieval queries
   quantize-mxfp4     MXFP4 4-bit quantization (mxfp4)
 
+🤖 RL TRAINING (Alignment) - 🆕 NEW in 2.0:
+  train-rlhf         RLHF - Reinforcement Learning from Human Feedback
+  train-dpo          DPO - Direct Preference Optimization
+  train-grpo         GRPO - Group Relative Policy Optimization
+  train-reward-model Reward Model - For RLHF training
+
 📋 PROFILE SYSTEM - 🆕 NEW in 2.0:
   --profile PROFILE  Use profile config (lite/standard/pro/full)
                      • lite     - Lightweight, fast startup
@@ -135,6 +141,12 @@ def show_help():
     python -m apt_model rag-query --query "What is transformers?" --kg-mode
     python -m apt_model quantize-mxfp4 --model-path ./my_model
 
+  RL Training (Alignment) (🆕 NEW):
+    python -m apt_model train-rlhf --model-path ./my_model --ppo-epochs 4
+    python -m apt_model train-dpo --model-path ./my_model --beta 0.1
+    python -m apt_model train-grpo --model-path ./my_model --group-size 4
+    python -m apt_model train-reward-model --model-path ./my_model
+
   Export:
     python -m apt_model export-ollama --model-path ./my_model
 
@@ -170,10 +182,14 @@ def show_help():
   8. RAG/KG-RAG - Retrieval Augmented Generation with KG
      python -m apt_model rag-query --query "..." --kg-mode
 
-  9. Auto-detection - Automatically detect model capabilities
-     python -m apt_model detect-capabilities --src ./model
+  9. RL Training (Alignment) - RLHF, DPO, GRPO for model alignment
+     python -m apt_model train-rlhf --model-path ./model
+     python -m apt_model train-dpo --model-path ./model
 
-  10. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
+  10. Auto-detection - Automatically detect model capabilities
+      python -m apt_model detect-capabilities --src ./model
+
+  11. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
       See: docs/ARCHITECTURE_2.0.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
