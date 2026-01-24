@@ -9,7 +9,7 @@ import sys
 # 使用当前目录，跨平台兼容
 output_file = os.path.join(os.getcwd(), 'claude_loss3_training.txt')
 
-with open(output_file, 'w') as f:
+with open(output_file, 'w', encoding='utf-8') as f:
     f.write("="*80 + "\n")
     f.write("训练Claude模型直到Loss降到3.0 (使用Virtual Blackwell)\n")
     f.write("="*80 + "\n\n")
@@ -50,7 +50,7 @@ with open(output_file, 'w') as f:
     sys.stdout = old_stdout
 
     vb_count = len(wrapper.replaced_layers)
-    f.write(f"✅ {vb_count} 张虚拟Blackwell显卡已启用\n\n")
+    f.write(f"[OK] {vb_count} 张虚拟Blackwell显卡已启用\n\n")
 
     # 优化器
     optimizer = torch.optim.Adam(wrapper.parameters(), lr=0.0005)  # 降低学习率
@@ -124,7 +124,7 @@ with open(output_file, 'w') as f:
 
         # 检查是否达到目标
         if avg_loss < target_loss:
-            f.write(f"\n🎉 达到目标! Loss {avg_loss:.4f} < {target_loss}\n")
+            f.write(f"\n[*] 达到目标! Loss {avg_loss:.4f} < {target_loss}\n")
             break
 
     total_time = time.time() - start_time
@@ -139,9 +139,9 @@ with open(output_file, 'w') as f:
     f.write(f"最佳Loss: {best_loss:.4f}\n")
 
     if avg_loss < target_loss:
-        f.write(f"\n✅ 成功! 在 {epoch+1} 个epoch后达到目标Loss\n")
+        f.write(f"\n[OK] 成功! 在 {epoch+1} 个epoch后达到目标Loss\n")
     else:
-        f.write(f"\n⚠️  未达到目标Loss {target_loss}，当前 {avg_loss:.4f}\n")
+        f.write(f"\n[!]  未达到目标Loss {target_loss}，当前 {avg_loss:.4f}\n")
 
     # VB统计
     f.write("\n" + "="*80 + "\n")
@@ -163,7 +163,7 @@ with open(output_file, 'w') as f:
 print(f"Training complete! Check {output_file}")
 
 # 读取并显示结果
-with open(output_file, 'r') as f:
+with open(output_file, 'r', encoding='utf-8') as f:
     content = f.read()
 
 # 只显示最后50行避免太长

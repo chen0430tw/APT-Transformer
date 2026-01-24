@@ -6,7 +6,7 @@ import os
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 output_file = os.path.join(os.getcwd(), 'vb_test_output.txt')
-with open(output_file, 'w') as f:
+with open(output_file, 'w', encoding='utf-8') as f:
     f.write(f"=== Virtual Blackwell Training Test ===\n")
     f.write(f"Device: {device}\n\n")
 

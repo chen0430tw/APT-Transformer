@@ -10,7 +10,7 @@ import sys
 # 捕获所有输出（跨平台兼容）
 output_file = os.path.join(os.getcwd(), 'claude_vb_training.txt')
 
-with open(output_file, 'w') as f:
+with open(output_file, 'w', encoding='utf-8') as f:
     f.write("="*80 + "\n")
     f.write("Virtual Blackwell 训练迷你 Claude 模型\n")
     f.write("="*80 + "\n\n")
@@ -55,7 +55,7 @@ with open(output_file, 'w') as f:
     finally:
         sys.stdout = old_stdout
 
-    f.write(f"\n✅ 虚拟Blackwell显卡数量: {vb_count} 张\n\n")
+    f.write(f"\n[OK] 虚拟Blackwell显卡数量: {vb_count} 张\n\n")
 
     # 显示部分VB层
     f.write("虚拟显卡分配:\n")
@@ -133,7 +133,7 @@ with open(output_file, 'w') as f:
     sys.stdout = old_stdout
 
     f.write(f"\n" + "="*80 + "\n")
-    f.write(f"✅ 成功！使用 {vb_count} 张虚拟Blackwell显卡训练Claude模型\n")
+    f.write(f"[OK] 成功！使用 {vb_count} 张虚拟Blackwell显卡训练Claude模型\n")
     f.write("="*80 + "\n")
 
 print(f"Training complete. Output saved to {output_file}")
