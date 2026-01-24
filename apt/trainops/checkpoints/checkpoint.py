@@ -56,6 +56,36 @@ def load_model(path, device=None):
     if device is None:
         device = get_device()
 
+    # 路径解析：如果是相对路径，尝试多个可能的位置
+    if not os.path.isabs(path):
+        possible_paths = [
+            path,  # 当前目录
+            os.path.abspath(path),  # 相对于当前工作目录
+            # 相对于项目根目录（假设 checkpoint.py 在 apt/trainops/checkpoints/）
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), path),
+        ]
+
+        # 找到第一个存在的路径
+        found_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                found_path = p
+                break
+
+        if found_path is None:
+            raise FileNotFoundError(
+                f"模型路径不存在: {path}\n\n"
+                f"已尝试的路径:\n" +
+                "\n".join(f"  - {p}" for p in possible_paths) +
+                f"\n\n当前工作目录: {os.getcwd()}\n\n"
+                f"建议:\n"
+                f"  1. 使用绝对路径: --model-path {os.path.abspath(path)}\n"
+                f"  2. 确保模型文件存在: dir {path} (Windows) 或 ls {path} (Linux)\n"
+                f"  3. 训练新模型: python -m apt_model train"
+            )
+
+        path = found_path
+
     # 检测路径类型
     if os.path.isfile(path) and path.endswith('.pt'):
         # 单文件格式 (HLBD checkpoint)
