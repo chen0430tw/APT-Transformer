@@ -257,6 +257,9 @@ def run_train_command(args):
     _start_monitor(resource_monitor)
 
     try:
+        # 导入训练函数
+        from apt.trainops.engine.trainer import train_model
+
         # 调用训练函数
         model, tokenizer, config = train_model(
             epochs=args.epochs,

@@ -36,11 +36,19 @@ from apt.model.tokenization.chinese_tokenizer_integration import (
 def debug_print(*args, **kwargs):
     """仅在Debug模式下打印信息"""
     if settings.get_debug_enabled():
-        print(*args, **kwargs)
+        try:
+            print(*args, **kwargs)
+        except OSError:
+            # Ignore bad file descriptor errors
+            pass
 
 def info_print(*args, **kwargs):
     """始终打印的关键信息（非Debug模式也显示）"""
-    print(*args, **kwargs)
+    try:
+        print(*args, **kwargs)
+    except OSError:
+        # Ignore bad file descriptor errors
+        pass
 
 def get_training_texts():
     """
