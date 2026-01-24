@@ -493,6 +493,13 @@ def compare_rope_variants(
     return results
 
 
+# ==================== 默认导出 ====================
+
+# AdvancedRoPE: 使用 YaRN 作为默认高级 RoPE 实现
+# YaRN 是主流 LLM 的标准选择，支持 4K-128K 上下文
+AdvancedRoPE = YaRNRoPE
+
+
 # ==================== 测试代码 ====================
 
 if __name__ == "__main__":
