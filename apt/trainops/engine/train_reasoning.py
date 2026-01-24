@@ -355,3 +355,72 @@ def train_reasoning_model(
         logger.info(f"[Reasoning Training] Saved model to {model_path}")
 
     return reasoning_controller, training_info
+
+
+# ==============================================================================
+# ReasoningTrainer Class
+# ==============================================================================
+
+class ReasoningTrainer:
+    """
+    Reasoning Model Trainer
+
+    A wrapper class for reasoning model training functionality.
+    """
+
+    def __init__(
+        self,
+        model: Optional[nn.Module] = None,
+        reasoning_controller: Optional['ReasoningController'] = None,
+        vein_projector: Optional[nn.Module] = None,
+        device: str = 'cuda',
+        **kwargs
+    ):
+        """
+        Initialize ReasoningTrainer
+
+        Args:
+            model: The main model
+            reasoning_controller: Optional reasoning controller
+            vein_projector: Optional vein projector
+            device: Device to train on
+            **kwargs: Additional arguments
+        """
+        self.model = model
+        self.reasoning_controller = reasoning_controller
+        self.vein_projector = vein_projector
+        self.device = device
+        self.kwargs = kwargs
+
+    def train(
+        self,
+        dataloader: DataLoader,
+        epochs: int = 10,
+        learning_rate: float = 3e-4,
+        save_path: Optional[str] = None,
+        **kwargs
+    ):
+        """
+        Train the reasoning model
+
+        Args:
+            dataloader: Training data loader
+            epochs: Number of training epochs
+            learning_rate: Learning rate
+            save_path: Path to save the model
+            **kwargs: Additional training arguments
+
+        Returns:
+            reasoning_controller, training_info
+        """
+        return train_reasoning_model(
+            model=self.model,
+            dataloader=dataloader,
+            reasoning_controller=self.reasoning_controller,
+            vein_projector=self.vein_projector,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            device=self.device,
+            save_path=save_path,
+            **{**self.kwargs, **kwargs}
+        )

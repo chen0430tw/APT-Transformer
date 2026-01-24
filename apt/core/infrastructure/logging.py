@@ -81,9 +81,13 @@ def setup_logging(
     if no_encoding:
         console_handler = logging.StreamHandler(sys.stdout)
     else:
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+        try:
+            console_handler = logging.StreamHandler(
+                open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+            )
+        except (OSError, ValueError):
+            # 如果stdout文件描述符无效，使用简单的StreamHandler
+            console_handler = logging.StreamHandler(sys.stdout)
 
     console_handler.setLevel(level)
 
@@ -166,9 +170,13 @@ def get_progress_logger(
     if no_encoding:
         console_handler = logging.StreamHandler(sys.stdout)
     else:
-        console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
-        )
+        try:
+            console_handler = logging.StreamHandler(
+                open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+            )
+        except (OSError, ValueError):
+            # 如果stdout文件描述符无效，使用简单的StreamHandler
+            console_handler = logging.StreamHandler(sys.stdout)
 
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
