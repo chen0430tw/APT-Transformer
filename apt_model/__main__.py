@@ -70,6 +70,14 @@ def show_help():
   detect-capabilities Auto-detect model capabilities (MoE, RAG, RLHF)
   detect-framework   Detect model framework (HuggingFace, etc.)
 
+⚡ ADVANCED TECHNICAL FEATURES - 🆕 NEW in 2.0:
+  train-moe          MoE (Mixture of Experts) training
+  blackwell-simulate Virtual Blackwell GPU simulation (vblackwell)
+  aim-memory         AIM (Advanced In-context Memory) management
+  npu-accelerate     NPU backend acceleration (npu)
+  rag-query          RAG/KG-RAG retrieval queries
+  quantize-mxfp4     MXFP4 4-bit quantization (mxfp4)
+
 📋 PROFILE SYSTEM - 🆕 NEW in 2.0:
   --profile PROFILE  Use profile config (lite/standard/pro/full)
                      • lite     - Lightweight, fast startup
@@ -119,6 +127,14 @@ def show_help():
     python -m apt_model detect-capabilities --src ./my_model
     python -m apt_model apx-info --apx model.apx
 
+  Advanced Technical Features (🆕 NEW):
+    python -m apt_model train-moe --num-experts 8 --top-k 2
+    python -m apt_model blackwell-simulate --num-gpus 100000
+    python -m apt_model aim-memory --checkpoint ./model --context-size 128k
+    python -m apt_model npu-accelerate --backend ascend
+    python -m apt_model rag-query --query "What is transformers?" --kg-mode
+    python -m apt_model quantize-mxfp4 --model-path ./my_model
+
   Export:
     python -m apt_model export-ollama --model-path ./my_model
 
@@ -137,13 +153,28 @@ def show_help():
      python -m apt_model pack-apx --src ./model --out model.apx
 
   3. Virtual Blackwell - GPU virtualization (100K+ GPUs)
-     Enabled in 'full' profile
+     python -m apt_model blackwell-simulate --num-gpus 100000
 
-  4. Auto-detection - Automatically detect model capabilities
+  4. MoE (Mixture of Experts) - Multi-expert parallel computing
+     python -m apt_model train-moe --num-experts 8 --top-k 2
+
+  5. MXFP4 Quantization - Microsoft-OpenAI 4-bit floating point
+     python -m apt_model quantize-mxfp4 --model-path ./my_model
+
+  6. AIM Memory - Advanced In-context Memory system
+     python -m apt_model aim-memory --context-size 128k
+
+  7. NPU Acceleration - Support for Ascend, Kunlun, MLU, TPU
+     python -m apt_model npu-accelerate --backend ascend
+
+  8. RAG/KG-RAG - Retrieval Augmented Generation with KG
+     python -m apt_model rag-query --query "..." --kg-mode
+
+  9. Auto-detection - Automatically detect model capabilities
      python -m apt_model detect-capabilities --src ./model
 
-  5. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
-     See: docs/ARCHITECTURE_2.0.md
+  10. Domain-Driven Architecture - Model/TrainOps/vGPU/APX separation
+      See: docs/ARCHITECTURE_2.0.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
