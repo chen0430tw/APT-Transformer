@@ -26,7 +26,7 @@ from apt.core.config.settings_manager import settings
 from apt.trainops.eval.training_guard import TrainingGuard, EarlyStopping
 
 # 导入中文分词器相关函数
-from apt.model.architectures.chinese_tokenizer_integration import (
+from apt.model.tokenization.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,
     is_chinese_text

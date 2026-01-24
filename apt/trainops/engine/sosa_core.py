@@ -558,3 +558,9 @@ if __name__ == "__main__":
     # 打印报告
     print("\n")
     sosa.print_report()
+
+
+# ==================== 默认导出 ====================
+
+# SOSACore: 使用 SOSA 作为核心实现
+SOSACore = SOSA

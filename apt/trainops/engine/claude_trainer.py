@@ -21,7 +21,7 @@ import logging
 
 from apt.model.architectures.claude4_model import ClaudeUnifiedModel, create_claude_unified
 from apt.core import get_device
-from apt.model.architectures.chinese_tokenizer_integration import (
+from apt.model.tokenization.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,
 )
