@@ -437,3 +437,7 @@ def fine_tune_model(
         save_path=save_path,
         **kwargs
     )
+
+
+# ===== Backward compatibility alias =====
+Finetuner = FineTuner

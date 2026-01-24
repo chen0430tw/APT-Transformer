@@ -149,6 +149,9 @@ Thumbs.db
 # Project specific
 apt_model/log/
 apt_model/report/
+apt_model/config.json
+apt_model/tokenizer/
+apt_model/model.pt
 checkpoints/
 *.pth
 *.pt

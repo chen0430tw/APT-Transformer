@@ -1044,5 +1044,40 @@ def main():
         import traceback
         traceback.print_exc()
 
+# create_dataloader: 使用 prepare_dataloader 作为别名
+create_dataloader = prepare_dataloader
+
+# APTDataLoader: 使用 torch.utils.data.DataLoader 作为基类
+APTDataLoader = torch.utils.data.DataLoader
+
+# PretrainingDataset: 使用 TextDataset 作为预训练数据集
+PretrainingDataset = TextDataset
+
+# FinetuningDataset: 使用 PairedTextDataset 作为微调数据集
+FinetuningDataset = PairedTextDataset
+
+
+def create_dataset(data, dataset_type='pretraining', **kwargs):
+    """
+    Create a dataset based on type
+
+    Args:
+        data: Input data
+        dataset_type: Type of dataset ('pretraining', 'finetuning', 'multimodal')
+        **kwargs: Additional arguments for dataset
+
+    Returns:
+        Dataset instance
+    """
+    if dataset_type == 'pretraining':
+        return TextDataset(data, **kwargs)
+    elif dataset_type == 'finetuning':
+        return PairedTextDataset(data, **kwargs)
+    elif dataset_type == 'multimodal':
+        return MultimodalDataset(data, **kwargs)
+    else:
+        raise ValueError(f"Unknown dataset type: {dataset_type}")
+
+
 if __name__ == "__main__":
     main()

@@ -844,3 +844,49 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("✓ All tests passed!")
     print("=" * 70)
+
+
+# ==============================================================================
+# Aliases for backward compatibility
+# ==============================================================================
+
+# ClaudeUnifiedModel: 使用 Claude4Model 作为统一模型
+ClaudeUnifiedModel = Claude4Model
+
+
+def create_claude_unified(
+    vocab_size: int = 32000,
+    d_model: int = 2048,
+    n_heads: int = 16,
+    d_ff: int = 8192,
+    num_layers: int = 24,
+    rank: int = 4,
+    enable_reflection: bool = True,
+    reflection_layers: Optional[List[int]] = None
+) -> Claude4Model:
+    """
+    创建 Claude 统一模型的工厂函数
+
+    Args:
+        vocab_size: 词汇表大小
+        d_model: 模型维度
+        n_heads: 注意力头数
+        d_ff: FFN 隐藏层维度
+        num_layers: Transformer 层数
+        rank: 低秩分解的秩
+        enable_reflection: 是否启用反思层
+        reflection_layers: 哪些层启用反思（默认后半层）
+
+    Returns:
+        Claude4Model 实例
+    """
+    return Claude4Model(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        n_heads=n_heads,
+        d_ff=d_ff,
+        num_layers=num_layers,
+        rank=rank,
+        enable_reflection=enable_reflection,
+        reflection_layers=reflection_layers
+    )

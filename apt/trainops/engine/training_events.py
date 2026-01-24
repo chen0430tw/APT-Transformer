@@ -305,3 +305,7 @@ def emit_checkpoint_saved(checkpoint_path: str, epoch: int, step: int, **kwargs)
 def emit_metric_update(metrics: Dict[str, float], **kwargs):
     """便捷函数：发射指标更新事件"""
     training_emitter.emit('metric_update', metrics=metrics, **kwargs)
+
+
+# TrainingEventManager: 使用 TrainingEventEmitter 作为事件管理器
+TrainingEventManager = TrainingEventEmitter

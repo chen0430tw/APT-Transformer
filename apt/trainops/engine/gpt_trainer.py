@@ -598,3 +598,7 @@ def train_gpt5(
     )
 
     return final_metrics
+
+
+# GPTTrainer: 使用 GPT4oTrainer 作为默认 GPT 训练器
+GPTTrainer = GPT4oTrainer

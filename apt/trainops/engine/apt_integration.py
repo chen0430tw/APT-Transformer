@@ -22,7 +22,7 @@ from typing import Dict, Optional, Callable, Any
 import logging
 from pathlib import Path
 
-from .training_monitor import TrainingMonitor, ErrorType, FixAction
+from ..eval.training_monitor import TrainingMonitor, ErrorType, FixAction
 
 logger = logging.getLogger(__name__)
 
@@ -456,3 +456,7 @@ if __name__ == "__main__":
     
     # 打印报告
     wrapper.print_report()
+
+
+# APTIntegration: 使用 SOSATrainingWrapper 作为 APT 集成
+APTIntegration = SOSATrainingWrapper

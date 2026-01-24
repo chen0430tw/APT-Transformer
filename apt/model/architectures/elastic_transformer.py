@@ -611,10 +611,14 @@ class ElasticTransformerLayer(nn.Module):
 # 导出接口
 # ============================================================================
 
+# Backward compatibility alias
+ElasticTransformer = ElasticTransformerLayer
+
 __all__ = [
     'NestedFFN',
     'DynamicTokenExpansion',
     'CAMPUSScheduler',
     'ContinualLearningBuffer',
-    'ElasticTransformerLayer'
+    'ElasticTransformerLayer',
+    'ElasticTransformer',  # alias for backward compatibility
 ]

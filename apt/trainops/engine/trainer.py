@@ -26,7 +26,7 @@ from apt.core.config.settings_manager import settings
 from apt.trainops.eval.training_guard import TrainingGuard, EarlyStopping
 
 # 导入中文分词器相关函数
-from apt.model.architectures.chinese_tokenizer_integration import (
+from apt.model.tokenization.chinese_tokenizer_integration import (
     get_appropriate_tokenizer,
     save_tokenizer,
     is_chinese_text
@@ -36,11 +36,19 @@ from apt.model.architectures.chinese_tokenizer_integration import (
 def debug_print(*args, **kwargs):
     """仅在Debug模式下打印信息"""
     if settings.get_debug_enabled():
-        print(*args, **kwargs)
+        try:
+            print(*args, **kwargs)
+        except OSError:
+            # Ignore bad file descriptor errors
+            pass
 
 def info_print(*args, **kwargs):
     """始终打印的关键信息（非Debug模式也显示）"""
-    print(*args, **kwargs)
+    try:
+        print(*args, **kwargs)
+    except OSError:
+        # Ignore bad file descriptor errors
+        pass
 
 def get_training_texts():
     """
@@ -714,3 +722,121 @@ def _compare_model_outputs(untrained_model, trained_model, tokenizer, language="
         info_print("\n安柏：虽然有进步，但还远远不够哦！继续加油！")
     else:
         info_print("\n安柏：训练完成得不错！侦察骑士为你点赞！")
+
+
+# =============================================================================
+# Trainer Class (Object-Oriented API)
+# =============================================================================
+
+class Trainer:
+    """
+    APT Model Trainer - Object-oriented wrapper for train_model function
+
+    Provides a class-based interface for model training with configuration management.
+
+    Example:
+        >>> trainer = Trainer(epochs=20, batch_size=8, learning_rate=3e-5)
+        >>> trainer.train(save_path="my_model")
+    """
+
+    def __init__(
+        self,
+        epochs: int = 20,
+        batch_size: int = 8,
+        learning_rate: float = 3e-5,
+        tokenizer_type: str = None,
+        language: str = None,
+        enable_guard: bool = True,
+        max_steps: int = None,
+        max_time_hours: float = None,
+        early_stopping_patience: int = None,
+        guard_verbose: bool = True
+    ):
+        """
+        Initialize the Trainer with configuration parameters.
+
+        Args:
+            epochs: Number of training epochs
+            batch_size: Batch size for training
+            learning_rate: Learning rate for optimizer
+            tokenizer_type: Type of tokenizer to use
+            language: Language for tokenizer
+            enable_guard: Enable training guard (safety mechanisms)
+            max_steps: Maximum training steps
+            max_time_hours: Maximum training time in hours
+            early_stopping_patience: Patience for early stopping
+            guard_verbose: Whether to show guard verbose output
+        """
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.tokenizer_type = tokenizer_type
+        self.language = language
+        self.enable_guard = enable_guard
+        self.max_steps = max_steps
+        self.max_time_hours = max_time_hours
+        self.early_stopping_patience = early_stopping_patience
+        self.guard_verbose = guard_verbose
+
+        # Runtime state
+        self.logger = None
+        self.resource_monitor = None
+
+    def train(
+        self,
+        save_path: str = "apt_model",
+        texts: list = None,
+        tokenizer = None,
+        logger = None,
+        resource_monitor = None,
+        multimodal_config = None
+    ):
+        """
+        Execute the training process.
+
+        Args:
+            save_path: Path to save the trained model
+            texts: Training texts (optional, uses defaults if None)
+            tokenizer: Pre-initialized tokenizer (optional)
+            logger: Logger instance (optional)
+            resource_monitor: Resource monitor instance (optional)
+            multimodal_config: Multimodal configuration (optional)
+
+        Returns:
+            Trained model and tokenizer
+        """
+        # Update logger and monitor if provided
+        if logger is not None:
+            self.logger = logger
+        if resource_monitor is not None:
+            self.resource_monitor = resource_monitor
+
+        # Call the underlying train_model function
+        return train_model(
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            learning_rate=self.learning_rate,
+            save_path=save_path,
+            logger=self.logger,
+            resource_monitor=self.resource_monitor,
+            multimodal_config=multimodal_config,
+            tokenizer_type=self.tokenizer_type,
+            language=self.language,
+            texts=texts,
+            tokenizer=tokenizer,
+            enable_guard=self.enable_guard,
+            max_steps=self.max_steps,
+            max_time_hours=self.max_time_hours,
+            early_stopping_patience=self.early_stopping_patience,
+            guard_verbose=self.guard_verbose
+        )
+
+    def set_logger(self, logger):
+        """Set the logger for training"""
+        self.logger = logger
+        return self
+
+    def set_resource_monitor(self, monitor):
+        """Set the resource monitor for training"""
+        self.resource_monitor = monitor
+        return self

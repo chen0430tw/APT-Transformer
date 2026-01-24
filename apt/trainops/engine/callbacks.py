@@ -436,3 +436,64 @@ def create_default_callbacks(config, modules: Dict, total_epochs: int, total_ste
     callbacks.append(LoggingCallback(log_interval=10))
 
     return callbacks
+
+
+# ==============================================================================
+# Additional Callbacks
+# ==============================================================================
+
+class EarlyStoppingCallback(TrainingCallback):
+    """
+    Early stopping callback to stop training when validation loss stops improving.
+    """
+
+    def __init__(self, patience: int = 5, min_delta: float = 0.001):
+        """
+        Args:
+            patience: Number of epochs to wait before stopping
+            min_delta: Minimum change to qualify as improvement
+        """
+        super().__init__()
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss = float('inf')
+        self.counter = 0
+        self.should_stop = False
+
+    def on_validation_end(self, metrics: dict):
+        """Check if training should stop"""
+        val_loss = metrics.get('val_loss', float('inf'))
+
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.should_stop = True
+
+
+class LearningRateSchedulerCallback(TrainingCallback):
+    """
+    Learning rate scheduler callback.
+    """
+
+    def __init__(self, scheduler, step_on: str = 'epoch'):
+        """
+        Args:
+            scheduler: Learning rate scheduler (e.g., torch.optim.lr_scheduler)
+            step_on: When to step the scheduler ('epoch' or 'batch')
+        """
+        super().__init__()
+        self.scheduler = scheduler
+        self.step_on = step_on
+
+    def on_epoch_end(self, epoch: int, metrics: dict):
+        """Step scheduler after epoch if configured"""
+        if self.step_on == 'epoch':
+            self.scheduler.step()
+
+    def on_batch_end(self, batch_idx: int, loss: float):
+        """Step scheduler after batch if configured"""
+        if self.step_on == 'batch':
+            self.scheduler.step()

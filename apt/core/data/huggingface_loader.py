@@ -9,7 +9,7 @@ import os
 import logging
 import re
 import random
-from typing import List, Dict, Union, Optional, Tuple, Any
+from typing import List, Dict, Union, Optional, Tuple, Any, TYPE_CHECKING
 
 # Import optional dependencies
 try:
@@ -17,6 +17,13 @@ try:
     DATASETS_AVAILABLE = True
 except ImportError:
     DATASETS_AVAILABLE = False
+    # Define dummy types for type checking when datasets is not available
+    if TYPE_CHECKING:
+        from typing import Any as Dataset
+        from typing import Any as DatasetDict
+    else:
+        Dataset = Any
+        DatasetDict = Any
 
 class HuggingFaceLoader:
     """
