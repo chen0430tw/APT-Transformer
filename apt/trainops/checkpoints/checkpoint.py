@@ -138,12 +138,70 @@ def _load_directory_checkpoint(path, device):
 
     model = model.to(device)
 
-    # 加载分词器
+    # 加载分词器（兼容不完整的 tokenizer 目录）
     tokenizer_path = os.path.join(path, "tokenizer")
-    tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_path)
+    tokenizer = None
 
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    # 尝试加载 GPT2Tokenizer
+    if os.path.exists(tokenizer_path):
+        try:
+            tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_path)
+            if tokenizer.pad_token_id is None:
+                tokenizer.pad_token_id = tokenizer.eos_token_id
+        except (TypeError, FileNotFoundError, OSError) as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"无法加载 GPT2Tokenizer: {e}")
+            logger.warning("尝试使用简单的基于 vocab.json 的 tokenizer...")
+
+            # 尝试从 vocab.json 创建简单 tokenizer
+            vocab_file = os.path.join(tokenizer_path, "vocab.json")
+            if os.path.exists(vocab_file):
+                try:
+                    with open(vocab_file, 'r', encoding='utf-8') as f:
+                        vocab = json.load(f)
+
+                    # 创建简单的 tokenizer 包装器
+                    class SimpleVocabTokenizer:
+                        def __init__(self, vocab_dict):
+                            self.vocab = vocab_dict
+                            self.id_to_token = {v: k for k, v in vocab_dict.items()}
+                            self.vocab_size = len(vocab_dict)
+                            self.pad_token_id = vocab_dict.get('<|pad|>', vocab_dict.get('[PAD]', 0))
+                            self.eos_token_id = vocab_dict.get('<|endoftext|>', vocab_dict.get('[SEP]', 1))
+                            self.bos_token_id = vocab_dict.get('<|startoftext|>', vocab_dict.get('[CLS]', 2))
+
+                        def encode(self, text, **kwargs):
+                            # 简单的字符级编码
+                            tokens = []
+                            for char in text:
+                                tokens.append(self.vocab.get(char, self.vocab.get('<|unk|>', 3)))
+                            return tokens
+
+                        def decode(self, token_ids, **kwargs):
+                            # 简单的解码
+                            chars = []
+                            for token_id in token_ids:
+                                if token_id in self.id_to_token:
+                                    chars.append(self.id_to_token[token_id])
+                            return ''.join(chars)
+
+                        def __call__(self, text, **kwargs):
+                            return {'input_ids': self.encode(text)}
+
+                    tokenizer = SimpleVocabTokenizer(vocab)
+                    logger.info(f"✓ 使用简单 vocab tokenizer (词汇表大小: {tokenizer.vocab_size})")
+
+                except Exception as e2:
+                    logger.error(f"无法创建简单 tokenizer: {e2}")
+
+    if tokenizer is None:
+        raise RuntimeError(
+            f"无法加载 tokenizer from {tokenizer_path}\n"
+            "请确保 tokenizer 目录包含以下文件之一:\n"
+            "  - vocab.json + merges.txt (GPT2Tokenizer)\n"
+            "  - vocab.json (SimpleVocabTokenizer)"
+        )
 
     return model, tokenizer, config
 
