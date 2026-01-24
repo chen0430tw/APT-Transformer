@@ -362,38 +362,15 @@ def main():
     # 尝试使用命令注册系统
     try:
         from apt.apps.cli.command_registry import command_registry
+        from apt.apps.cli.parser import parse_arguments
 
         # 检查命令是否在注册表中
         if command_registry.get_command(command):
-            import argparse
-            parser = argparse.ArgumentParser(description=f'APT Model - {command}')
-            # 添加通用参数
-            parser.add_argument('--num-gpus', type=int, help='Number of virtual GPUs')
-            parser.add_argument('--mode', type=str, help='Operation mode')
-            parser.add_argument('--checkpoint', type=str, help='Checkpoint path')
-            parser.add_argument('--model-path', type=str, help='Model path')
-            parser.add_argument('--num-experts', type=int, help='Number of experts (MoE)')
-            parser.add_argument('--top-k', type=int, help='Top K experts to use')
-            parser.add_argument('--aim-operation', type=str, help='AIM operation')
-            parser.add_argument('--npu-type', type=str, help='NPU type')
-            parser.add_argument('--query', type=str, help='Query string')
-            parser.add_argument('--use-kg', action='store_true', help='Use knowledge graph')
-            parser.add_argument('--ppo-epochs', type=int, help='PPO epochs')
-            parser.add_argument('--kl-coef', type=float, help='KL coefficient')
-            parser.add_argument('--beta', type=float, help='Beta parameter')
-            parser.add_argument('--reference-free', action='store_true', help='Reference-free mode')
-            parser.add_argument('--group-size', type=int, help='Group size')
-            parser.add_argument('--advantage-type', type=str, help='Advantage type')
-            parser.add_argument('--pooling', type=str, help='Pooling strategy')
-            parser.add_argument('--zero-stage', type=int, help='DeepSpeed ZeRO stage')
-            parser.add_argument('--cpu-offload', action='store_true', help='CPU offload')
-            parser.add_argument('--subscription-id', type=str, help='Azure subscription ID')
-            parser.add_argument('--workspace-name', type=str, help='Azure workspace name')
-            parser.add_argument('--wandb', action='store_true', help='Use W&B')
-            parser.add_argument('--fp16', action='store_true', help='Use FP16')
-            parser.add_argument('--early-stopping', action='store_true', help='Early stopping')
+            # 恢复 argv，让 parse_arguments 正确解析
+            sys.argv = [sys.argv[0], command] + sys.argv[1:]
 
-            args, unknown = parser.parse_known_args()
+            # 使用完整的 parser，包含所有参数定义
+            args = parse_arguments()
             return command_registry.execute_command(command, args)
     except ImportError as e:
         # 命令注册系统不可用，使用硬编码命令
