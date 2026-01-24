@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 import time
+import os
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-with open('/tmp/vb_test_output.txt', 'w') as f:
+output_file = os.path.join(os.getcwd(), 'vb_test_output.txt')
+with open(output_file, 'w') as f:
     f.write(f"=== Virtual Blackwell Training Test ===\n")
     f.write(f"Device: {device}\n\n")
 
@@ -93,4 +95,4 @@ with open('/tmp/vb_test_output.txt', 'w') as f:
         f.write(f"⚠️  VB is {(1-speedup)*100:.1f}% SLOWER\n")
         f.write(f"(FP4 overhead > benefit for small model)\n")
 
-print("Test complete. See /tmp/vb_test_output.txt")
+print(f"Test complete. See {output_file}")

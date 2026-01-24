@@ -1,13 +1,14 @@
 import torch
 import torch.nn as nn
 import time
+import os
 from apt.model.architectures.claude4_model import create_claude_unified
 from apt.vgpu.runtime.vb_integration import VBModelWrapper
 import io
 import sys
 
-# 捕获所有输出
-output_file = '/tmp/claude_vb_training.txt'
+# 捕获所有输出（跨平台兼容）
+output_file = os.path.join(os.getcwd(), 'claude_vb_training.txt')
 
 with open(output_file, 'w') as f:
     f.write("="*80 + "\n")

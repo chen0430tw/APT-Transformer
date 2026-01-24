@@ -9,12 +9,16 @@ import torch
 import torch.nn as nn
 import time
 import sys
+import os
 from apt.model.architectures.claude4_model import create_claude_unified
 from apt.vgpu.runtime.vb_integration import enable_vb_optimization
 
+# 跨平台兼容的日志文件路径
+LOG_FILE = os.path.join(os.getcwd(), 'train_mini_claude_vb.log')
+
 def log(msg):
     """安全的日志输出"""
-    with open('/tmp/train_mini_claude_vb.log', 'a') as f:
+    with open(LOG_FILE, 'a') as f:
         f.write(msg + '\n')
 
 def create_training_data(num_samples=500):
@@ -241,14 +245,14 @@ def train_mini_claude():
 
 if __name__ == "__main__":
     # 清空日志文件
-    with open('/tmp/train_mini_claude_vb.log', 'w') as f:
+    with open(LOG_FILE, 'w') as f:
         f.write("")
 
     try:
         num_vb = train_mini_claude()
 
         # 读取日志并打印
-        with open('/tmp/train_mini_claude_vb.log', 'r') as f:
+        with open(LOG_FILE, 'r') as f:
             content = f.read()
 
         # 写到stderr避免stdout问题
