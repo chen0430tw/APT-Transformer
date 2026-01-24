@@ -7,9 +7,9 @@ Low-rank subspace projection for VFT/TVA architecture.
 Based on the original vft_tva.py implementation.
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 

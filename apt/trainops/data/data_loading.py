@@ -10,9 +10,9 @@ import json
 import random
 from typing import List, Dict, Tuple, Optional, Union, Callable
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 Dataset = torch.utils.data.Dataset
 DataLoader = torch.utils.data.DataLoader

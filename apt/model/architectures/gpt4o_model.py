@@ -6,9 +6,9 @@
 # HybridFFN, OmniInputEncoder, GPT4oBlock, GPT4oModel.
 # ----------------------------------------------------------
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Optimizer and learning rate scheduler for APT model"""
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 from transformers import get_cosine_schedule_with_warmup
 

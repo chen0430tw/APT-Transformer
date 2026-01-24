@@ -8,9 +8,9 @@ Provides high-level utilities for integrating retrieval into APT models.
 
 import os
 from typing import Dict, Any, Optional, List, Tuple, Union
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 from dataclasses import dataclass

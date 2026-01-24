@@ -9,9 +9,9 @@ APT核心模型集成实现
 import os
 # 检查是否应该屏蔽自创生变换器的警告
 SUPPRESS_APT_WARNINGS = os.environ.get('SUPPRESS_APT_WARNINGS', 'False').lower() in ('true', '1', 'yes')
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional

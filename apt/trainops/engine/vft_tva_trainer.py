@@ -5,9 +5,9 @@ VFT-TVA Model Trainer
 Trainer for Vein-Flow Transformer with Tri-Vein Attention
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional

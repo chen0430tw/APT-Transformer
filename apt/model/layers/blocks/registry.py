@@ -8,7 +8,7 @@ Allows runtime selection via config: --attn.impl tva --ffn.impl vft
 """
 
 from typing import Dict, Callable, Any, Optional
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 

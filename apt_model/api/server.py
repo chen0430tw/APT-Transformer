@@ -15,26 +15,44 @@ import sys
 
 def main():
     """Main entry point for API server"""
-    print("🚀 APT API Server")
-    print()
-
     try:
-        # Try to import and run the real API server
-        from apt.apps.api import server
+        # Parse command line arguments
+        import argparse
+        parser = argparse.ArgumentParser(description='APT API Server')
+        parser.add_argument('--checkpoint-dir', type=str, default=None,
+                          help='Directory containing model checkpoints')
+        parser.add_argument('--host', type=str, default='0.0.0.0',
+                          help='Host to bind to (default: 0.0.0.0)')
+        parser.add_argument('--port', type=int, default=8000,
+                          help='Port to run server on (default: 8000)')
+        parser.add_argument('--reload', action='store_true',
+                          help='Enable auto-reload on code changes')
+        parser.add_argument('--api-key', type=str, default=None,
+                          help='API key for authentication (auto-generated if not provided)')
 
-        # Check if server module has main function
-        if hasattr(server, 'main'):
-            return server.main()
-        elif hasattr(server, 'run'):
-            return server.run()
-        else:
-            print("❌ Error: API server main function not found")
-            print()
-            print("API functionality is being migrated to APT 2.0")
-            print("For now, you can:")
-            print("1. Use quickstart.py for basic training")
-            print("2. Check docs/README.md for API status")
-            return 1
+        args = parser.parse_args()
+
+        # Import and run API server
+        from apt.apps.api.server import run_server
+
+        return run_server(
+            checkpoint_dir=args.checkpoint_dir,
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            api_key=args.api_key
+        )
+
+    except ImportError as e:
+        print("🚀 APT API Server")
+        print()
+        print(f"❌ Error: Could not import API server: {e}")
+        print()
+        print("API dependencies may not be installed:")
+        print("    pip install fastapi uvicorn")
+        print()
+        print("Or check apt/apps/api/ for implementation status")
+        return 1
 
     except ImportError as e:
         print(f"❌ Error: Could not import API server: {e}")

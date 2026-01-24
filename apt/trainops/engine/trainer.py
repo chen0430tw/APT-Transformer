@@ -5,9 +5,9 @@
 """
 
 import os
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 F = torch.nn.functional
 import traceback
@@ -16,8 +16,8 @@ from datetime import datetime
 Dataset = torch.utils.data.Dataset
 DataLoader = torch.utils.data.DataLoader
 
-from apt.apt_model.utils import set_seed
-from apt.apt_model.utils import get_device, device
+from apt.core import set_seed
+from apt.core import get_device, device
 from apt.core.config.apt_config import APTConfig
 from apt.model.architectures.apt_model import APTModel, APTLargeModel
 from apt.core.generation.generator import generate_natural_text

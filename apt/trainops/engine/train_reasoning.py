@@ -8,9 +8,9 @@ Provides training utilities for reasoning-enhanced models.
 
 import os
 from typing import Optional, Dict, Any, List, Tuple
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 DataLoader = torch.utils.data.DataLoader

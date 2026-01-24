@@ -16,7 +16,7 @@
 - 其他需要外部模型的场景
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 from typing import Optional, Dict, Any, List
 import time
@@ -546,7 +546,7 @@ print(f"成本: ${api.stats['total_cost']:.6f}")  # 约 $0.00003
 
     usage_scenarios = '''
 # 场景1: 知识蒸馏
-from apt.apt_model.plugins.teacher_api import create_api_teacher_model
+from apt.apps.plugins.distillation.teacher_api import create_api_teacher_model
 
 teacher = create_api_teacher_model(
     provider='siliconflow',

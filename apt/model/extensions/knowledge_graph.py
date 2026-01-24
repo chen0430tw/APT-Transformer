@@ -16,9 +16,9 @@ import pickle
 from typing import List, Tuple, Dict, Set, Optional, Any
 from dataclasses import dataclass, asdict
 from collections import defaultdict
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 

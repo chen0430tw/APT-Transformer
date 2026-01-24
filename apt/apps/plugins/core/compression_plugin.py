@@ -395,7 +395,7 @@ class CompressionPlugin:
         print(f"🚀 启用DBC加速训练 (rank_ratio={rank_ratio})")
 
         # 导入DBC优化器
-        from apt.apt_model.modeling.apt_model import DBCDAC_Optimizer, add_gradient_hooks_to_model
+        from apt.model.architectures.apt_model import DBCDAC_Optimizer, add_gradient_hooks_to_model
 
         # 创建DBC优化器
         dbc_optimizer = DBCDAC_Optimizer(

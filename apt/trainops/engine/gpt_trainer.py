@@ -4,9 +4,9 @@ GPT Models Training Interface
 统一的GPT模型训练接口，支持GPT-4o, GPT-5, GPTo3
 """
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional

@@ -13,9 +13,9 @@ Refactored to use unified VFT/TVA modules from apt.model.layers.blocks
 from __future__ import annotations
 from typing import Any, Dict, Tuple, List, Optional
 
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional

@@ -18,9 +18,9 @@ APT模型微调（Fine-tuning）模块
 """
 
 import os
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 nn = torch.nn
 from tqdm import tqdm
@@ -32,7 +32,7 @@ from apt.trainops.checkpoints.checkpoint import load_model, save_model
 from apt.core.data.external_data import load_external_data
 from apt.core.generation.generator import generate_natural_text
 from apt.core.generation.evaluator import evaluate_text_quality
-from apt.apt_model.utils import get_device, set_seed
+from apt.core import get_device, set_seed
 from apt.core.config.settings_manager import settings
 
 

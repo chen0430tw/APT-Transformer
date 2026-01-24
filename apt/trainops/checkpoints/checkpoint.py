@@ -4,7 +4,7 @@
 
 import os
 import json
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 from datetime import datetime
 
@@ -51,7 +51,7 @@ def load_model(path, device=None):
     from transformers import GPT2Tokenizer
     from apt.core.config.apt_config import APTConfig
     from apt.model.architectures.apt_model import APTLargeModel
-    from apt.apt_model.utils import get_device
+    from apt.core import get_device
 
     if device is None:
         device = get_device()

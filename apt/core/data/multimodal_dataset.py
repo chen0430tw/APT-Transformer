@@ -7,9 +7,9 @@ Multimodal dataset and data loaders for text, image, and audio data
 
 import os
 import json
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.apt_model.utils.fake_torch import get_torch
+from apt.core.fake_torch import get_torch
 torch = get_torch()
 Dataset = torch.utils.data.Dataset
 DataLoader = torch.utils.data.DataLoader

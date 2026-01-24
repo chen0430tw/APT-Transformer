@@ -235,7 +235,7 @@ def get_tokenizer(tokenizer_type="gpt2", language="en", texts=None, vocab_size=5
                         ids = ids[:max_length]
 
                     if return_tensors == "pt":
-                        from apt.apt_model.utils.fake_torch import get_torch
+                        from apt.core.fake_torch import get_torch
                         torch = get_torch()
 
                         return torch.tensor([ids], dtype=torch.long)
