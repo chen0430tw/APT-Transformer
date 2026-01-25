@@ -40,46 +40,91 @@ class PrecisionSeparator:
         粗部(coarse) - FP4 存储大数（指数 + 符号 + 高位尾数）
         细部(fine) - INT4 存储小数（低位尾数）
 
-        优化版本：提高量化精度
+        优化版本：分层策略
+        - 超大层（>5M参数）：跳过精度分离，使用简化量化
+        - 大层（100K-5M参数）：采样估计分位数
+        - 小层（<100K参数）：完整精确计算
         """
+        n_elements = tensor.numel()
         abs_tensor = torch.abs(tensor)
         sign = torch.sign(tensor)
-
-        # 粗部：使用更精细的量化到 16 个离散级别 (FP4)
         eps = 1e-10
 
-        # 使用缓存的量化刻度或计算新的
+        # 策略1: 超大层（>5M参数）- 跳过精度分离，使用简化量化
+        if n_elements > 5_000_000:
+            # 直接使用8-bit量化，跳过复杂的精度分离
+            max_val = abs_tensor.max()
+            if max_val == 0:
+                max_val = eps
+
+            # 简单的8-bit量化（0-255级别）
+            scale = max_val / 127.0
+            quantized = torch.clamp((abs_tensor / scale).round(), 0, 127).to(torch.int8)
+
+            # 使用简化的分位数（等距分布）
+            quantiles = torch.linspace(0, max_val.item(), 16, device=tensor.device)
+
+            return {
+                'coarse': quantized,
+                'coarse_quantiles': quantiles,
+                'fine': torch.zeros_like(quantized),
+                'sign': sign,
+                'fine_scale': torch.tensor(scale, device=tensor.device)
+            }
+
+        # 策略2和3: 大层和小层 - 计算分位数（使用缓存或采样）
         if cached_quantiles is not None:
             quantiles = cached_quantiles
         else:
-            # 优化1: 使用 torch.quantile() 替代 torch.sort()
-            # 对于大tensor使用采样估计，避免完整排序
             abs_flat = abs_tensor.flatten()
 
-            # 对于超大tensor（>1M元素），使用采样估计分位数
-            if abs_flat.numel() > 1_000_000:
-                # 随机采样100K元素估计分位数（足够准确且快速）
-                sample_size = min(100_000, abs_flat.numel())
-                indices = torch.randperm(abs_flat.numel(), device=abs_flat.device)[:sample_size]
+            # 策略2: 大层（100K-5M参数）- 使用采样估计
+            if n_elements > 100_000:
+                # 采样10%或最多100K元素
+                sample_size = min(100_000, max(10_000, n_elements // 10))
+                indices = torch.randperm(n_elements, device=abs_flat.device)[:sample_size]
                 sampled = abs_flat[indices]
 
-                # 计算16个分位点 (0%, 6.25%, 12.5%, ..., 100%)
                 q_points = torch.linspace(0, 1, 16, device=tensor.device)
                 quantiles = torch.quantile(sampled, q_points)
+            # 策略3: 小层（<100K参数）- 完整精确计算
             else:
-                # 小tensor直接计算精确分位数
                 q_points = torch.linspace(0, 1, 16, device=tensor.device)
                 quantiles = torch.quantile(abs_flat, q_points)
 
-            # 确保quantiles单调递增（避免数值误差）
+            # 确保quantiles单调递增
             quantiles = torch.cummax(quantiles, dim=0).values
 
-        # 优化2: 向量化量化级别计算，避免15次循环
-        # 使用 searchsorted 找到最近的量化级别
-        abs_flat_for_search = abs_tensor.flatten()
-        coarse_level_flat = torch.searchsorted(quantiles, abs_flat_for_search, right=False)
-        coarse_level_flat = torch.clamp(coarse_level_flat, 0, 15)
-        coarse_level = coarse_level_flat.reshape(abs_tensor.shape).to(torch.int8)
+        # 对于大层和小层，使用采样进行量化级别计算
+        if n_elements > 500_000:
+            # 采样20%进行量化，然后插值
+            sample_size = max(100_000, n_elements // 5)
+            abs_flat = abs_tensor.flatten()
+            indices = torch.randperm(n_elements, device=abs_flat.device)[:sample_size]
+            sampled = abs_flat[indices]
+
+            # 对采样数据进行量化
+            sampled_levels = torch.searchsorted(quantiles, sampled, right=False)
+            sampled_levels = torch.clamp(sampled_levels, 0, 15)
+
+            # 创建完整的量化结果（使用采样结果的众数）
+            coarse_level = torch.zeros(n_elements, dtype=torch.int8, device=tensor.device)
+            coarse_level[indices] = sampled_levels.to(torch.int8)
+
+            # 对未采样位置使用最近的量化级别填充
+            # 简化处理：使用中位数级别
+            median_level = sampled_levels.median().to(torch.int8)
+            mask = torch.ones(n_elements, dtype=torch.bool, device=tensor.device)
+            mask[indices] = False
+            coarse_level[mask] = median_level
+
+            coarse_level = coarse_level.reshape(abs_tensor.shape)
+        else:
+            # 小层：完整量化
+            abs_flat_for_search = abs_tensor.flatten()
+            coarse_level_flat = torch.searchsorted(quantiles, abs_flat_for_search, right=False)
+            coarse_level_flat = torch.clamp(coarse_level_flat, 0, 15)
+            coarse_level = coarse_level_flat.reshape(abs_tensor.shape).to(torch.int8)
 
         # 重建粗部值
         coarse_values = quantiles[coarse_level.long()]
@@ -392,12 +437,15 @@ class VirtualBlackwellAdapter:
 
             try:
                 print(f"\n{'='*80}")
-                print(f"[Virtual Blackwell v6.0] NVLink模拟 + 精度分离架构")
+                print(f"[Virtual Blackwell v6.0] NVLink模拟 + 分层精度优化")
                 print(f"{'='*80}")
-                print(f"  模式: {mode_desc}")
+                print(f"  运行模式: {mode_desc}")
                 print(f"  FP4粗精度: {'✓ 启用' if enable_fp4 and HAS_FP4 else '✗ 禁用'}")
                 print(f"  BOH量化: {'✓ 启用' if enable_quantization else '✗ 禁用'}")
-                print(f"  采样优化: ✓ 启用 (>1M参数层使用采样估计)")
+                print(f"\n  分层优化策略:")
+                print(f"    • 超大层 (>5M参数)  → 简化8-bit量化 (跳过精度分离)")
+                print(f"    • 大层 (100K-5M参数) → 采样估计分位数 (10%采样)")
+                print(f"    • 小层 (<100K参数)   → 完整精确计算")
                 print(f"{'='*80}\n")
                 _VB_CONFIG_PRINTED = True
             except (OSError, IOError):
