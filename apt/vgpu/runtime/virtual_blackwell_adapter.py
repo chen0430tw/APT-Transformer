@@ -148,18 +148,25 @@ class VirtualGPUNetwork:
         # 共享内存（模拟NVLink）
         self.shared_memory = {}
 
+        # 精度分离缓存（训练优化：权重变化慢，缓存分离结果）
+        self.separated_cache = {}
+        self.cache_step_counter = {}
+        self.cache_refresh_interval = 100  # 每100步重新分离一次
+
         # 统计信息
         self.stats = {
             'gpu_hits': 0,
             'total': 0,
             'coarse_computes': 0,
-            'fine_computes': 0
+            'fine_computes': 0,
+            'cache_hits': 0,
+            'cache_refreshes': 0
         }
 
     def compute(self, weight: torch.Tensor, input_tensor: torch.Tensor, weight_id: str) -> torch.Tensor:
         """
         计算流程（计算单元，不是缓存访问！）：
-        1. 精度分离（粗部/细部）
+        1. 精度分离（粗部/细部）- 使用缓存加速
         2. BOH握手协调
         3. 粗部先行计算（快速低精度）
         4. 细部修正（高精度）
@@ -167,8 +174,26 @@ class VirtualGPUNetwork:
         """
         self.stats['total'] += 1
 
-        # 1. 精度分离
-        separated = self.separator.separate(weight)
+        # 1. 精度分离（使用缓存优化）
+        # 检查缓存是否需要刷新
+        if weight_id not in self.separated_cache:
+            # 首次：立即分离并缓存
+            separated = self.separator.separate(weight)
+            self.separated_cache[weight_id] = separated
+            self.cache_step_counter[weight_id] = 0
+        else:
+            # 检查是否需要刷新缓存
+            self.cache_step_counter[weight_id] += 1
+            if self.cache_step_counter[weight_id] >= self.cache_refresh_interval:
+                # 定期刷新：权重已更新一段时间
+                separated = self.separator.separate(weight)
+                self.separated_cache[weight_id] = separated
+                self.cache_step_counter[weight_id] = 0
+                self.stats['cache_refreshes'] += 1
+            else:
+                # 使用缓存
+                separated = self.separated_cache[weight_id]
+                self.stats['cache_hits'] += 1
 
         # 2. BOH握手
         handshake = self.protocol.handshake(
@@ -179,7 +204,6 @@ class VirtualGPUNetwork:
 
         # 3. 粗部先行计算（模拟低延迟）
         if handshake['priority'] == 'coarse_first':
-            coarse_weight = (2.0 ** (separated['coarse'] - 8)) * separated['sign']
             self.stats['coarse_computes'] += 1
 
             # 存储到共享内存
@@ -207,6 +231,9 @@ class VirtualGPUNetwork:
             'gpu_hit_rate': self.stats['gpu_hits'] / total if total > 0 else 0,
             'coarse_computes': self.stats['coarse_computes'],
             'fine_computes': self.stats['fine_computes'],
+            'cache_hits': self.stats['cache_hits'],
+            'cache_refreshes': self.stats['cache_refreshes'],
+            'cache_hit_rate': self.stats['cache_hits'] / total if total > 0 else 0,
             'gpu_memory_mb': len(self.shared_memory) * 0.1  # 估算
         }
 
@@ -397,6 +424,8 @@ class VirtualBlackwellAdapter:
         print(f"  粗部计算: {vgpu['coarse_computes']} (FP4)")
         print(f"  细部计算: {vgpu['fine_computes']} (INT4)")
         print(f"  GPU命中率: {vgpu['gpu_hit_rate']:.1%}")
+        print(f"  精度缓存: {vgpu['cache_hits']}/{vgpu['total']} ({vgpu['cache_hit_rate']:.1%})")
+        print(f"  缓存刷新: {vgpu['cache_refreshes']} 次")
         print(f"  共享内存: {vgpu['gpu_memory_mb']:.1f} MB")
 
         fp4 = stats['layer2_fp4']
