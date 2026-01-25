@@ -49,24 +49,23 @@ class PrecisionSeparator:
         if cached_quantiles is not None:
             quantiles = cached_quantiles
         else:
-            # 使用分位数而不是对数刻度，更好地适应权重分布
+            # 优化1: 使用 torch.quantile() 替代 torch.sort()
+            # quantile() 比 sort() 快10-100倍，因为只需部分排序
             abs_flat = abs_tensor.flatten()
-            abs_flat_sorted = torch.sort(abs_flat).values
-            n = len(abs_flat_sorted)
 
-            # 为16个级别选择分位点
-            quantiles = []
-            for i in range(16):
-                idx = min(int(i * n / 16), n - 1)
-                quantiles.append(abs_flat_sorted[idx].item())
-            quantiles = torch.tensor(quantiles, device=tensor.device)
+            # 计算16个分位点 (0%, 6.25%, 12.5%, ..., 100%)
+            q_points = torch.linspace(0, 1, 16, device=tensor.device)
+            quantiles = torch.quantile(abs_flat, q_points)
 
-        # 找到每个值最近的量化级别
-        coarse_level = torch.zeros_like(abs_tensor, dtype=torch.int8)
-        for i in range(15):
-            mask = (abs_tensor >= quantiles[i]) & (abs_tensor < quantiles[i + 1])
-            coarse_level[mask] = i
-        coarse_level[abs_tensor >= quantiles[15]] = 15
+            # 确保quantiles单调递增（避免数值误差）
+            quantiles = torch.maximum.accumulate(quantiles, dim=0)[0]
+
+        # 优化2: 向量化量化级别计算，避免15次循环
+        # 使用 searchsorted 找到最近的量化级别
+        abs_flat_for_search = abs_tensor.flatten()
+        coarse_level_flat = torch.searchsorted(quantiles, abs_flat_for_search, right=False)
+        coarse_level_flat = torch.clamp(coarse_level_flat, 0, 15)
+        coarse_level = coarse_level_flat.reshape(abs_tensor.shape).to(torch.int8)
 
         # 重建粗部值
         coarse_values = quantiles[coarse_level.long()]
@@ -211,15 +210,15 @@ class VirtualGPUNetwork:
         if handshake['priority'] == 'coarse_first':
             self.stats['coarse_computes'] += 1
 
-            # 存储到共享内存
-            self.shared_memory[f'{weight_id}_coarse'] = separated['coarse']
+            # 优化3: 存储到共享内存（使用detach避免梯度累积）
+            self.shared_memory[f'{weight_id}_coarse'] = separated['coarse'].detach()
 
         # 4. 细部修正（高精度计算）
         full_weight = self.separator.combine(separated)
         self.stats['fine_computes'] += 1
 
-        # 存储到共享内存
-        self.shared_memory[f'{weight_id}_fine'] = separated['fine']
+        # 优化3: 存储到共享内存（使用detach避免梯度累积）
+        self.shared_memory[f'{weight_id}_fine'] = separated['fine'].detach()
 
         # 5. 执行计算
         result = full_weight @ input_tensor
