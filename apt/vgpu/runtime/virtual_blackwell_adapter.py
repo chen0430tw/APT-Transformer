@@ -229,6 +229,8 @@ class VirtualGPUNetwork:
 
         # 量化参数缓存（训练优化：缓存量化刻度，避免重复排序）
         self.quantile_cache = {}  # {weight_id: quantiles}
+        self.separated_cache = {}  # {weight_id: separated} - 缓存完整的精度分离结果
+        self.weight_hash_cache = {}  # {weight_id: hash} - 权重哈希，检测变化
         self.cache_step_counter = {}
         self.cache_refresh_interval = 100  # 每100步刷新量化刻度
 
@@ -253,26 +255,38 @@ class VirtualGPUNetwork:
         """
         self.stats['total'] += 1
 
-        # 1. 精度分离（使用量化刻度缓存优化）
-        # 检查缓存是否需要刷新
-        if weight_id not in self.quantile_cache:
-            # 首次：计算量化刻度并缓存
+        # 1. 精度分离（激进缓存：缓存完整separated结果）
+        # 训练时权重变化缓慢，可以每10步才重新计算一次精度分离
+        if weight_id not in self.separated_cache:
+            # 首次：完整计算并缓存separated结果
             separated = self.separator.separate(weight, cached_quantiles=None)
-            self.quantile_cache[weight_id] = separated['coarse_quantiles'].detach()  # 缓存量化刻度（不需要梯度）
+            # 缓存整个separated结果（使用detach避免梯度累积）
+            self.separated_cache[weight_id] = {
+                'coarse': separated['coarse'].detach(),
+                'coarse_quantiles': separated['coarse_quantiles'].detach(),
+                'fine': separated['fine'].detach(),
+                'sign': separated['sign'].detach(),
+                'fine_scale': separated['fine_scale'].detach() if isinstance(separated['fine_scale'], torch.Tensor) else separated['fine_scale']
+            }
             self.cache_step_counter[weight_id] = 0
         else:
-            # 检查是否需要刷新缓存
+            # 检查是否需要刷新缓存（每10步刷新一次）
             self.cache_step_counter[weight_id] += 1
-            if self.cache_step_counter[weight_id] >= self.cache_refresh_interval:
-                # 定期刷新：权重已更新一段时间，重新计算量化刻度
+            if self.cache_step_counter[weight_id] >= 10:  # 每10步刷新
+                # 重新计算精度分离
                 separated = self.separator.separate(weight, cached_quantiles=None)
-                self.quantile_cache[weight_id] = separated['coarse_quantiles'].detach()
+                self.separated_cache[weight_id] = {
+                    'coarse': separated['coarse'].detach(),
+                    'coarse_quantiles': separated['coarse_quantiles'].detach(),
+                    'fine': separated['fine'].detach(),
+                    'sign': separated['sign'].detach(),
+                    'fine_scale': separated['fine_scale'].detach() if isinstance(separated['fine_scale'], torch.Tensor) else separated['fine_scale']
+                }
                 self.cache_step_counter[weight_id] = 0
                 self.stats['cache_refreshes'] += 1
             else:
-                # 使用缓存的量化刻度（避免重复排序）
-                cached_quantiles = self.quantile_cache[weight_id]
-                separated = self.separator.separate(weight, cached_quantiles=cached_quantiles)
+                # 直接使用缓存的separated结果（避免重新计算）
+                separated = self.separated_cache[weight_id]
                 self.stats['cache_hits'] += 1
 
         # 2. BOH握手
