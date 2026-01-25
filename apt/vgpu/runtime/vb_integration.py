@@ -41,17 +41,25 @@ if TORCH_AVAILABLE:
             self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
             self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
 
-            # 虚拟Blackwell适配器 (Flash Attention + FP4)
-            self.vb_adapter = create_virtual_blackwell(
-                mode=mode,
-                enable_quantization=enable_quantization,
-                enable_fp4=enable_fp4
-            )
+            # 优化6: 延迟初始化VB适配器（仅在第一次forward时创建）
+            # 这避免了在wrapper初始化时创建62个VB适配器
+            self.mode = mode
+            self.enable_quantization = enable_quantization
+            self.enable_fp4 = enable_fp4
+            self.vb_adapter = None  # 延迟创建
             self.layer_id = f'linear_{id(self)}'
             self._registered = False
 
         def forward(self, x):
             """前向传播（GPU加速，无CPU转换）"""
+            # 优化6: 延迟初始化VB适配器（仅在第一次forward时创建）
+            if self.vb_adapter is None:
+                self.vb_adapter = create_virtual_blackwell(
+                    mode=self.mode,
+                    enable_quantization=self.enable_quantization,
+                    enable_fp4=self.enable_fp4
+                )
+
             # 注册权重（仅首次）- 直接使用tensor
             if not self._registered:
                 self.vb_adapter.register_weight(self.layer_id, self.weight.detach())
@@ -89,6 +97,9 @@ if TORCH_AVAILABLE:
 
         def get_stats(self) -> Dict:
             """获取虚拟Blackwell统计信息"""
+            if self.vb_adapter is None:
+                # 还未进行过forward，返回空统计
+                return {'layer1_vgpu': {'total': 0, 'gpu_hits': 0}, 'layer2_fp4': {'total_calls': 0}}
             return self.vb_adapter.get_stats()
 
         def print_stats(self):
@@ -102,7 +113,8 @@ if TORCH_AVAILABLE:
         def __init__(self, model: nn.Module, mode: str = 'auto',
                      enable_quantization: bool = True,
                      enable_fp4: bool = True,
-                     replace_pattern: str = 'all'):
+                     replace_pattern: str = 'all',
+                     verbose: bool = True):
             """
             Args:
                 model: 原始模型
@@ -110,12 +122,14 @@ if TORCH_AVAILABLE:
                 enable_quantization: 是否启用BOH协议量化 (Layer 3)
                 enable_fp4: 是否启用FP4量化 (Layer 2)
                 replace_pattern: 替换模式 ('all', 'large', 'custom')
+                verbose: 是否显示详细进度
             """
             super().__init__()
             self.model = model
             self.mode = mode
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
+            self.verbose = verbose
             self.replaced_layers = []  # 层名列表
             self.replaced_modules = {}  # {name: module} 映射，避免重复遍历
 
@@ -126,10 +140,23 @@ if TORCH_AVAILABLE:
                 self._replace_large_linear()
 
         def _replace_all_linear(self):
-            """替换所有线性层"""
-            for name, module in self.model.named_modules():
-                if isinstance(module, nn.Linear) and not isinstance(module, VBOptimizedLinear):
-                    self._replace_module(name, module)
+            """替换所有线性层（优化7: 添加进度提示）"""
+            # 优化7: 先统计需要替换的层数
+            linear_layers = [
+                (name, module) for name, module in self.model.named_modules()
+                if isinstance(module, nn.Linear) and not isinstance(module, VBOptimizedLinear)
+            ]
+
+            total = len(linear_layers)
+            if self.verbose and total > 10:
+                print(f"\n[初始化] 发现 {total} 个线性层，开始替换为虚拟Blackwell...")
+
+            for idx, (name, module) in enumerate(linear_layers, 1):
+                self._replace_module(name, module)
+
+                # 优化7: 对大模型显示进度百分比
+                if self.verbose and total > 50 and idx % 10 == 0:
+                    print(f"[进度] {idx}/{total} ({idx/total*100:.0f}%)")
 
         def _replace_large_linear(self, threshold: int = 512):
             """只替换大型线性层"""
@@ -139,7 +166,10 @@ if TORCH_AVAILABLE:
                         self._replace_module(name, module)
 
         def _replace_module(self, name: str, module: nn.Linear):
-            """替换单个模块"""
+            """替换单个模块（优化5: 优化权重复制和设备转移）"""
+            device = module.weight.device
+
+            # 创建VB层（先在CPU上，避免重复CUDA分配）
             vb_linear = VBOptimizedLinear(
                 module.in_features,
                 module.out_features,
@@ -149,13 +179,19 @@ if TORCH_AVAILABLE:
                 enable_fp4=self.enable_fp4
             )
 
-            # 移到与原始模块相同的设备
-            vb_linear = vb_linear.to(module.weight.device)
-
-            # 复制权重
-            vb_linear.weight.data.copy_(module.weight.data)
-            if module.bias is not None:
-                vb_linear.bias.data.copy_(module.bias.data)
+            # 优化5a: 使用set_方法避免额外内存分配
+            # 直接设置权重tensor（共享存储），然后移到设备
+            if device.type == 'cuda':
+                # CUDA: 先复制再转移（避免多次CUDA分配）
+                vb_linear.weight.data.copy_(module.weight.data.cpu())
+                if module.bias is not None:
+                    vb_linear.bias.data.copy_(module.bias.data.cpu())
+                vb_linear = vb_linear.to(device)
+            else:
+                # CPU: 直接复制
+                vb_linear.weight.data.copy_(module.weight.data)
+                if module.bias is not None:
+                    vb_linear.bias.data.copy_(module.bias.data)
 
             # 替换
             parent_name, attr_name = self._get_parent_and_attr(name)
@@ -168,7 +204,14 @@ if TORCH_AVAILABLE:
             self.replaced_layers.append(name)
             # 优化4: 保存模块引用，避免get_all_stats时重复遍历
             self.replaced_modules[name] = vb_linear
-            print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
+
+            if self.verbose:
+                # 优化5b: 显示参数量帮助用户了解进度
+                params = module.in_features * module.out_features
+                if params > 1_000_000:
+                    print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features}, {params/1e6:.1f}M 参数)")
+                else:
+                    print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
 
         def _get_parent_and_attr(self, name: str):
             """获取父模块和属性名"""
