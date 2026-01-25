@@ -116,7 +116,8 @@ if TORCH_AVAILABLE:
             self.mode = mode
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
-            self.replaced_layers = []
+            self.replaced_layers = []  # 层名列表
+            self.replaced_modules = {}  # {name: module} 映射，避免重复遍历
 
             # 替换线性层
             if replace_pattern == 'all':
@@ -165,6 +166,8 @@ if TORCH_AVAILABLE:
                 setattr(self.model, attr_name, vb_linear)
 
             self.replaced_layers.append(name)
+            # 优化4: 保存模块引用，避免get_all_stats时重复遍历
+            self.replaced_modules[name] = vb_linear
             print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
 
         def _get_parent_and_attr(self, name: str):
@@ -188,10 +191,10 @@ if TORCH_AVAILABLE:
 
         def get_all_stats(self) -> Dict:
             """获取所有VB层的统计信息"""
+            # 优化4: 直接使用replaced_modules，避免遍历整个模型
             stats = {}
-            for name, module in self.model.named_modules():
-                if isinstance(module, VBOptimizedLinear):
-                    stats[name] = module.get_stats()
+            for name, module in self.replaced_modules.items():
+                stats[name] = module.get_stats()
             return stats
 
         def print_all_stats(self):
