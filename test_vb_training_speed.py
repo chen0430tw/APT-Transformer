@@ -42,6 +42,10 @@ log("")
 
 # 应用VB
 log("应用Virtual Blackwell...")
+import sys
+sys.stderr.write("开始应用VB...\n")
+sys.stderr.flush()
+
 wrapper = VBModelWrapper(
     model,
     mode='training',
@@ -50,12 +54,21 @@ wrapper = VBModelWrapper(
     replace_pattern='all'
 )
 
+sys.stderr.write("VB应用完成，正在统计层数...\n")
+sys.stderr.flush()
+
 vb_count = len(wrapper.replaced_layers)
 log(f"虚拟Blackwell显卡: {vb_count} 张")
 log("")
 
+sys.stderr.write(f"已替换 {vb_count} 层，准备优化器...\n")
+sys.stderr.flush()
+
 # 准备训练
 optimizer = torch.optim.Adam(wrapper.parameters(), lr=0.001)
+
+sys.stderr.write("优化器创建完成，准备训练...\n")
+sys.stderr.flush()
 criterion = nn.CrossEntropyLoss()
 
 batch_size = 8
