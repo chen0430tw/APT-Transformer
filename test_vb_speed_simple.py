@@ -2,7 +2,7 @@
 import sys
 def safe_print(*args, **kwargs):
     try:
-        safe_print(*args, **kwargs)
+        print(*args, **kwargs)
     except (OSError, IOError):
         pass
 """简化版VB速度测试（跳过大层output_head）"""
