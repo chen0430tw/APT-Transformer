@@ -14,6 +14,9 @@ import torch
 from typing import Dict, Optional, Tuple
 from collections import OrderedDict
 
+# 全局标志：只打印一次VB配置信息
+_VB_CONFIG_PRINTED = False
+
 # 导入Flash Attention + FP4模块
 try:
     from apt.perf.optimization.gpu_flash_optimization import FP4Codec
@@ -50,12 +53,23 @@ class PrecisionSeparator:
             quantiles = cached_quantiles
         else:
             # 优化1: 使用 torch.quantile() 替代 torch.sort()
-            # quantile() 比 sort() 快10-100倍，因为只需部分排序
+            # 对于大tensor使用采样估计，避免完整排序
             abs_flat = abs_tensor.flatten()
 
-            # 计算16个分位点 (0%, 6.25%, 12.5%, ..., 100%)
-            q_points = torch.linspace(0, 1, 16, device=tensor.device)
-            quantiles = torch.quantile(abs_flat, q_points)
+            # 对于超大tensor（>1M元素），使用采样估计分位数
+            if abs_flat.numel() > 1_000_000:
+                # 随机采样100K元素估计分位数（足够准确且快速）
+                sample_size = min(100_000, abs_flat.numel())
+                indices = torch.randperm(abs_flat.numel(), device=abs_flat.device)[:sample_size]
+                sampled = abs_flat[indices]
+
+                # 计算16个分位点 (0%, 6.25%, 12.5%, ..., 100%)
+                q_points = torch.linspace(0, 1, 16, device=tensor.device)
+                quantiles = torch.quantile(sampled, q_points)
+            else:
+                # 小tensor直接计算精确分位数
+                q_points = torch.linspace(0, 1, 16, device=tensor.device)
+                quantiles = torch.quantile(abs_flat, q_points)
 
             # 确保quantiles单调递增（避免数值误差）
             quantiles = torch.cummax(quantiles, dim=0).values
@@ -366,17 +380,28 @@ class VirtualBlackwellAdapter:
         self.quantizer = VGPUSLQuantizer() if enable_quantization else None
         self.enable_quant = enable_quantization
 
-        mode_desc = {
-            'auto': '自动',
-            'training': '训练',
-            'inference': '推理',
-            'precision': '精度优先'
-        }.get(mode, mode)
+        # 只在首次创建时打印配置信息（避免62层重复打印）
+        global _VB_CONFIG_PRINTED
+        if not _VB_CONFIG_PRINTED:
+            mode_desc = {
+                'auto': '自动',
+                'training': '训练',
+                'inference': '推理',
+                'precision': '精度优先'
+            }.get(mode, mode)
 
-        try:
-            print(f"[虚拟Blackwell] 模式={mode_desc}, FP4={'启用' if enable_fp4 and HAS_FP4 else '禁用'}, BOH量化={'启用' if enable_quantization else '禁用'}")
-        except (OSError, IOError):
-            pass  # 环境中stdout不可用时静默失败
+            try:
+                print(f"\n{'='*80}")
+                print(f"[Virtual Blackwell v6.0] NVLink模拟 + 精度分离架构")
+                print(f"{'='*80}")
+                print(f"  模式: {mode_desc}")
+                print(f"  FP4粗精度: {'✓ 启用' if enable_fp4 and HAS_FP4 else '✗ 禁用'}")
+                print(f"  BOH量化: {'✓ 启用' if enable_quantization else '✗ 禁用'}")
+                print(f"  采样优化: ✓ 启用 (>1M参数层使用采样估计)")
+                print(f"{'='*80}\n")
+                _VB_CONFIG_PRINTED = True
+            except (OSError, IOError):
+                pass  # 环境中stdout不可用时静默失败
 
     def register_weight(self, weight_id: str, weight: torch.Tensor, priority: int = 5):
         # Layer 2: 预编码为FP4（粗部）
