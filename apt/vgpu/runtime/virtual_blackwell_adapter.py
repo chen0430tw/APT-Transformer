@@ -31,7 +31,7 @@ class PrecisionSeparator:
     """精度分离器：将权重分解为粗部和细部"""
 
     @staticmethod
-    def separate(tensor: torch.Tensor) -> Dict:
+    def separate(tensor: torch.Tensor, cached_quantiles: torch.Tensor = None) -> Dict:
         """
         分离精度：
         粗部(coarse) - FP4 存储大数（指数 + 符号 + 高位尾数）
@@ -45,17 +45,21 @@ class PrecisionSeparator:
         # 粗部：使用更精细的量化到 16 个离散级别 (FP4)
         eps = 1e-10
 
-        # 使用分位数而不是对数刻度，更好地适应权重分布
-        abs_flat = abs_tensor.flatten()
-        abs_flat_sorted = torch.sort(abs_flat).values
-        n = len(abs_flat_sorted)
+        # 使用缓存的量化刻度或计算新的
+        if cached_quantiles is not None:
+            quantiles = cached_quantiles
+        else:
+            # 使用分位数而不是对数刻度，更好地适应权重分布
+            abs_flat = abs_tensor.flatten()
+            abs_flat_sorted = torch.sort(abs_flat).values
+            n = len(abs_flat_sorted)
 
-        # 为16个级别选择分位点
-        quantiles = []
-        for i in range(16):
-            idx = min(int(i * n / 16), n - 1)
-            quantiles.append(abs_flat_sorted[idx].item())
-        quantiles = torch.tensor(quantiles, device=tensor.device)
+            # 为16个级别选择分位点
+            quantiles = []
+            for i in range(16):
+                idx = min(int(i * n / 16), n - 1)
+                quantiles.append(abs_flat_sorted[idx].item())
+            quantiles = torch.tensor(quantiles, device=tensor.device)
 
         # 找到每个值最近的量化级别
         coarse_level = torch.zeros_like(abs_tensor, dtype=torch.int8)
@@ -148,18 +152,25 @@ class VirtualGPUNetwork:
         # 共享内存（模拟NVLink）
         self.shared_memory = {}
 
+        # 量化参数缓存（训练优化：缓存量化刻度，避免重复排序）
+        self.quantile_cache = {}  # {weight_id: quantiles}
+        self.cache_step_counter = {}
+        self.cache_refresh_interval = 100  # 每100步刷新量化刻度
+
         # 统计信息
         self.stats = {
             'gpu_hits': 0,
             'total': 0,
             'coarse_computes': 0,
-            'fine_computes': 0
+            'fine_computes': 0,
+            'cache_hits': 0,
+            'cache_refreshes': 0
         }
 
     def compute(self, weight: torch.Tensor, input_tensor: torch.Tensor, weight_id: str) -> torch.Tensor:
         """
         计算流程（计算单元，不是缓存访问！）：
-        1. 精度分离（粗部/细部）
+        1. 精度分离（粗部/细部）- 使用缓存加速
         2. BOH握手协调
         3. 粗部先行计算（快速低精度）
         4. 细部修正（高精度）
@@ -167,8 +178,27 @@ class VirtualGPUNetwork:
         """
         self.stats['total'] += 1
 
-        # 1. 精度分离
-        separated = self.separator.separate(weight)
+        # 1. 精度分离（使用量化刻度缓存优化）
+        # 检查缓存是否需要刷新
+        if weight_id not in self.quantile_cache:
+            # 首次：计算量化刻度并缓存
+            separated = self.separator.separate(weight, cached_quantiles=None)
+            self.quantile_cache[weight_id] = separated['coarse_quantiles'].detach()  # 缓存量化刻度（不需要梯度）
+            self.cache_step_counter[weight_id] = 0
+        else:
+            # 检查是否需要刷新缓存
+            self.cache_step_counter[weight_id] += 1
+            if self.cache_step_counter[weight_id] >= self.cache_refresh_interval:
+                # 定期刷新：权重已更新一段时间，重新计算量化刻度
+                separated = self.separator.separate(weight, cached_quantiles=None)
+                self.quantile_cache[weight_id] = separated['coarse_quantiles'].detach()
+                self.cache_step_counter[weight_id] = 0
+                self.stats['cache_refreshes'] += 1
+            else:
+                # 使用缓存的量化刻度（避免重复排序）
+                cached_quantiles = self.quantile_cache[weight_id]
+                separated = self.separator.separate(weight, cached_quantiles=cached_quantiles)
+                self.stats['cache_hits'] += 1
 
         # 2. BOH握手
         handshake = self.protocol.handshake(
@@ -179,7 +209,6 @@ class VirtualGPUNetwork:
 
         # 3. 粗部先行计算（模拟低延迟）
         if handshake['priority'] == 'coarse_first':
-            coarse_weight = (2.0 ** (separated['coarse'] - 8)) * separated['sign']
             self.stats['coarse_computes'] += 1
 
             # 存储到共享内存
@@ -207,6 +236,9 @@ class VirtualGPUNetwork:
             'gpu_hit_rate': self.stats['gpu_hits'] / total if total > 0 else 0,
             'coarse_computes': self.stats['coarse_computes'],
             'fine_computes': self.stats['fine_computes'],
+            'cache_hits': self.stats['cache_hits'],
+            'cache_refreshes': self.stats['cache_refreshes'],
+            'cache_hit_rate': self.stats['cache_hits'] / total if total > 0 else 0,
             'gpu_memory_mb': len(self.shared_memory) * 0.1  # 估算
         }
 
@@ -397,6 +429,8 @@ class VirtualBlackwellAdapter:
         print(f"  粗部计算: {vgpu['coarse_computes']} (FP4)")
         print(f"  细部计算: {vgpu['fine_computes']} (INT4)")
         print(f"  GPU命中率: {vgpu['gpu_hit_rate']:.1%}")
+        print(f"  精度缓存: {vgpu['cache_hits']}/{vgpu['total']} ({vgpu['cache_hit_rate']:.1%})")
+        print(f"  缓存刷新: {vgpu['cache_refreshes']} 次")
         print(f"  共享内存: {vgpu['gpu_memory_mb']:.1f} MB")
 
         fp4 = stats['layer2_fp4']
