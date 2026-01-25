@@ -308,7 +308,10 @@ class VirtualBlackwellAdapter:
             'precision': '精度优先'
         }.get(mode, mode)
 
-        print(f"[虚拟Blackwell] 模式={mode_desc}, FP4={'启用' if enable_fp4 and HAS_FP4 else '禁用'}, BOH量化={'启用' if enable_quantization else '禁用'}")
+        try:
+            print(f"[虚拟Blackwell] 模式={mode_desc}, FP4={'启用' if enable_fp4 and HAS_FP4 else '禁用'}, BOH量化={'启用' if enable_quantization else '禁用'}")
+        except (OSError, IOError):
+            pass  # 环境中stdout不可用时静默失败
 
     def register_weight(self, weight_id: str, weight: torch.Tensor, priority: int = 5):
         # Layer 2: 预编码为FP4（粗部）

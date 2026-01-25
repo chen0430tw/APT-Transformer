@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/home/user/APT-Transformer/test_refactored_vb.py", line 12, in <module>
+    print("="*80)
+OSError: [Errno 9] Bad file descriptor
