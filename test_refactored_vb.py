@@ -46,15 +46,16 @@ vb_adapter.register_weight('test_layer', W)
 
 # 标准计算
 start = time.time()
-Y_standard = W @ X.view(-1, d_model).T
-Y_standard = Y_standard.T.view(batch_size, seq_len, d_ff)
+X_2d = X.view(-1, d_model)  # (batch*seq, d_model)
+Y_standard = (W @ X_2d.T).T  # (d_ff, d_model) @ (d_model, batch*seq) = (d_ff, batch*seq) -> (batch*seq, d_ff)
+Y_standard = Y_standard.view(batch_size, seq_len, d_ff)
 standard_time = time.time() - start
 
 # VB计算
 start = time.time()
-X_2d = X.view(-1, d_model)
-Y_vb = vb_adapter.compress(W, X_2d, weight_id='test_layer')
-Y_vb = Y_vb.T.view(batch_size, seq_len, d_ff)
+Y_vb = vb_adapter.compress(W, X_2d.T, weight_id='test_layer')  # W @ X.T
+Y_vb = Y_vb.T  # (d_ff, batch*seq) -> (batch*seq, d_ff)
+Y_vb = Y_vb.view(batch_size, seq_len, d_ff)
 vb_time = time.time() - start
 
 # 计算误差
@@ -117,12 +118,21 @@ for key in mem_keys:
 print(f"[OK] 共享内存正常" if len(mem_keys) > 0 else "[X] 共享内存为空")
 print()
 
-# 测试5: 多层计算
+# 测试5: 多层计算（模拟神经网络）
 print("测试 5: 多层计算（模拟神经网络）")
 print("-" * 80)
 
 num_layers = 4
-layers_W = [torch.randn(d_ff, d_model).to(device) for _ in range(num_layers)]
+# 创建 d_model -> d_ff -> d_model 的交替层结构
+layers_W = []
+for i in range(num_layers):
+    if i % 2 == 0:
+        # d_model -> d_ff
+        layers_W.append(torch.randn(d_ff, d_model).to(device))
+    else:
+        # d_ff -> d_model
+        layers_W.append(torch.randn(d_model, d_ff).to(device))
+
 X_input = torch.randn(batch_size, seq_len, d_model).to(device)
 
 # 注册所有层
@@ -131,13 +141,17 @@ for i, W_layer in enumerate(layers_W):
 
 # 多层前向传播
 start = time.time()
-X_current = X_input.view(-1, d_model)
+X_current = X_input.view(-1, d_model).T  # (d_model, batch*seq)
 for i, W_layer in enumerate(layers_W):
     Y = vb_adapter.compress(W_layer, X_current, weight_id=f'layer_{i}')
-    X_current = Y.T  # 输出作为下一层输入
+    X_current = Y  # (out_dim, batch*seq) -> 下一层输入
 multi_layer_time = time.time() - start
 
+# 验证最终输出维度
+final_output = X_current.T.view(batch_size, seq_len, d_model)
+
 print(f"层数: {num_layers}")
+print(f"最终输出形状: {final_output.shape} (应为 ({batch_size}, {seq_len}, {d_model}))")
 print(f"总计算时间: {multi_layer_time*1000:.2f} ms")
 print(f"每层平均时间: {multi_layer_time*1000/num_layers:.2f} ms")
 print(f"共享内存条目: {len(vb_adapter.vgpu.shared_memory)}")
