@@ -174,6 +174,13 @@ if TORCH_AVAILABLE:
 
         def _replace_module(self, name: str, module: nn.Linear):
             """替换单个模块（优化5: 优化权重复制和设备转移）"""
+            # 优化8: 跳过超大层（>10M参数），避免精度分离开销
+            n_params = module.in_features * module.out_features
+            if n_params > 10_000_000:
+                if self.verbose:
+                    safe_print(f"[跳过] {name} ({module.in_features} -> {module.out_features}, {n_params/1e6:.1f}M 参数) - 超大层保持原始计算")
+                return  # 不替换，保留原始nn.Linear
+
             device = module.weight.device
 
             # 创建VB层（先在CPU上，避免重复CUDA分配）
