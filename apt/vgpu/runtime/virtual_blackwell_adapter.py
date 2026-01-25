@@ -50,26 +50,42 @@ class PrecisionSeparator:
         sign = torch.sign(tensor)
         eps = 1e-10
 
-        # 策略1: 超大层（>5M参数）- 跳过精度分离，使用简化量化
+        # 策略1: 超大层（>5M参数）- 使用简化等距量化
         if n_elements > 5_000_000:
-            # 直接使用8-bit量化，跳过复杂的精度分离
+            # 使用等距分位数（避免复杂的quantile计算）
             max_val = abs_tensor.max()
             if max_val == 0:
                 max_val = eps
 
-            # 简单的8-bit量化（0-255级别）
-            scale = max_val / 127.0
-            quantized = torch.clamp((abs_tensor / scale).round(), 0, 127).to(torch.int8)
-
-            # 使用简化的分位数（等距分布）
+            # 创建16个等距分位点
             quantiles = torch.linspace(0, max_val.item(), 16, device=tensor.device)
 
+            # 将值映射到0-15的级别（使用简单的线性映射）
+            # 避免使用searchsorted，直接计算级别
+            coarse_level = torch.clamp(
+                (abs_tensor * 15.0 / max_val).round(),
+                0, 15
+            ).to(torch.int8)
+
+            # 重建粗部值（使用量化级别）
+            coarse_values = quantiles[coarse_level.long()]
+            coarse = coarse_values * sign
+
+            # 计算残差
+            residual = tensor - coarse
+
+            # 简化的fine量化
+            fine_scale = residual.abs().max() / 7.5
+            if fine_scale == 0:
+                fine_scale = eps
+            fine_level = torch.clamp((residual / fine_scale).round(), -7, 7).to(torch.int8)
+
             return {
-                'coarse': quantized,
+                'coarse': coarse_level,
                 'coarse_quantiles': quantiles,
-                'fine': torch.zeros_like(quantized),
+                'fine': fine_level,
                 'sign': sign,
-                'fine_scale': torch.tensor(scale, device=tensor.device)
+                'fine_scale': fine_scale if isinstance(fine_scale, torch.Tensor) else torch.tensor(fine_scale, device=tensor.device)
             }
 
         # 策略2和3: 大层和小层 - 计算分位数（使用缓存或采样）
@@ -103,16 +119,16 @@ class PrecisionSeparator:
             indices = torch.randperm(n_elements, device=abs_flat.device)[:sample_size]
             sampled = abs_flat[indices]
 
-            # 对采样数据进行量化
-            sampled_levels = torch.searchsorted(quantiles, sampled, right=False)
-            sampled_levels = torch.clamp(sampled_levels, 0, 15)
+            # 对采样数据进行量化（使用right=True避免索引16）
+            sampled_levels = torch.searchsorted(quantiles, sampled, right=True)
+            # 确保索引在有效范围[0, 15]内
+            sampled_levels = torch.clamp(sampled_levels, 0, 15).to(torch.int8)
 
-            # 创建完整的量化结果（使用采样结果的众数）
+            # 创建完整的量化结果
             coarse_level = torch.zeros(n_elements, dtype=torch.int8, device=tensor.device)
-            coarse_level[indices] = sampled_levels.to(torch.int8)
+            coarse_level[indices] = sampled_levels
 
-            # 对未采样位置使用最近的量化级别填充
-            # 简化处理：使用中位数级别
+            # 对未采样位置使用中位数级别填充
             median_level = sampled_levels.median().to(torch.int8)
             mask = torch.ones(n_elements, dtype=torch.bool, device=tensor.device)
             mask[indices] = False
@@ -120,9 +136,10 @@ class PrecisionSeparator:
 
             coarse_level = coarse_level.reshape(abs_tensor.shape)
         else:
-            # 小层：完整量化
+            # 小层：完整量化（使用right=True避免索引16）
             abs_flat_for_search = abs_tensor.flatten()
-            coarse_level_flat = torch.searchsorted(quantiles, abs_flat_for_search, right=False)
+            coarse_level_flat = torch.searchsorted(quantiles, abs_flat_for_search, right=True)
+            # 确保索引在有效范围[0, 15]内
             coarse_level_flat = torch.clamp(coarse_level_flat, 0, 15)
             coarse_level = coarse_level_flat.reshape(abs_tensor.shape).to(torch.int8)
 
