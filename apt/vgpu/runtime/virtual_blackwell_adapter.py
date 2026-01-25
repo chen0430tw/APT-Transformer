@@ -36,23 +36,55 @@ class PrecisionSeparator:
         分离精度：
         粗部(coarse) - FP4 存储大数（指数 + 符号 + 高位尾数）
         细部(fine) - INT4 存储小数（低位尾数）
+
+        优化版本：提高量化精度
         """
         abs_tensor = torch.abs(tensor)
         sign = torch.sign(tensor)
 
-        # 粗部：量化到 16 个离散级别 (FP4)
-        eps = 1e-8
-        log_scale = torch.log2(abs_tensor + eps)
-        coarse_level = torch.clamp(log_scale + 8, 0, 15).to(torch.int8)
-        coarse = (2.0 ** (coarse_level - 8)) * sign
+        # 粗部：使用更精细的量化到 16 个离散级别 (FP4)
+        eps = 1e-10
+
+        # 使用分位数而不是对数刻度，更好地适应权重分布
+        abs_flat = abs_tensor.flatten()
+        abs_flat_sorted = torch.sort(abs_flat).values
+        n = len(abs_flat_sorted)
+
+        # 为16个级别选择分位点
+        quantiles = []
+        for i in range(16):
+            idx = min(int(i * n / 16), n - 1)
+            quantiles.append(abs_flat_sorted[idx].item())
+        quantiles = torch.tensor(quantiles, device=tensor.device)
+
+        # 找到每个值最近的量化级别
+        coarse_level = torch.zeros_like(abs_tensor, dtype=torch.int8)
+        for i in range(15):
+            mask = (abs_tensor >= quantiles[i]) & (abs_tensor < quantiles[i + 1])
+            coarse_level[mask] = i
+        coarse_level[abs_tensor >= quantiles[15]] = 15
+
+        # 重建粗部值
+        coarse_values = quantiles[coarse_level.long()]
+        coarse = coarse_values * sign
 
         # 细部：残差量化到 16 个级别 (INT4)
         residual = tensor - coarse
-        fine_scale = residual.abs().max() / 15.0 if residual.abs().max() > 0 else 1.0
-        fine_level = torch.clamp((residual / (fine_scale + eps)).round(), -7, 7).to(torch.int8)
+
+        # 使用局部缩放因子（每行一个scale）提高精度
+        if len(residual.shape) == 2:
+            fine_scale = residual.abs().max(dim=1, keepdim=True).values / 7.5
+            fine_scale = torch.clamp(fine_scale, min=eps)
+        else:
+            fine_scale = residual.abs().max() / 7.5
+            if fine_scale == 0:
+                fine_scale = eps
+
+        fine_level = torch.clamp((residual / fine_scale).round(), -7, 7).to(torch.int8)
 
         return {
             'coarse': coarse_level,
+            'coarse_quantiles': quantiles,
             'fine': fine_level,
             'sign': sign,
             'fine_scale': fine_scale
@@ -62,12 +94,14 @@ class PrecisionSeparator:
     def combine(separated: Dict) -> torch.Tensor:
         """组合粗部和细部恢复张量"""
         coarse_level = separated['coarse']
+        coarse_quantiles = separated['coarse_quantiles']
         fine_level = separated['fine']
         sign = separated['sign']
         fine_scale = separated['fine_scale']
 
         # 恢复粗部
-        coarse = (2.0 ** (coarse_level - 8)) * sign
+        coarse_values = coarse_quantiles[coarse_level.long()]
+        coarse = coarse_values * sign
 
         # 恢复细部
         fine = fine_level.float() * fine_scale
