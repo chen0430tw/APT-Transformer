@@ -18,6 +18,13 @@ if TORCH_AVAILABLE:
     from typing import Optional, Dict
     from apt.vgpu.runtime.virtual_blackwell_adapter import create_virtual_blackwell
 
+    def safe_print(*args, **kwargs):
+        """安全的print函数，在stdout不可用时静默失败"""
+        try:
+            print(*args, **kwargs)
+        except (OSError, IOError):
+            pass  # stdout不可用时不报错
+
 
     class VBOptimizedLinear(nn.Module):
         """使用虚拟Blackwell优化的线性层（Flash Attention + FP4加速）"""
@@ -149,14 +156,14 @@ if TORCH_AVAILABLE:
 
             total = len(linear_layers)
             if self.verbose and total > 10:
-                print(f"\n[初始化] 发现 {total} 个线性层，开始替换为虚拟Blackwell...")
+                safe_print(f"\n[初始化] 发现 {total} 个线性层，开始替换为虚拟Blackwell...")
 
             for idx, (name, module) in enumerate(linear_layers, 1):
                 self._replace_module(name, module)
 
                 # 优化7: 对大模型显示进度百分比
                 if self.verbose and total > 50 and idx % 10 == 0:
-                    print(f"[进度] {idx}/{total} ({idx/total*100:.0f}%)")
+                    safe_print(f"[进度] {idx}/{total} ({idx/total*100:.0f}%)")
 
         def _replace_large_linear(self, threshold: int = 512):
             """只替换大型线性层"""
@@ -209,9 +216,9 @@ if TORCH_AVAILABLE:
                 # 优化5b: 显示参数量帮助用户了解进度
                 params = module.in_features * module.out_features
                 if params > 1_000_000:
-                    print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features}, {params/1e6:.1f}M 参数)")
+                    safe_print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features}, {params/1e6:.1f}M 参数)")
                 else:
-                    print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
+                    safe_print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
 
         def _get_parent_and_attr(self, name: str):
             """获取父模块和属性名"""
@@ -242,9 +249,9 @@ if TORCH_AVAILABLE:
 
         def print_all_stats(self):
             """打印所有统计信息"""
-            print("\n" + "="*70)
-            print("虚拟Blackwell优化统计 - 全局汇总 (Flash Attention + FP4)")
-            print("="*70)
+            safe_print("\n" + "="*70)
+            safe_print("虚拟Blackwell优化统计 - 全局汇总 (Flash Attention + FP4)")
+            safe_print("="*70)
 
             all_stats = self.get_all_stats()
 
@@ -265,23 +272,23 @@ if TORCH_AVAILABLE:
                     total_fp4_hits += fp4.get('fp4_hits', 0)
                     total_fp4_calls += fp4.get('total_calls', 0)
 
-            print(f"\n已优化层数: {len(self.replaced_layers)}")
-            print(f"总GPU命中: {total_gpu_hits}/{total_accesses} " +
+            safe_print(f"\n已优化层数: {len(self.replaced_layers)}")
+            safe_print(f"总GPU命中: {total_gpu_hits}/{total_accesses} " +
                   f"({total_gpu_hits/total_accesses*100:.1f}%)" if total_accesses > 0 else "")
-            print(f"总FP4命中: {total_fp4_hits}/{total_fp4_calls} " +
+            safe_print(f"总FP4命中: {total_fp4_hits}/{total_fp4_calls} " +
                   f"({total_fp4_hits/total_fp4_calls*100:.1f}%)" if total_fp4_calls > 0 else "")
 
-            print("\n详细统计:")
+            safe_print("\n详细统计:")
             for name in self.replaced_layers[:5]:  # 只显示前5个
                 module = dict(self.model.named_modules())[name]
                 if isinstance(module, VBOptimizedLinear):
-                    print(f"\n[{name}]")
+                    safe_print(f"\n[{name}]")
                     module.print_stats()
 
             if len(self.replaced_layers) > 5:
-                print(f"\n... 还有 {len(self.replaced_layers)-5} 个优化层未显示")
+                safe_print(f"\n... 还有 {len(self.replaced_layers)-5} 个优化层未显示")
 
-            print("="*70 + "\n")
+            safe_print("="*70 + "\n")
 
 
     def enable_vb_optimization(model: nn.Module, mode: str = 'training',
@@ -305,14 +312,14 @@ if TORCH_AVAILABLE:
             model = APTLargeModel(config)
             model = enable_vb_optimization(model, mode='training')
         """
-        print("\n" + "="*70)
-        print("启用虚拟Blackwell优化 (Flash Attention + FP4)")
-        print("="*70)
-        print(f"模式: {mode}")
-        print(f"FP4量化: {'启用' if enable_fp4 else '禁用'}")
-        print(f"BOH协议量化: {'启用' if enable_quantization else '禁用'}")
-        print(f"替换策略: {replace_pattern}")
-        print()
+        safe_print("\n" + "="*70)
+        safe_print("启用虚拟Blackwell优化 (Flash Attention + FP4)")
+        safe_print("="*70)
+        safe_print(f"模式: {mode}")
+        safe_print(f"FP4量化: {'启用' if enable_fp4 else '禁用'}")
+        safe_print(f"BOH协议量化: {'启用' if enable_quantization else '禁用'}")
+        safe_print(f"替换策略: {replace_pattern}")
+        safe_print()
 
         wrapper = VBModelWrapper(
             model,
@@ -322,8 +329,8 @@ if TORCH_AVAILABLE:
             replace_pattern=replace_pattern
         )
 
-        print(f"\n[OK] 成功替换 {len(wrapper.replaced_layers)} 个线性层")
-        print("="*70 + "\n")
+        safe_print(f"\n[OK] 成功替换 {len(wrapper.replaced_layers)} 个线性层")
+        safe_print("="*70 + "\n")
 
         return wrapper
 
