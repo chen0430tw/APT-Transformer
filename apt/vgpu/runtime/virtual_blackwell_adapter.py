@@ -58,7 +58,7 @@ class PrecisionSeparator:
             quantiles = torch.quantile(abs_flat, q_points)
 
             # 确保quantiles单调递增（避免数值误差）
-            quantiles = torch.maximum.accumulate(quantiles, dim=0)[0]
+            quantiles = torch.cummax(quantiles, dim=0).values
 
         # 优化2: 向量化量化级别计算，避免15次循环
         # 使用 searchsorted 找到最近的量化级别
