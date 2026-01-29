@@ -32,7 +32,8 @@ if TORCH_AVAILABLE:
         def __init__(self, in_features: int, out_features: int,
                      mode: str = 'auto', bias: bool = True,
                      enable_quantization: bool = True,
-                     enable_fp4: bool = True):
+                     enable_fp4: bool = True,
+                     pulse_interval: int = 20):
             """
             Args:
                 in_features: 输入维度
@@ -41,6 +42,7 @@ if TORCH_AVAILABLE:
                 bias: 是否使用bias
                 enable_quantization: 是否启用BOH协议量化 (Layer 3)
                 enable_fp4: 是否启用FP4量化 (Layer 2)
+                pulse_interval: 脉冲间隔（每N次forward执行1次VB）
             """
             super().__init__()
             self.in_features = in_features
@@ -53,6 +55,7 @@ if TORCH_AVAILABLE:
             self.mode = mode
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
+            self.pulse_interval = pulse_interval
             self.vb_adapter = None  # 延迟创建
             self.layer_id = f'linear_{id(self)}'
             self._registered = False
@@ -64,7 +67,8 @@ if TORCH_AVAILABLE:
                 self.vb_adapter = create_virtual_blackwell(
                     mode=self.mode,
                     enable_quantization=self.enable_quantization,
-                    enable_fp4=self.enable_fp4
+                    enable_fp4=self.enable_fp4,
+                    pulse_interval=self.pulse_interval
                 )
 
             # 注册权重（仅首次）- 直接使用tensor
@@ -121,7 +125,8 @@ if TORCH_AVAILABLE:
                      enable_quantization: bool = True,
                      enable_fp4: bool = True,
                      replace_pattern: str = 'all',
-                     verbose: bool = True):
+                     verbose: bool = True,
+                     pulse_interval: int = 20):
             """
             Args:
                 model: 原始模型
@@ -130,6 +135,7 @@ if TORCH_AVAILABLE:
                 enable_fp4: 是否启用FP4量化 (Layer 2)
                 replace_pattern: 替换模式 ('all', 'large', 'custom')
                 verbose: 是否显示详细进度
+                pulse_interval: 脉冲间隔（每N次forward执行1次VB）
             """
             super().__init__()
             self.model = model
@@ -137,6 +143,7 @@ if TORCH_AVAILABLE:
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
             self.verbose = verbose
+            self.pulse_interval = pulse_interval
             self.replaced_layers = []  # 层名列表
             self.replaced_modules = {}  # {name: module} 映射，避免重复遍历
 
@@ -190,7 +197,8 @@ if TORCH_AVAILABLE:
                 mode=self.mode,
                 bias=module.bias is not None,
                 enable_quantization=self.enable_quantization,
-                enable_fp4=self.enable_fp4
+                enable_fp4=self.enable_fp4,
+                pulse_interval=self.pulse_interval
             )
 
             # 优化5a: 使用set_方法避免额外内存分配

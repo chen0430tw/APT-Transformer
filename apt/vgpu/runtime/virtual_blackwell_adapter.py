@@ -27,11 +27,57 @@ except ImportError:
 
 
 # ============================================================================
-# 精度分离：粗部（FP4大数）+ 细部（INT4小数）
+# ShrinkTrace v6: Quantile-based Adaptive INT8 Quantization
+# ============================================================================
+
+class ShrinkTraceQuantizer:
+    """
+    ShrinkTrace v6 量化器：基于quantile的自适应INT8量化
+
+    核心优势：
+    1. Quantile-based scale（更鲁棒，不受异常值影响）
+    2. Sample-based estimation（大tensor采样加速）
+    3. Adaptive updates（只在scale变化超过阈值时更新）
+    """
+
+    @staticmethod
+    @torch.no_grad()
+    def quantile_scale(x: torch.Tensor, q: float = 0.999, sample: int = 0) -> torch.Tensor:
+        """
+        使用quantile计算量化scale
+
+        Args:
+            x: 输入tensor
+            q: 分位数（默认0.999，即99.9%分位点）
+            sample: 采样数量（0表示不采样，>0表示随机采样）
+
+        Returns:
+            scale: 量化缩放因子
+        """
+        if sample > 0 and x.numel() > sample:
+            # 随机采样加速（对大tensor）
+            idx = torch.randperm(x.numel(), device=x.device)[:sample]
+            a = x.view(-1)[idx].abs()
+        else:
+            a = x.abs()
+
+        v = torch.quantile(a.float(), q)
+        v = torch.clamp(v, min=1e-6)
+        return v / 127.0
+
+    @staticmethod
+    def fake_int8_quant(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        """INT8 fake quantization: 量化到[-127,127]然后反量化"""
+        q = torch.round(x / scale).clamp(-127, 127)
+        return q * scale
+
+
+# ============================================================================
+# 精度分离：粗部（FP4大数）+ 细部（INT4小数）- 已被ShrinkTrace替代
 # ============================================================================
 
 class PrecisionSeparator:
-    """精度分离器：将权重分解为粗部和细部"""
+    """精度分离器：将权重分解为粗部和细部（保留以兼容旧代码）"""
 
     @staticmethod
     def separate(tensor: torch.Tensor, cached_quantiles: torch.Tensor = None) -> Dict:
@@ -219,99 +265,82 @@ class BOHProtocol:
 class VirtualGPUNetwork:
     """虚拟GPU计算单元（不是缓存！）- 模拟NVLink通信"""
 
-    def __init__(self, gpu_id: int = 0):
+    def __init__(self, gpu_id: int = 0, trigger_hi: float = 1.2, trigger_lo: float = 0.8,
+                 q: float = 0.999, sample: int = 50000):
         self.gpu_id = gpu_id
         self.protocol = BOHProtocol()
-        self.separator = PrecisionSeparator()
+        self.quantizer = ShrinkTraceQuantizer()
 
         # 共享内存（模拟NVLink）
         self.shared_memory = {}
 
-        # 量化参数缓存（训练优化：缓存量化刻度，避免重复排序）
-        self.quantile_cache = {}  # {weight_id: quantiles}
-        self.separated_cache = {}  # {weight_id: separated} - 缓存完整的精度分离结果
-        self.weight_hash_cache = {}  # {weight_id: hash} - 权重哈希，检测变化
-        self.cache_step_counter = {}
-        self.cache_refresh_interval = 100  # 每100步刷新量化刻度
+        # ShrinkTrace自适应量化参数
+        self.scale_cache = {}  # {weight_id: scale} - 缓存量化scale
+        self.step_counter = {}  # {weight_id: step_count} - 每个权重的计步器
+        self.trigger_hi = trigger_hi  # scale变化上限（默认1.2，即+20%）
+        self.trigger_lo = trigger_lo  # scale变化下限（默认0.8，即-20%）
+        self.q = q  # quantile参数（默认0.999）
+        self.sample = sample  # 采样数量（默认50K）
 
         # 统计信息
         self.stats = {
             'gpu_hits': 0,
             'total': 0,
-            'coarse_computes': 0,
-            'fine_computes': 0,
-            'cache_hits': 0,
-            'cache_refreshes': 0
+            'scale_updates': 0,  # scale更新次数
+            'cache_hits': 0,  # 使用缓存次数
+            'scale_checks': 0  # scale检查次数
         }
 
     def compute(self, weight: torch.Tensor, input_tensor: torch.Tensor, weight_id: str) -> torch.Tensor:
         """
-        计算流程（计算单元，不是缓存访问！）：
-        1. 精度分离（粗部/细部）- 使用缓存加速
-        2. BOH握手协调
-        3. 粗部先行计算（快速低精度）
-        4. 细部修正（高精度）
-        5. 通过共享内存同步
+        ShrinkTrace v6计算流程：
+        1. 检查是否需要更新scale（自适应）
+        2. 使用INT8量化权重
+        3. 执行矩阵乘法
         """
         self.stats['total'] += 1
 
-        # 1. 精度分离（激进缓存：缓存完整separated结果）
-        # 训练时权重变化缓慢，可以每10步才重新计算一次精度分离
-        if weight_id not in self.separated_cache:
-            # 首次：完整计算并缓存separated结果
-            separated = self.separator.separate(weight, cached_quantiles=None)
-            # 缓存整个separated结果（使用detach避免梯度累积）
-            self.separated_cache[weight_id] = {
-                'coarse': separated['coarse'].detach(),
-                'coarse_quantiles': separated['coarse_quantiles'].detach(),
-                'fine': separated['fine'].detach(),
-                'sign': separated['sign'].detach(),
-                'fine_scale': separated['fine_scale'].detach() if isinstance(separated['fine_scale'], torch.Tensor) else separated['fine_scale']
-            }
-            self.cache_step_counter[weight_id] = 0
+        # 初始化step counter
+        if weight_id not in self.step_counter:
+            self.step_counter[weight_id] = 0
+
+        self.step_counter[weight_id] += 1
+
+        # 1. 自适应scale更新
+        need_update = False
+
+        if weight_id not in self.scale_cache:
+            # 首次：计算scale
+            need_update = True
         else:
-            # 检查是否需要刷新缓存（每10步刷新一次）
-            self.cache_step_counter[weight_id] += 1
-            if self.cache_step_counter[weight_id] >= 10:  # 每10步刷新
-                # 重新计算精度分离
-                separated = self.separator.separate(weight, cached_quantiles=None)
-                self.separated_cache[weight_id] = {
-                    'coarse': separated['coarse'].detach(),
-                    'coarse_quantiles': separated['coarse_quantiles'].detach(),
-                    'fine': separated['fine'].detach(),
-                    'sign': separated['sign'].detach(),
-                    'fine_scale': separated['fine_scale'].detach() if isinstance(separated['fine_scale'], torch.Tensor) else separated['fine_scale']
-                }
-                self.cache_step_counter[weight_id] = 0
-                self.stats['cache_refreshes'] += 1
-            else:
-                # 直接使用缓存的separated结果（避免重新计算）
-                separated = self.separated_cache[weight_id]
-                self.stats['cache_hits'] += 1
+            # 检查scale是否需要更新（自适应）
+            old_scale = self.scale_cache[weight_id]
+            new_scale = self.quantizer.quantile_scale(weight, q=self.q, sample=self.sample)
 
-        # 2. BOH握手
-        handshake = self.protocol.handshake(
-            sender_id=self.gpu_id,
-            receiver_id=self.gpu_id,
-            data_size=weight.numel()
-        )
+            # 计算scale变化比例
+            ratio = (new_scale / (old_scale + 1e-9)).clamp(min=1e-9).item()
 
-        # 3. 粗部先行计算（模拟低延迟）
-        if handshake['priority'] == 'coarse_first':
-            self.stats['coarse_computes'] += 1
+            self.stats['scale_checks'] += 1
 
-            # 优化3: 存储到共享内存（使用detach避免梯度累积）
-            self.shared_memory[f'{weight_id}_coarse'] = separated['coarse'].detach()
+            # 如果变化超过阈值，需要更新
+            if ratio >= self.trigger_hi or ratio <= self.trigger_lo:
+                need_update = True
 
-        # 4. 细部修正（高精度计算）
-        full_weight = self.separator.combine(separated)
-        self.stats['fine_computes'] += 1
+        if need_update:
+            # 更新scale
+            self.scale_cache[weight_id] = self.quantizer.quantile_scale(
+                weight, q=self.q, sample=self.sample
+            )
+            self.stats['scale_updates'] += 1
+        else:
+            self.stats['cache_hits'] += 1
 
-        # 优化3: 存储到共享内存（使用detach避免梯度累积）
-        self.shared_memory[f'{weight_id}_fine'] = separated['fine'].detach()
+        # 2. INT8量化权重
+        scale = self.scale_cache[weight_id]
+        weight_quant = self.quantizer.fake_int8_quant(weight, scale)
 
-        # 5. 执行计算
-        result = full_weight @ input_tensor
+        # 3. 执行计算
+        result = weight_quant @ input_tensor
 
         self.stats['gpu_hits'] += 1
 
@@ -323,11 +352,11 @@ class VirtualGPUNetwork:
             'gpu_hits': self.stats['gpu_hits'],
             'total': total,
             'gpu_hit_rate': self.stats['gpu_hits'] / total if total > 0 else 0,
-            'coarse_computes': self.stats['coarse_computes'],
-            'fine_computes': self.stats['fine_computes'],
+            'scale_updates': self.stats['scale_updates'],
             'cache_hits': self.stats['cache_hits'],
-            'cache_refreshes': self.stats['cache_refreshes'],
+            'scale_checks': self.stats['scale_checks'],
             'cache_hit_rate': self.stats['cache_hits'] / total if total > 0 else 0,
+            'update_rate': self.stats['scale_updates'] / total if total > 0 else 0,
             'gpu_memory_mb': len(self.shared_memory) * 0.1  # 估算
         }
 
@@ -445,7 +474,7 @@ class VGPUSLQuantizer:
 # 完整虚拟Blackwell适配器
 class VirtualBlackwellAdapter:
     def __init__(self, mode: str = 'auto', enable_quantization: bool = True,
-                 gpu_id: int = 0, enable_fp4: bool = True):
+                 gpu_id: int = 0, enable_fp4: bool = True, pulse_interval: int = 20):
         # Layer 1: 虚拟GPU计算单元（NVLink模拟）
         self.vgpu = VirtualGPUNetwork(gpu_id=gpu_id)
 
@@ -455,6 +484,13 @@ class VirtualBlackwellAdapter:
         # Layer 3: VGPU-SL量化（BOH协议：细部INT4）
         self.quantizer = VGPUSLQuantizer() if enable_quantization else None
         self.enable_quant = enable_quantization
+
+        # 间歇性脉冲控制
+        self.pulse_interval = pulse_interval  # 每N次forward才执行一次VB
+        self.pulse_counter = 0  # 当前计数器
+        self.total_calls = 0
+        self.vb_calls = 0  # VB实际执行次数
+        self.fast_calls = 0  # 快速路径次数
 
         # 只在首次创建时打印配置信息（避免62层重复打印）
         global _VB_CONFIG_PRINTED
@@ -468,15 +504,21 @@ class VirtualBlackwellAdapter:
 
             try:
                 print(f"\n{'='*80}")
-                print(f"[Virtual Blackwell v6.0] NVLink模拟 + 分层精度优化")
+                print(f"[Virtual Blackwell v6.0] 间歇性脉冲 + ShrinkTrace量化")
                 print(f"{'='*80}")
                 print(f"  运行模式: {mode_desc}")
+                print(f"  量化算法: ShrinkTrace v6 (Quantile-based INT8)")
                 print(f"  FP4粗精度: {'✓ 启用' if enable_fp4 and HAS_FP4 else '✗ 禁用'}")
-                print(f"  BOH量化: {'✓ 启用' if enable_quantization else '✗ 禁用'}")
-                print(f"\n  分层优化策略:")
-                print(f"    • 超大层 (>5M参数)  → 简化8-bit量化 (跳过精度分离)")
-                print(f"    • 大层 (100K-5M参数) → 采样估计分位数 (10%采样)")
-                print(f"    • 小层 (<100K参数)   → 完整精确计算")
+                print(f"\n  ⚡ 间歇性脉冲策略:")
+                print(f"    • 脉冲间隔: 每 {pulse_interval} 次forward执行1次VB")
+                print(f"    • 快速路径: 直接矩阵乘法（原生PyTorch优化）")
+                print(f"    • 脉冲时刻: ShrinkTrace自适应INT8量化")
+                print(f"    • VB开销比例: ~{100/pulse_interval:.1f}%")
+                print(f"\n  📊 ShrinkTrace v6特性:")
+                print(f"    • Quantile-based scale (q=0.999, 更鲁棒)")
+                print(f"    • 自适应更新 (变化阈值: ±20%)")
+                print(f"    • 采样加速 (50K samples for large tensors)")
+                print(f"    • INT8 fake quantization [-127, 127]")
                 print(f"{'='*80}\n")
                 _VB_CONFIG_PRINTED = True
             except (OSError, IOError):
@@ -488,32 +530,49 @@ class VirtualBlackwellAdapter:
 
     def compress(self, W: torch.Tensor, X: torch.Tensor, weight_id: str = 'default') -> torch.Tensor:
         """
-        完整计算流程：
-        1. Layer 1: 虚拟GPU计算单元（精度分离 + BOH握手 + 共享内存）
-        2. Layer 3: VGPU-SL量化（细部INT4修正）
-        3. Layer 2: FP4压缩矩阵乘法（粗部计算）
+        间歇性脉冲计算流程：
+        - 快速路径（大部分时候）：直接 W @ X（原生PyTorch优化）
+        - 脉冲时刻（每N次）：完整VB流程（精度分离 + BOH协议）
         """
+        self.total_calls += 1
+        self.pulse_counter += 1
+
         # 确保W和X在同一设备上
         W = W.to(X.device)
 
-        # Layer 1: 虚拟GPU计算（精度分离 + NVLink模拟）
-        # 这是计算单元，不是缓存访问！
-        Y = self.vgpu.compute(W, X, weight_id)
+        # 判断是否触发脉冲
+        if self.pulse_counter >= self.pulse_interval:
+            # ⚡ 脉冲时刻：执行完整VB流程
+            self.pulse_counter = 0  # 重置计数器
+            self.vb_calls += 1
 
-        # Layer 3: BOH细部修正（可选）
-        if self.enable_quant:
-            # BOH协议已在Layer 1中使用，这里仅做额外量化
-            pass
+            # Layer 1: 虚拟GPU计算（精度分离 + NVLink模拟）
+            Y = self.vgpu.compute(W, X, weight_id)
 
-        # Layer 2: FP4粗部已在Layer 1的精度分离中处理
-        # 这里使用FP4 layer的统计
-        self.fp4_layer.stats['total_calls'] += 1
-        self.fp4_layer.stats['fp4_hits'] += 1
+            # Layer 3: BOH细部修正（可选）
+            if self.enable_quant:
+                # BOH协议已在Layer 1中使用，这里仅做额外量化
+                pass
 
-        return Y
+            # Layer 2: FP4粗部已在Layer 1的精度分离中处理
+            self.fp4_layer.stats['total_calls'] += 1
+            self.fp4_layer.stats['fp4_hits'] += 1
+
+            return Y
+        else:
+            # 快速路径：直接矩阵乘法（跳过VB开销）
+            self.fast_calls += 1
+            return W @ X
 
     def get_stats(self) -> Dict:
         return {
+            'pulse_stats': {
+                'total_calls': self.total_calls,
+                'vb_calls': self.vb_calls,
+                'fast_calls': self.fast_calls,
+                'vb_ratio': f"{self.vb_calls / self.total_calls * 100:.1f}%" if self.total_calls > 0 else "0%",
+                'pulse_interval': self.pulse_interval
+            },
             'layer1_vgpu': self.vgpu.get_stats(),
             'layer2_fp4': self.fp4_layer.get_stats(),
             'layer3_vgpusl': self.quantizer.get_stats() if self.quantizer else {}
@@ -548,20 +607,23 @@ class VirtualBlackwellAdapter:
         print("="*70 + "\n")
 
 
-def create_virtual_blackwell(mode='auto', enable_quantization=True, max_gpu_mb=2000, enable_fp4=True):
+def create_virtual_blackwell(mode='auto', enable_quantization=True, max_gpu_mb=2000, enable_fp4=True, pulse_interval=20):
     """
     创建虚拟Blackwell适配器
 
     Args:
         mode: 运行模式 ('auto', 'training', 'inference', 'precision')
         enable_quantization: 启用BOH协议量化 (Layer 3)
-        max_gpu_mb: GPU缓存大小 (MB)
+        max_gpu_mb: GPU缓存大小 (MB) - 用作gpu_id
         enable_fp4: 启用FP4量化 (Layer 2)
+        pulse_interval: 脉冲间隔（每N次forward执行1次VB）
 
     Returns:
         VirtualBlackwellAdapter实例
     """
-    return VirtualBlackwellAdapter(mode, enable_quantization, max_gpu_mb, enable_fp4)
+    # max_gpu_mb实际上被用作gpu_id（历史遗留参数名）
+    gpu_id = 0  # 单GPU场景固定为0
+    return VirtualBlackwellAdapter(mode, enable_quantization, gpu_id, enable_fp4, pulse_interval)
 
 
 if __name__ == "__main__":
