@@ -445,7 +445,7 @@ class VGPUSLQuantizer:
 # 完整虚拟Blackwell适配器
 class VirtualBlackwellAdapter:
     def __init__(self, mode: str = 'auto', enable_quantization: bool = True,
-                 gpu_id: int = 0, enable_fp4: bool = True):
+                 gpu_id: int = 0, enable_fp4: bool = True, pulse_interval: int = 20):
         # Layer 1: 虚拟GPU计算单元（NVLink模拟）
         self.vgpu = VirtualGPUNetwork(gpu_id=gpu_id)
 
@@ -455,6 +455,13 @@ class VirtualBlackwellAdapter:
         # Layer 3: VGPU-SL量化（BOH协议：细部INT4）
         self.quantizer = VGPUSLQuantizer() if enable_quantization else None
         self.enable_quant = enable_quantization
+
+        # 间歇性脉冲控制
+        self.pulse_interval = pulse_interval  # 每N次forward才执行一次VB
+        self.pulse_counter = 0  # 当前计数器
+        self.total_calls = 0
+        self.vb_calls = 0  # VB实际执行次数
+        self.fast_calls = 0  # 快速路径次数
 
         # 只在首次创建时打印配置信息（避免62层重复打印）
         global _VB_CONFIG_PRINTED
@@ -468,15 +475,16 @@ class VirtualBlackwellAdapter:
 
             try:
                 print(f"\n{'='*80}")
-                print(f"[Virtual Blackwell v6.0] NVLink模拟 + 分层精度优化")
+                print(f"[Virtual Blackwell v6.0] 间歇性脉冲模式")
                 print(f"{'='*80}")
                 print(f"  运行模式: {mode_desc}")
                 print(f"  FP4粗精度: {'✓ 启用' if enable_fp4 and HAS_FP4 else '✗ 禁用'}")
                 print(f"  BOH量化: {'✓ 启用' if enable_quantization else '✗ 禁用'}")
-                print(f"\n  分层优化策略:")
-                print(f"    • 超大层 (>5M参数)  → 简化8-bit量化 (跳过精度分离)")
-                print(f"    • 大层 (100K-5M参数) → 采样估计分位数 (10%采样)")
-                print(f"    • 小层 (<100K参数)   → 完整精确计算")
+                print(f"\n  ⚡ 间歇性脉冲策略:")
+                print(f"    • 脉冲间隔: 每 {pulse_interval} 次forward执行1次VB")
+                print(f"    • 快速路径: 直接矩阵乘法（原生PyTorch优化）")
+                print(f"    • 脉冲时刻: 完整VB流程（精度分离 + BOH协议）")
+                print(f"    • 开销比例: ~{100/pulse_interval:.1f}% (大幅降低)")
                 print(f"{'='*80}\n")
                 _VB_CONFIG_PRINTED = True
             except (OSError, IOError):
@@ -488,32 +496,49 @@ class VirtualBlackwellAdapter:
 
     def compress(self, W: torch.Tensor, X: torch.Tensor, weight_id: str = 'default') -> torch.Tensor:
         """
-        完整计算流程：
-        1. Layer 1: 虚拟GPU计算单元（精度分离 + BOH握手 + 共享内存）
-        2. Layer 3: VGPU-SL量化（细部INT4修正）
-        3. Layer 2: FP4压缩矩阵乘法（粗部计算）
+        间歇性脉冲计算流程：
+        - 快速路径（大部分时候）：直接 W @ X（原生PyTorch优化）
+        - 脉冲时刻（每N次）：完整VB流程（精度分离 + BOH协议）
         """
+        self.total_calls += 1
+        self.pulse_counter += 1
+
         # 确保W和X在同一设备上
         W = W.to(X.device)
 
-        # Layer 1: 虚拟GPU计算（精度分离 + NVLink模拟）
-        # 这是计算单元，不是缓存访问！
-        Y = self.vgpu.compute(W, X, weight_id)
+        # 判断是否触发脉冲
+        if self.pulse_counter >= self.pulse_interval:
+            # ⚡ 脉冲时刻：执行完整VB流程
+            self.pulse_counter = 0  # 重置计数器
+            self.vb_calls += 1
 
-        # Layer 3: BOH细部修正（可选）
-        if self.enable_quant:
-            # BOH协议已在Layer 1中使用，这里仅做额外量化
-            pass
+            # Layer 1: 虚拟GPU计算（精度分离 + NVLink模拟）
+            Y = self.vgpu.compute(W, X, weight_id)
 
-        # Layer 2: FP4粗部已在Layer 1的精度分离中处理
-        # 这里使用FP4 layer的统计
-        self.fp4_layer.stats['total_calls'] += 1
-        self.fp4_layer.stats['fp4_hits'] += 1
+            # Layer 3: BOH细部修正（可选）
+            if self.enable_quant:
+                # BOH协议已在Layer 1中使用，这里仅做额外量化
+                pass
 
-        return Y
+            # Layer 2: FP4粗部已在Layer 1的精度分离中处理
+            self.fp4_layer.stats['total_calls'] += 1
+            self.fp4_layer.stats['fp4_hits'] += 1
+
+            return Y
+        else:
+            # 快速路径：直接矩阵乘法（跳过VB开销）
+            self.fast_calls += 1
+            return W @ X
 
     def get_stats(self) -> Dict:
         return {
+            'pulse_stats': {
+                'total_calls': self.total_calls,
+                'vb_calls': self.vb_calls,
+                'fast_calls': self.fast_calls,
+                'vb_ratio': f"{self.vb_calls / self.total_calls * 100:.1f}%" if self.total_calls > 0 else "0%",
+                'pulse_interval': self.pulse_interval
+            },
             'layer1_vgpu': self.vgpu.get_stats(),
             'layer2_fp4': self.fp4_layer.get_stats(),
             'layer3_vgpusl': self.quantizer.get_stats() if self.quantizer else {}
@@ -548,20 +573,23 @@ class VirtualBlackwellAdapter:
         print("="*70 + "\n")
 
 
-def create_virtual_blackwell(mode='auto', enable_quantization=True, max_gpu_mb=2000, enable_fp4=True):
+def create_virtual_blackwell(mode='auto', enable_quantization=True, max_gpu_mb=2000, enable_fp4=True, pulse_interval=20):
     """
     创建虚拟Blackwell适配器
 
     Args:
         mode: 运行模式 ('auto', 'training', 'inference', 'precision')
         enable_quantization: 启用BOH协议量化 (Layer 3)
-        max_gpu_mb: GPU缓存大小 (MB)
+        max_gpu_mb: GPU缓存大小 (MB) - 用作gpu_id
         enable_fp4: 启用FP4量化 (Layer 2)
+        pulse_interval: 脉冲间隔（每N次forward执行1次VB）
 
     Returns:
         VirtualBlackwellAdapter实例
     """
-    return VirtualBlackwellAdapter(mode, enable_quantization, max_gpu_mb, enable_fp4)
+    # max_gpu_mb实际上被用作gpu_id（历史遗留参数名）
+    gpu_id = 0  # 单GPU场景固定为0
+    return VirtualBlackwellAdapter(mode, enable_quantization, gpu_id, enable_fp4, pulse_interval)
 
 
 if __name__ == "__main__":
