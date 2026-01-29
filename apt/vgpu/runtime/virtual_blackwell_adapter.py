@@ -266,7 +266,7 @@ class VirtualGPUNetwork:
     """虚拟GPU计算单元（不是缓存！）- 模拟NVLink通信"""
 
     def __init__(self, gpu_id: int = 0, trigger_hi: float = 1.2, trigger_lo: float = 0.8,
-                 q: float = 0.999, sample: int = 50000):
+                 q: float = 0.999, sample: int = 50000, check_interval: int = 10):
         self.gpu_id = gpu_id
         self.protocol = BOHProtocol()
         self.quantizer = ShrinkTraceQuantizer()
@@ -276,11 +276,13 @@ class VirtualGPUNetwork:
 
         # ShrinkTrace自适应量化参数
         self.scale_cache = {}  # {weight_id: scale} - 缓存量化scale
+        self.weight_quant_cache = {}  # {weight_id: quantized_weight} - 缓存量化权重
         self.step_counter = {}  # {weight_id: step_count} - 每个权重的计步器
         self.trigger_hi = trigger_hi  # scale变化上限（默认1.2，即+20%）
         self.trigger_lo = trigger_lo  # scale变化下限（默认0.8，即-20%）
         self.q = q  # quantile参数（默认0.999）
         self.sample = sample  # 采样数量（默认50K）
+        self.check_interval = check_interval  # 每N步检查一次scale变化
 
         # 统计信息
         self.stats = {
@@ -293,10 +295,10 @@ class VirtualGPUNetwork:
 
     def compute(self, weight: torch.Tensor, input_tensor: torch.Tensor, weight_id: str) -> torch.Tensor:
         """
-        ShrinkTrace v6计算流程：
-        1. 检查是否需要更新scale（自适应）
-        2. 使用INT8量化权重
-        3. 执行矩阵乘法
+        ShrinkTrace v6计算流程（真正的缓存）：
+        1. 检查缓存的量化权重
+        2. 每N步检查scale变化（不是每次）
+        3. 使用缓存的量化权重执行计算
         """
         self.stats['total'] += 1
 
@@ -304,22 +306,21 @@ class VirtualGPUNetwork:
         if weight_id not in self.step_counter:
             self.step_counter[weight_id] = 0
 
-        self.step_counter[weight_id] += 1
+        steps_since_update = self.step_counter[weight_id]
 
-        # 1. 自适应scale更新
+        # 1. 判断是否需要更新（基于步数间隔）
         need_update = False
 
-        if weight_id not in self.scale_cache:
-            # 首次：计算scale
+        if weight_id not in self.weight_quant_cache:
+            # 首次：必须计算
             need_update = True
-        else:
-            # 检查scale是否需要更新（自适应）
+        elif steps_since_update >= self.check_interval:
+            # 达到检查间隔：检查scale变化
             old_scale = self.scale_cache[weight_id]
             new_scale = self.quantizer.quantile_scale(weight, q=self.q, sample=self.sample)
 
             # 计算scale变化比例
             ratio = (new_scale / (old_scale + 1e-9)).clamp(min=1e-9).item()
-
             self.stats['scale_checks'] += 1
 
             # 如果变化超过阈值，需要更新
@@ -327,19 +328,21 @@ class VirtualGPUNetwork:
                 need_update = True
 
         if need_update:
-            # 更新scale
+            # 更新scale和量化权重
             self.scale_cache[weight_id] = self.quantizer.quantile_scale(
                 weight, q=self.q, sample=self.sample
             )
+            scale = self.scale_cache[weight_id]
+            self.weight_quant_cache[weight_id] = self.quantizer.fake_int8_quant(weight, scale).detach()
+            self.step_counter[weight_id] = 0  # 重置计数器
             self.stats['scale_updates'] += 1
         else:
+            # 使用缓存
+            self.step_counter[weight_id] += 1
             self.stats['cache_hits'] += 1
 
-        # 2. INT8量化权重
-        scale = self.scale_cache[weight_id]
-        weight_quant = self.quantizer.fake_int8_quant(weight, scale)
-
-        # 3. 执行计算
+        # 2. 使用缓存的量化权重执行计算
+        weight_quant = self.weight_quant_cache[weight_id]
         result = weight_quant @ input_tensor
 
         self.stats['gpu_hits'] += 1
