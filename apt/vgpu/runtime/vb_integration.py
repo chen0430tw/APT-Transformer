@@ -26,6 +26,9 @@ if TORCH_AVAILABLE:
             pass  # stdout不可用时不报错
 
 
+    # 全局共享的VB adapter（所有层共享一个pulse_counter）
+    _GLOBAL_VB_ADAPTER = None
+
     class VBOptimizedLinear(nn.Module):
         """使用虚拟Blackwell优化的线性层（Flash Attention + FP4加速）"""
 
@@ -50,21 +53,20 @@ if TORCH_AVAILABLE:
             self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
             self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
 
-            # 优化6: 延迟初始化VB适配器（仅在第一次forward时创建）
-            # 这避免了在wrapper初始化时创建62个VB适配器
+            # 使用全局共享的VB adapter
             self.mode = mode
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
             self.pulse_interval = pulse_interval
-            self.vb_adapter = None  # 延迟创建
             self.layer_id = f'linear_{id(self)}'
             self._registered = False
 
         def forward(self, x):
             """前向传播（GPU加速，无CPU转换）"""
-            # 优化6: 延迟初始化VB适配器（仅在第一次forward时创建）
-            if self.vb_adapter is None:
-                self.vb_adapter = create_virtual_blackwell(
+            # 使用全局共享的VB适配器
+            global _GLOBAL_VB_ADAPTER
+            if _GLOBAL_VB_ADAPTER is None:
+                _GLOBAL_VB_ADAPTER = create_virtual_blackwell(
                     mode=self.mode,
                     enable_quantization=self.enable_quantization,
                     enable_fp4=self.enable_fp4,
@@ -73,7 +75,7 @@ if TORCH_AVAILABLE:
 
             # 注册权重（仅首次）- 直接使用tensor
             if not self._registered:
-                self.vb_adapter.register_weight(self.layer_id, self.weight.detach())
+                _GLOBAL_VB_ADAPTER.register_weight(self.layer_id, self.weight.detach())
                 self._registered = True
 
             # 获取权重和输入 - 保持在GPU上
@@ -90,8 +92,8 @@ if TORCH_AVAILABLE:
             else:
                 raise ValueError(f"Unsupported input shape: {original_shape}")
 
-            # 虚拟Blackwell压缩计算 - 全程在GPU上
-            Y = self.vb_adapter.compress(W, X, self.layer_id)
+            # 虚拟Blackwell压缩计算 - 全程在GPU上（使用全局adapter）
+            Y = _GLOBAL_VB_ADAPTER.compress(W, X, self.layer_id)
 
             # 转置回来
             Y = Y.T
@@ -108,14 +110,17 @@ if TORCH_AVAILABLE:
 
         def get_stats(self) -> Dict:
             """获取虚拟Blackwell统计信息"""
-            if self.vb_adapter is None:
+            global _GLOBAL_VB_ADAPTER
+            if _GLOBAL_VB_ADAPTER is None:
                 # 还未进行过forward，返回空统计
                 return {'layer1_vgpu': {'total': 0, 'gpu_hits': 0}, 'layer2_fp4': {'total_calls': 0}}
-            return self.vb_adapter.get_stats()
+            return _GLOBAL_VB_ADAPTER.get_stats()
 
         def print_stats(self):
             """打印统计信息"""
-            self.vb_adapter.print_stats()
+            global _GLOBAL_VB_ADAPTER
+            if _GLOBAL_VB_ADAPTER is not None:
+                _GLOBAL_VB_ADAPTER.print_stats()
 
 
     class VBModelWrapper(nn.Module):
