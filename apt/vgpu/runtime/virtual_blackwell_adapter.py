@@ -512,97 +512,9 @@ class VirtualBlackwellAdapter:
 
         return Y
 
-    def linear_pulse(self, x: torch.Tensor, weight: torch.Tensor, bias: Optional[torch.Tensor], weight_id: str) -> torch.Tensor:
-        """
-        脉冲路径专用方法：支持F.linear的原生API
-
-        Args:
-            x: 输入张量 (batch, seq, dim) 或 (batch, dim)
-            weight: 权重矩阵 (out_features, in_features)
-            bias: 偏置向量 (out_features,) 或 None
-            weight_id: 权重唯一标识符
-
-        Returns:
-            输出张量，形状同 F.linear(x, weight, bias)
-        """
-        self.total_calls += 1
-        self.vb_calls += 1
-
-        # 确保weight和x在同一设备上
-        weight = weight.to(x.device)
-
-        # 每层独立计数（虽然脉冲路径不需要判断，但保持统计一致）
-        if weight_id not in self.layer_pulse:
-            self.layer_pulse[weight_id] = 0
-        self.layer_pulse[weight_id] += 1
-
-        # 处理维度：F.linear期望x是(*, in_features)，输出是(*, out_features)
-        original_shape = x.shape
-
-        if len(original_shape) == 3:
-            # (batch, seq, dim) -> (batch*seq, dim)
-            batch, seq, dim = original_shape
-            x_2d = x.reshape(batch * seq, dim)
-        elif len(original_shape) == 2:
-            x_2d = x
-        else:
-            raise ValueError(f"Unsupported input shape: {original_shape}")
-
-        # 转置为compress所需的格式：(dim, batch*seq)
-        X = x_2d.T
-        W = weight
-
-        # Layer 1: 虚拟GPU计算（ShrinkTrace量化）
-        Y = self.vgpu.compute(W, X, weight_id)
-
-        # Layer 2: FP4统计
-        self.fp4_layer.stats['total_calls'] += 1
-        self.fp4_layer.stats['fp4_hits'] += 1
-
-        # 转置回来：(out_features, batch*seq) -> (batch*seq, out_features)
-        Y = Y.T
-
-        # 恢复原始形状
-        if len(original_shape) == 3:
-            Y = Y.reshape(batch, seq, -1)
-
-        # 添加bias
-        if bias is not None:
-            Y = Y + bias.to(Y.device)
-
-        return Y
-
     def get_stats(self) -> Dict:
         return {
             'layer1_vgpu': self.vgpu.get_stats(),
-            'layer2_fp4': self.fp4_layer.get_stats(),
-            'layer3_vgpusl': self.quantizer.get_stats() if self.quantizer else {}
-        }
-
-    def get_stats_v6(self) -> Dict:
-        """
-        v6版本统计方法：正确显示ShrinkTrace缓存统计
-
-        返回格式与get_stats兼容，但使用v6的ShrinkTrace缓存指标
-        """
-        vgpu_stats = self.vgpu.get_stats()
-
-        return {
-            'pulse_stats': {
-                'total_calls': self.total_calls,
-                'vb_calls': self.vb_calls,
-                'fast_calls': self.fast_calls,
-                'vb_ratio': f"{self.vb_calls / self.total_calls * 100:.1f}%" if self.total_calls > 0 else "0%",
-                'pulse_interval': self.pulse_interval
-            },
-            'v6_shrinktrace_cache': {
-                'total_compute': vgpu_stats.get('total', 0),
-                'cache_hits': vgpu_stats.get('cache_hits', 0),
-                'cache_refreshes': vgpu_stats.get('scale_updates', 0),
-                'cache_hit_rate': vgpu_stats.get('cache_hit_rate', 0.0),
-                'precision_separations': vgpu_stats.get('precision_separations', 0),
-                'scale_checks': vgpu_stats.get('scale_checks', 0)
-            },
             'layer2_fp4': self.fp4_layer.get_stats(),
             'layer3_vgpusl': self.quantizer.get_stats() if self.quantizer else {}
         }
