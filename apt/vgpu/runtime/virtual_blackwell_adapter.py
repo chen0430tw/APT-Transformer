@@ -598,10 +598,11 @@ class VirtualBlackwellAdapter:
             'v6_shrinktrace_cache': {
                 'total_compute': vgpu_stats.get('total', 0),
                 'cache_hits': vgpu_stats.get('cache_hits', 0),
-                'cache_refreshes': vgpu_stats.get('scale_updates', 0),
+                'cache_refreshes': vgpu_stats.get('cache_refreshes', 0),
                 'cache_hit_rate': vgpu_stats.get('cache_hit_rate', 0.0),
-                'precision_separations': vgpu_stats.get('precision_separations', 0),
-                'scale_checks': vgpu_stats.get('scale_checks', 0)
+                'precision_separations': vgpu_stats.get('total', 0),  # 每次compute都做精度分离
+                'coarse_computes': vgpu_stats.get('coarse_computes', 0),
+                'fine_computes': vgpu_stats.get('fine_computes', 0)
             },
             'layer2_fp4': self.fp4_layer.get_stats(),
             'layer3_vgpusl': self.quantizer.get_stats() if self.quantizer else {}
