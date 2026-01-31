@@ -33,7 +33,7 @@ model = create_claude_unified(
     d_ff=1024,
     num_layers=3,
     rank=4,
-    enable_reflection=True
+    enable_reflection=False  # 禁用反思层 - 它是性能杀手，不是VB的问题
 ).to(device)
 
 total_params = sum(p.numel() for p in model.parameters())
