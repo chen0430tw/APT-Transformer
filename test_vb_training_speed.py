@@ -157,38 +157,16 @@ log("="*80)
 
 all_stats = wrapper.get_all_stats()
 
-# 调试：打印第一个层的统计数据结构
-if all_stats:
-    first_key = list(all_stats.keys())[0]
-    log(f"调试 - 第一层统计结构 ({first_key}):")
-    log(f"  {all_stats[first_key]}")
-    log("")
-
 total_computes = 0
 total_cache_hits = 0
 total_cache_refreshes = 0
-total_vb_calls = 0
-total_fast_calls = 0
 
 for name, stats in all_stats.items():
-    # 支持v6新格式 (ShrinkTraceQuantCache)
-    if 'v6_shrinktrace_cache' in stats:
-        cache = stats['v6_shrinktrace_cache']
-        total_computes += cache.get('total_calls', 0)
-        total_cache_hits += cache.get('cache_hits', 0)
-        total_cache_refreshes += cache.get('cache_refreshes', 0)
-    # 兼容旧格式
-    elif 'layer1_vgpu' in stats:
+    if 'layer1_vgpu' in stats:
         vgpu = stats['layer1_vgpu']
         total_computes += vgpu.get('total', 0)
         total_cache_hits += vgpu.get('cache_hits', 0)
         total_cache_refreshes += vgpu.get('cache_refreshes', 0)
-
-    # 脉冲统计
-    if 'pulse_stats' in stats:
-        pulse = stats['pulse_stats']
-        total_vb_calls += pulse.get('vb_calls', 0)
-        total_fast_calls += pulse.get('fast_calls', 0)
 
 if total_computes > 0:
     cache_hit_rate = total_cache_hits / total_computes * 100
@@ -198,39 +176,19 @@ if total_computes > 0:
     log(f"精度分离次数: {total_computes - total_cache_hits} (首次 + 刷新)")
     log("")
 
-    # 脉冲统计
-    if total_vb_calls > 0 or total_fast_calls > 0:
-        total_calls = total_vb_calls + total_fast_calls
-        vb_ratio = total_vb_calls / total_calls * 100 if total_calls > 0 else 0
-        log("⚡ 脉冲策略统计:")
-        log(f"  总调用: {total_calls}")
-        log(f"  VB脉冲: {total_vb_calls} ({vb_ratio:.1f}%)")
-        log(f"  快速路径: {total_fast_calls} ({100-vb_ratio:.1f}%)")
-        log("")
-
     log("前3层详细统计:")
     log("-"*80)
     count = 0
     for name, stats in all_stats.items():
         if count >= 3:
             break
-        # v6新格式 (ShrinkTraceQuantCache)
-        if 'v6_shrinktrace_cache' in stats:
-            cache = stats['v6_shrinktrace_cache']
-            log(f"\n[{name}]")
-            log(f"  总计算: {cache.get('total_calls', 0)}")
-            log(f"  缓存命中: {cache.get('cache_hits', 0)}")
-            log(f"  缓存刷新: {cache.get('cache_refreshes', 0)}")
-            log(f"  命中率: {cache.get('hit_rate', 0):.1%}")
-            count += 1
-        # 旧格式兼容
-        elif 'layer1_vgpu' in stats:
+        if 'layer1_vgpu' in stats:
             vgpu = stats['layer1_vgpu']
             log(f"\n[{name}]")
             log(f"  总计算: {vgpu.get('total', 0)}")
             log(f"  缓存命中: {vgpu.get('cache_hits', 0)}")
             log(f"  缓存刷新: {vgpu.get('cache_refreshes', 0)}")
-            log(f"  命中率: {vgpu.get('cache_hit_rate', 0):.1%}")
+            log(f"  缓存命中率: {vgpu.get('cache_hit_rate', 0):.1%}")
             count += 1
 
 log("")
