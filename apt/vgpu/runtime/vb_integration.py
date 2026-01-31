@@ -10,6 +10,7 @@
 try:
     import torch
     import torch.nn as nn
+    import torch.nn.functional as F
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
@@ -26,17 +27,13 @@ if TORCH_AVAILABLE:
             pass  # stdout不可用时不报错
 
 
-    # 全局共享的VB adapter（所有层共享一个pulse_counter）
-    _GLOBAL_VB_ADAPTER = None
-
     class VBOptimizedLinear(nn.Module):
         """使用虚拟Blackwell优化的线性层（Flash Attention + FP4加速）"""
 
         def __init__(self, in_features: int, out_features: int,
                      mode: str = 'auto', bias: bool = True,
                      enable_quantization: bool = True,
-                     enable_fp4: bool = True,
-                     pulse_interval: int = 20):
+                     enable_fp4: bool = True):
             """
             Args:
                 in_features: 输入维度
@@ -45,7 +42,6 @@ if TORCH_AVAILABLE:
                 bias: 是否使用bias
                 enable_quantization: 是否启用BOH协议量化 (Layer 3)
                 enable_fp4: 是否启用FP4量化 (Layer 2)
-                pulse_interval: 脉冲间隔（每N次forward执行1次VB）
             """
             super().__init__()
             self.in_features = in_features
@@ -53,74 +49,57 @@ if TORCH_AVAILABLE:
             self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
             self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
 
-            # 使用全局共享的VB adapter
+            # 优化6: 延迟初始化VB适配器（仅在第一次forward时创建）
+            # 这避免了在wrapper初始化时创建62个VB适配器
             self.mode = mode
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
-            self.pulse_interval = pulse_interval
+            self.vb_adapter = None  # 延迟创建
             self.layer_id = f'linear_{id(self)}'
             self._registered = False
+            self.pulse_interval = 20
+            self._fwd_count = 0
 
         def forward(self, x):
-            """前向传播（GPU加速，无CPU转换）"""
-            # 使用全局共享的VB适配器
-            global _GLOBAL_VB_ADAPTER
-            if _GLOBAL_VB_ADAPTER is None:
-                _GLOBAL_VB_ADAPTER = create_virtual_blackwell(
+            """前向传播：默认走原生Linear；每 N 次 forward 触发一次 VB 的 ShrinkTrace 脉冲量化（STE + cache）。"""
+            # 延迟初始化VB适配器（仅在第一次forward时创建）
+            if self.vb_adapter is None:
+                self.vb_adapter = create_virtual_blackwell(
                     mode=self.mode,
                     enable_quantization=self.enable_quantization,
-                    enable_fp4=self.enable_fp4,
-                    pulse_interval=self.pulse_interval
+                    enable_fp4=self.enable_fp4
                 )
 
-            # 注册权重（仅首次）- 直接使用tensor
+            # 注册权重（仅首次）
             if not self._registered:
-                _GLOBAL_VB_ADAPTER.register_weight(self.layer_id, self.weight.detach())
+                self.vb_adapter.register_weight(self.layer_id, self.weight.detach())
                 self._registered = True
 
-            # 获取权重和输入 - 保持在GPU上
-            W = self.weight
-            X = x
+            # 计数：脉冲时刻才走 VB（默认 1/20 = 5%）
+            self._fwd_count += 1
+            is_pulse = (self.pulse_interval > 1) and (self._fwd_count % self.pulse_interval == 0)
 
-            # 处理维度 (batch, seq, dim) -> (dim, batch*seq)
-            original_shape = X.shape
-            if len(original_shape) == 3:
-                batch, seq, dim = original_shape
-                X = X.reshape(batch * seq, dim).T
-            elif len(original_shape) == 2:
-                X = X.T
-            else:
-                raise ValueError(f"Unsupported input shape: {original_shape}")
+            if (not self.training) or (not is_pulse):
+                # ✅ 快速路径：原生 PyTorch GEMM（无转置/无额外开销）
+                return F.linear(x, self.weight, self.bias)
 
-            # 虚拟Blackwell压缩计算 - 全程在GPU上（使用全局adapter）
-            Y = _GLOBAL_VB_ADAPTER.compress(W, X, self.layer_id)
+            # ⚡ 脉冲路径：ShrinkTrace INT8 fake-quant (STE) + cache
+            if hasattr(self.vb_adapter, "linear_pulse"):
+                return self.vb_adapter.linear_pulse(x, self.weight, self.bias, self.layer_id)
 
-            # 转置回来
-            Y = Y.T
-
-            # 恢复维度
-            if len(original_shape) == 3:
-                Y = Y.reshape(batch, seq, -1)
-
-            # 添加bias - 确保在同一设备上
-            if self.bias is not None:
-                Y = Y + self.bias.to(Y.device)
-
-            return Y
+            # 兼容回退
+            return F.linear(x, self.weight, self.bias)
 
         def get_stats(self) -> Dict:
             """获取虚拟Blackwell统计信息"""
-            global _GLOBAL_VB_ADAPTER
-            if _GLOBAL_VB_ADAPTER is None:
+            if self.vb_adapter is None:
                 # 还未进行过forward，返回空统计
                 return {'layer1_vgpu': {'total': 0, 'gpu_hits': 0}, 'layer2_fp4': {'total_calls': 0}}
-            return _GLOBAL_VB_ADAPTER.get_stats()
+            return self.vb_adapter.get_stats_v6() if hasattr(self.vb_adapter, 'get_stats_v6') else self.vb_adapter.get_stats()
 
         def print_stats(self):
             """打印统计信息"""
-            global _GLOBAL_VB_ADAPTER
-            if _GLOBAL_VB_ADAPTER is not None:
-                _GLOBAL_VB_ADAPTER.print_stats()
+            self.vb_adapter.print_stats()
 
 
     class VBModelWrapper(nn.Module):
@@ -130,8 +109,7 @@ if TORCH_AVAILABLE:
                      enable_quantization: bool = True,
                      enable_fp4: bool = True,
                      replace_pattern: str = 'all',
-                     verbose: bool = True,
-                     pulse_interval: int = 20):
+                     verbose: bool = True):
             """
             Args:
                 model: 原始模型
@@ -140,7 +118,6 @@ if TORCH_AVAILABLE:
                 enable_fp4: 是否启用FP4量化 (Layer 2)
                 replace_pattern: 替换模式 ('all', 'large', 'custom')
                 verbose: 是否显示详细进度
-                pulse_interval: 脉冲间隔（每N次forward执行1次VB）
             """
             super().__init__()
             self.model = model
@@ -148,7 +125,6 @@ if TORCH_AVAILABLE:
             self.enable_quantization = enable_quantization
             self.enable_fp4 = enable_fp4
             self.verbose = verbose
-            self.pulse_interval = pulse_interval
             self.replaced_layers = []  # 层名列表
             self.replaced_modules = {}  # {name: module} 映射，避免重复遍历
 
@@ -202,8 +178,7 @@ if TORCH_AVAILABLE:
                 mode=self.mode,
                 bias=module.bias is not None,
                 enable_quantization=self.enable_quantization,
-                enable_fp4=self.enable_fp4,
-                pulse_interval=self.pulse_interval
+                enable_fp4=self.enable_fp4
             )
 
             # 优化5a: 使用set_方法避免额外内存分配
