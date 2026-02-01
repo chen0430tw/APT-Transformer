@@ -1,336 +1,177 @@
+
 """
-虚拟Blackwell PyTorch集成模块
-
-将虚拟Blackwell优化无缝集成到APT模型训练中。
-使用 Flash Attention + FP4 量化进行加速。
-
-注意：此模块需要PyTorch。
+VB Integration v6.2
+- Uses VirtualBlackwellAdapterV62
+- Global-step pulse scheduling with round-robin phases (smooth overhead)
+- Optional sparse attention patching hook (if vb_sparse_attention is available)
 """
 
-try:
-    import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+from __future__ import annotations
 
-if TORCH_AVAILABLE:
-    from typing import Optional, Dict
-    from apt.vgpu.runtime.virtual_blackwell_adapter import create_virtual_blackwell
+from dataclasses import dataclass
+from typing import Optional, Dict, List, Tuple
 
-    def safe_print(*args, **kwargs):
-        """安全的print函数，在stdout不可用时静默失败"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from virtual_blackwell_adapter_v6_2 import VirtualBlackwellAdapterV62
+
+
+@dataclass
+class VBConfigV62:
+    pulse_interval: int = 20
+    q: float = 0.999
+    sample_size: int = 8192
+    drift_threshold: float = 0.20
+    enable_fp4_coarse: bool = True
+
+
+class VBController(nn.Module):
+    """
+    Keeps a global step counter (increments once per model forward).
+    Attached to model as model._vb_controller.
+    """
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("_global_step", torch.zeros((), dtype=torch.long), persistent=False)
+
+    def bump(self):
+        self._global_step += 1
+
+    @property
+    def step(self) -> int:
+        return int(self._global_step.item())
+
+
+class VBOptimizedLinearV62(nn.Module):
+    def __init__(
+        self,
+        base: nn.Linear,
+        adapter: VirtualBlackwellAdapterV62,
+        controller: VBController,
+        name: str,
+        layer_index: int,
+        pulse_interval: int,
+    ):
+        super().__init__()
+        self.base = base
+        self.adapter = adapter
+        self.controller = controller
+        self.name = name
+        self.layer_index = int(layer_index)
+        self.pulse_interval = int(max(1, pulse_interval))
+        self.phase = self.layer_index % self.pulse_interval
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # round-robin pulse: only a subset of layers do pulse in a given step
+        step = self.controller.step
+        is_pulse = (step % self.pulse_interval) == self.phase
+        if is_pulse:
+            return self.adapter.linear_pulse(x, self.base.weight, self.base.bias, self.name)
+        return self.adapter.linear_fast(x, self.base.weight, self.base.bias, self.name)
+
+
+def _iter_named_linears(model: nn.Module):
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            yield name, module
+
+
+def apply_virtual_blackwell_v62(
+    model: nn.Module,
+    config: Optional[VBConfigV62] = None,
+    skip_large_out_features: int = 20000,
+) -> Tuple[nn.Module, VirtualBlackwellAdapterV62]:
+    """
+    Replace most nn.Linear layers with VBOptimizedLinearV62 in-place.
+    Keeps ultra-large output heads as-is by default (e.g., vocab projection).
+    Returns (model, adapter).
+    """
+    if config is None:
+        config = VBConfigV62()
+
+    # attach controller
+    controller = VBController()
+    model._vb_controller = controller  # type: ignore[attr-defined]
+
+    adapter = VirtualBlackwellAdapterV62(
+        q=config.q,
+        sample_size=config.sample_size,
+        drift_threshold=config.drift_threshold,
+        enable_fp4_coarse=config.enable_fp4_coarse,
+    )
+
+    # bump global step once per forward of the root model
+    def _pre_hook(_module, _inputs):
+        controller.bump()
+
+    # remove existing hook if any
+    if hasattr(model, "_vb_pre_hook_handle"):
         try:
-            print(*args, **kwargs)
-        except (OSError, IOError):
-            pass  # stdout不可用时不报错
+            model._vb_pre_hook_handle.remove()
+        except Exception:
+            pass
+    model._vb_pre_hook_handle = model.register_forward_pre_hook(_pre_hook)  # type: ignore[attr-defined]
 
+    # Do replacement by traversing immediate children recursively
+    replaced = 0
+    layer_index = 0
 
-    class VBOptimizedLinear(nn.Module):
-        """使用虚拟Blackwell优化的线性层（Flash Attention + FP4加速）"""
+    def replace_in(parent: nn.Module, prefix: str = ""):
+        nonlocal replaced, layer_index
+        for child_name, child in list(parent.named_children()):
+            full_name = f"{prefix}.{child_name}" if prefix else child_name
 
-        def __init__(self, in_features: int, out_features: int,
-                     mode: str = 'auto', bias: bool = True,
-                     enable_quantization: bool = True,
-                     enable_fp4: bool = True):
-            """
-            Args:
-                in_features: 输入维度
-                out_features: 输出维度
-                mode: 'auto', 'training', 'inference', 'precision'
-                bias: 是否使用bias
-                enable_quantization: 是否启用BOH协议量化 (Layer 3)
-                enable_fp4: 是否启用FP4量化 (Layer 2)
-            """
-            super().__init__()
-            self.in_features = in_features
-            self.out_features = out_features
-            self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
-            self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+            if isinstance(child, nn.Linear):
+                # Skip enormous vocab heads etc.
+                if child.out_features >= skip_large_out_features:
+                    continue
 
-            # 优化6: 延迟初始化VB适配器（仅在第一次forward时创建）
-            # 这避免了在wrapper初始化时创建62个VB适配器
-            self.mode = mode
-            self.enable_quantization = enable_quantization
-            self.enable_fp4 = enable_fp4
-            self.vb_adapter = None  # 延迟创建
-            self.layer_id = f'linear_{id(self)}'
-            self._registered = False
-            self.pulse_interval = 20
-            self._fwd_count = 0
-
-        def forward(self, x):
-            """前向传播：默认走原生Linear；每 N 次 forward 触发一次 VB 的 ShrinkTrace 脉冲量化（STE + cache）。"""
-            # 延迟初始化VB适配器（仅在第一次forward时创建）
-            if self.vb_adapter is None:
-                self.vb_adapter = create_virtual_blackwell(
-                    mode=self.mode,
-                    enable_quantization=self.enable_quantization,
-                    enable_fp4=self.enable_fp4
+                wrapped = VBOptimizedLinearV62(
+                    base=child,
+                    adapter=adapter,
+                    controller=controller,
+                    name=full_name,
+                    layer_index=layer_index,
+                    pulse_interval=config.pulse_interval,
                 )
-
-            # 注册权重（仅首次）
-            if not self._registered:
-                self.vb_adapter.register_weight(self.layer_id, self.weight.detach())
-                self._registered = True
-
-            # 计数：脉冲时刻才走 VB（默认 1/20 = 5%）
-            self._fwd_count += 1
-            is_pulse = (self.pulse_interval > 1) and (self._fwd_count % self.pulse_interval == 0)
-
-            if (not self.training) or (not is_pulse):
-                # ✅ 快速路径：原生 PyTorch GEMM（无转置/无额外开销）
-                return F.linear(x, self.weight, self.bias)
-
-            # ⚡ 脉冲路径：ShrinkTrace INT8 fake-quant (STE) + cache
-            if hasattr(self.vb_adapter, "linear_pulse"):
-                return self.vb_adapter.linear_pulse(x, self.weight, self.bias, self.layer_id)
-
-            # 兼容回退
-            return F.linear(x, self.weight, self.bias)
-
-        def get_stats(self) -> Dict:
-            """获取虚拟Blackwell统计信息"""
-            if self.vb_adapter is None:
-                # 还未进行过forward，返回空统计
-                return {'layer1_vgpu': {'total': 0, 'gpu_hits': 0}, 'layer2_fp4': {'total_calls': 0}}
-            return self.vb_adapter.get_stats_v6() if hasattr(self.vb_adapter, 'get_stats_v6') else self.vb_adapter.get_stats()
-
-        def print_stats(self):
-            """打印统计信息"""
-            self.vb_adapter.print_stats()
-
-
-    class VBModelWrapper(nn.Module):
-        """将现有模型的线性层替换为VB优化版本 (Flash Attention + FP4)"""
-
-        def __init__(self, model: nn.Module, mode: str = 'auto',
-                     enable_quantization: bool = True,
-                     enable_fp4: bool = True,
-                     replace_pattern: str = 'all',
-                     verbose: bool = True):
-            """
-            Args:
-                model: 原始模型
-                mode: VB模式
-                enable_quantization: 是否启用BOH协议量化 (Layer 3)
-                enable_fp4: 是否启用FP4量化 (Layer 2)
-                replace_pattern: 替换模式 ('all', 'large', 'custom')
-                verbose: 是否显示详细进度
-            """
-            super().__init__()
-            self.model = model
-            self.mode = mode
-            self.enable_quantization = enable_quantization
-            self.enable_fp4 = enable_fp4
-            self.verbose = verbose
-            self.replaced_layers = []  # 层名列表
-            self.replaced_modules = {}  # {name: module} 映射，避免重复遍历
-
-            # 替换线性层
-            if replace_pattern == 'all':
-                self._replace_all_linear()
-            elif replace_pattern == 'large':
-                self._replace_large_linear()
-
-        def _replace_all_linear(self):
-            """替换所有线性层（优化7: 添加进度提示）"""
-            # 优化7: 先统计需要替换的层数
-            linear_layers = [
-                (name, module) for name, module in self.model.named_modules()
-                if isinstance(module, nn.Linear) and not isinstance(module, VBOptimizedLinear)
-            ]
-
-            total = len(linear_layers)
-            if self.verbose and total > 10:
-                safe_print(f"\n[初始化] 发现 {total} 个线性层，开始替换为虚拟Blackwell...")
-
-            for idx, (name, module) in enumerate(linear_layers, 1):
-                self._replace_module(name, module)
-
-                # 优化7: 对大模型显示进度百分比
-                if self.verbose and total > 50 and idx % 10 == 0:
-                    safe_print(f"[进度] {idx}/{total} ({idx/total*100:.0f}%)")
-
-        def _replace_large_linear(self, threshold: int = 512):
-            """只替换大型线性层"""
-            for name, module in self.model.named_modules():
-                if isinstance(module, nn.Linear) and not isinstance(module, VBOptimizedLinear):
-                    if module.in_features >= threshold or module.out_features >= threshold:
-                        self._replace_module(name, module)
-
-        def _replace_module(self, name: str, module: nn.Linear):
-            """替换单个模块（优化5: 优化权重复制和设备转移）"""
-            # 优化8: 跳过超大层（>10M参数），避免精度分离开销
-            n_params = module.in_features * module.out_features
-            if n_params > 10_000_000:
-                if self.verbose:
-                    safe_print(f"[跳过] {name} ({module.in_features} -> {module.out_features}, {n_params/1e6:.1f}M 参数) - 超大层保持原始计算")
-                return  # 不替换，保留原始nn.Linear
-
-            device = module.weight.device
-
-            # 创建VB层（先在CPU上，避免重复CUDA分配）
-            vb_linear = VBOptimizedLinear(
-                module.in_features,
-                module.out_features,
-                mode=self.mode,
-                bias=module.bias is not None,
-                enable_quantization=self.enable_quantization,
-                enable_fp4=self.enable_fp4
-            )
-
-            # 优化5a: 使用set_方法避免额外内存分配
-            # 直接设置权重tensor（共享存储），然后移到设备
-            if device.type == 'cuda':
-                # CUDA: 先复制再转移（避免多次CUDA分配）
-                vb_linear.weight.data.copy_(module.weight.data.cpu())
-                if module.bias is not None:
-                    vb_linear.bias.data.copy_(module.bias.data.cpu())
-                vb_linear = vb_linear.to(device)
+                setattr(parent, child_name, wrapped)
+                replaced += 1
+                layer_index += 1
             else:
-                # CPU: 直接复制
-                vb_linear.weight.data.copy_(module.weight.data)
-                if module.bias is not None:
-                    vb_linear.bias.data.copy_(module.bias.data)
+                replace_in(child, full_name)
 
-            # 替换
-            parent_name, attr_name = self._get_parent_and_attr(name)
-            if parent_name:
-                parent = dict(self.model.named_modules())[parent_name]
-                setattr(parent, attr_name, vb_linear)
-            else:
-                setattr(self.model, attr_name, vb_linear)
+    replace_in(model)
 
-            self.replaced_layers.append(name)
-            # 优化4: 保存模块引用，避免get_all_stats时重复遍历
-            self.replaced_modules[name] = vb_linear
-
-            if self.verbose:
-                # 优化5b: 显示参数量帮助用户了解进度
-                params = module.in_features * module.out_features
-                if params > 1_000_000:
-                    safe_print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features}, {params/1e6:.1f}M 参数)")
-                else:
-                    safe_print(f"[OK] 替换层: {name} ({module.in_features} -> {module.out_features})")
-
-        def _get_parent_and_attr(self, name: str):
-            """获取父模块和属性名"""
-            parts = name.split('.')
-            if len(parts) == 1:
-                return None, parts[0]
-            return '.'.join(parts[:-1]), parts[-1]
-
-        def forward(self, *args, **kwargs):
-            """前向传播"""
-            return self.model(*args, **kwargs)
-
-        def __getattr__(self, name):
-            """代理所有未定义的方法到内部模型"""
-            try:
-                return super().__getattr__(name)
-            except AttributeError:
-                # 代理到内部模型
-                return getattr(self.model, name)
-
-        def get_all_stats(self) -> Dict:
-            """获取所有VB层的统计信息"""
-            # 优化4: 直接使用replaced_modules，避免遍历整个模型
-            stats = {}
-            for name, module in self.replaced_modules.items():
-                stats[name] = module.get_stats()
-            return stats
-
-        def print_all_stats(self):
-            """打印所有统计信息"""
-            safe_print("\n" + "="*70)
-            safe_print("虚拟Blackwell优化统计 - 全局汇总 (Flash Attention + FP4)")
-            safe_print("="*70)
-
-            all_stats = self.get_all_stats()
-
-            # 汇总
-            total_gpu_hits = 0
-            total_accesses = 0
-            total_fp4_hits = 0
-            total_fp4_calls = 0
-
-            for name, stats in all_stats.items():
-                if 'layer1_vgpu' in stats:
-                    vgpu = stats['layer1_vgpu']
-                    total_gpu_hits += vgpu.get('gpu_hits', 0)
-                    total_accesses += vgpu.get('total', 0)
-
-                if 'layer2_fp4' in stats:
-                    fp4 = stats['layer2_fp4']
-                    total_fp4_hits += fp4.get('fp4_hits', 0)
-                    total_fp4_calls += fp4.get('total_calls', 0)
-
-            safe_print(f"\n已优化层数: {len(self.replaced_layers)}")
-            safe_print(f"总GPU命中: {total_gpu_hits}/{total_accesses} " +
-                  f"({total_gpu_hits/total_accesses*100:.1f}%)" if total_accesses > 0 else "")
-            safe_print(f"总FP4命中: {total_fp4_hits}/{total_fp4_calls} " +
-                  f"({total_fp4_hits/total_fp4_calls*100:.1f}%)" if total_fp4_calls > 0 else "")
-
-            safe_print("\n详细统计:")
-            for name in self.replaced_layers[:5]:  # 只显示前5个
-                module = dict(self.model.named_modules())[name]
-                if isinstance(module, VBOptimizedLinear):
-                    safe_print(f"\n[{name}]")
-                    module.print_stats()
-
-            if len(self.replaced_layers) > 5:
-                safe_print(f"\n... 还有 {len(self.replaced_layers)-5} 个优化层未显示")
-
-            safe_print("="*70 + "\n")
+    model._vb_replaced_linears = replaced  # type: ignore[attr-defined]
+    model._vb_pulse_interval = config.pulse_interval  # type: ignore[attr-defined]
+    return model, adapter
 
 
-    def enable_vb_optimization(model: nn.Module, mode: str = 'training',
-                              enable_quantization: bool = False,
-                              enable_fp4: bool = True,
-                              replace_pattern: str = 'all') -> VBModelWrapper:
-        """
-        快速启用虚拟Blackwell优化 (Flash Attention + FP4)
+def vb_stats_summary(adapter: VirtualBlackwellAdapterV62, top_k: int = 10) -> str:
+    items = []
+    for name, st in adapter.stats.items():
+        items.append((name, st))
+    # sort by pulse calls desc
+    items.sort(key=lambda t: t[1].pulse_calls, reverse=True)
+    lines = []
+    total_calls = sum(st.total_calls for _, st in items)
+    pulse_calls = sum(st.pulse_calls for _, st in items)
+    fast_calls = sum(st.fast_calls for _, st in items)
+    scale_updates = sum(st.scale_updates for _, st in items)
+    scale_reuses = sum(st.scale_reuses for _, st in items)
 
-        Args:
-            model: 要优化的模型
-            mode: 'auto', 'training', 'inference', 'precision'
-            enable_quantization: 是否启用BOH协议量化（默认禁用）
-            enable_fp4: 是否启用FP4量化（默认启用）
-            replace_pattern: 'all' 或 'large'
-
-        Returns:
-            包装后的模型
-
-        Example:
-            model = APTLargeModel(config)
-            model = enable_vb_optimization(model, mode='training')
-        """
-        safe_print("\n" + "="*70)
-        safe_print("启用虚拟Blackwell优化 (Flash Attention + FP4)")
-        safe_print("="*70)
-        safe_print(f"模式: {mode}")
-        safe_print(f"FP4量化: {'启用' if enable_fp4 else '禁用'}")
-        safe_print(f"BOH协议量化: {'启用' if enable_quantization else '禁用'}")
-        safe_print(f"替换策略: {replace_pattern}")
-        safe_print()
-
-        wrapper = VBModelWrapper(
-            model,
-            mode=mode,
-            enable_quantization=enable_quantization,
-            enable_fp4=enable_fp4,
-            replace_pattern=replace_pattern
+    lines.append(f"Total wrapped-linear calls: {total_calls}")
+    lines.append(f"Pulse calls: {pulse_calls} | Fast calls: {fast_calls}")
+    if scale_updates + scale_reuses > 0:
+        hit = 100.0 * scale_reuses / (scale_updates + scale_reuses)
+        lines.append(f"Scale cache reuse: {scale_reuses} / {scale_updates + scale_reuses} ({hit:.1f}%)")
+    lines.append("")
+    lines.append(f"Top {top_k} layers by pulse calls:")
+    for name, st in items[:top_k]:
+        lines.append(
+            f"- {name}: total={st.total_calls}, pulse={st.pulse_calls}, fast={st.fast_calls}, "
+            f"scale_updates={st.scale_updates}, scale_reuses={st.scale_reuses}"
         )
-
-        safe_print(f"\n[OK] 成功替换 {len(wrapper.replaced_layers)} 个线性层")
-        safe_print("="*70 + "\n")
-
-        return wrapper
-
-else:
-    # PyTorch不可用时的占位符
-    VBOptimizedLinear = None
-    VBModelWrapper = None
-    enable_vb_optimization = None
+    return "\n".join(lines)
