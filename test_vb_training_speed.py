@@ -11,12 +11,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from claude4_model import create_claude4_model
+from apt.model.architectures.claude4_model import create_claude4_model
 
-from vb_integration_v6_4 import apply_virtual_blackwell_v64, VBConfigV64, vb_stats_summary
+from apt.vgpu.runtime.vb_integration import apply_virtual_blackwell_v64, VBConfigV64, vb_stats_summary
 
 try:
-    from vb_sparse_attention import apply_sparse_attention, LocalAttnConfig
+    from apt.vgpu.runtime.vb_sparse_attention import apply_sparse_attention, LocalAttnConfig
     HAS_SPARSE = True
 except Exception:
     HAS_SPARSE = False

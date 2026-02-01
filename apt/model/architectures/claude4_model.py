@@ -250,3 +250,31 @@ class Claude4Model(nn.Module):
         if return_reflection:
             return logits, {"layers": refl_all}
         return logits
+
+
+# ------------------------------------------------------------------------------
+# Factory function for compatibility
+# ------------------------------------------------------------------------------
+
+def create_claude4_model(
+    vocab_size: int = 50000,
+    d_model: int = 256,
+    num_layers: int = 6,
+    num_heads: int = 8,
+    ffn_hidden: int = 1024,
+    enable_reflection: bool = False,
+    **kwargs
+):
+    """
+    Factory function for backward compatibility.
+    Maps old parameter names (num_heads, ffn_hidden) to new ones (n_heads, d_ff).
+    """
+    return Claude4Model(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        num_layers=num_layers,
+        n_heads=num_heads,
+        d_ff=ffn_hidden,
+        enable_reflection=enable_reflection,
+        **kwargs
+    )

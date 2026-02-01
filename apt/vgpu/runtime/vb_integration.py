@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from virtual_blackwell_adapter_v6_4 import VirtualBlackwellAdapterV64
+from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapterV64
 
 
 @dataclass
