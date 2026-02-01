@@ -12,12 +12,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from claude4_model import create_claude4_model  # user-provided test model
+from apt.model.architectures.claude4_model import Claude4Model
 
 # VB + sparse attention
-from vb_integration_v6_2 import apply_virtual_blackwell_v62, VBConfigV62, vb_stats_summary
+from apt.vgpu.runtime.vb_integration import apply_virtual_blackwell_v62, VBConfigV62, vb_stats_summary
 try:
-    from vb_sparse_attention import apply_sparse_attention
+    from apt.vgpu.runtime.vb_sparse_attention import apply_sparse_attention
     HAS_SPARSE = True
 except Exception:
     HAS_SPARSE = False
@@ -57,7 +57,7 @@ def main():
     torch.manual_seed(0)
 
     print("Creating Claude4 test model...")
-    model = create_claude4_model(vocab_size=50000, d_model=256, num_layers=3, num_heads=8, ffn_hidden=1024).to(device)
+    model = Claude4Model(vocab_size=50000, d_model=256, num_layers=3, n_heads=8, d_ff=1024, enable_reflection=False).to(device)
     print("Params:", sum(p.numel() for p in model.parameters()))
 
     # baseline
@@ -65,7 +65,7 @@ def main():
     print(f"\n[Baseline] 20 batches: {base_t:.2f}s | avg loss {base_loss:.4f} | {20/base_t:.3f} batch/s")
 
     # recreate model for fair comparison
-    model = create_claude4_model(vocab_size=50000, d_model=256, num_layers=3, num_heads=8, ffn_hidden=1024).to(device)
+    model = Claude4Model(vocab_size=50000, d_model=256, num_layers=3, n_heads=8, d_ff=1024, enable_reflection=False).to(device)
 
     if HAS_SPARSE:
         print("\nApplying sparse attention patch...")

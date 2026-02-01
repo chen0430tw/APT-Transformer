@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from virtual_blackwell_adapter_v6_2 import VirtualBlackwellAdapterV62
+from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapterV62
 
 
 @dataclass
