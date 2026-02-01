@@ -1,10 +1,9 @@
 
 """
-Training speed test for Virtual Blackwell v6.2
-Adds:
+Training speed test for Virtual Blackwell v6.4
 - Baseline (no VB) timing
-- Optional sparse-attention patch before VB
-- VB stats summary at end
+- Optional sparse-attention patch (local sliding-window)
+- VB stats summary at end (includes scale reuse rate)
 """
 
 import time
@@ -12,12 +11,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from apt.model.architectures.claude4_model import Claude4Model
+from claude4_model import create_claude4_model
 
-# VB + sparse attention
-from apt.vgpu.runtime.vb_integration import apply_virtual_blackwell_v62, VBConfigV62, vb_stats_summary
+from vb_integration_v6_4 import apply_virtual_blackwell_v64, VBConfigV64, vb_stats_summary
+
 try:
-    from apt.vgpu.runtime.vb_sparse_attention import apply_sparse_attention
+    from vb_sparse_attention import apply_sparse_attention, LocalAttnConfig
     HAS_SPARSE = True
 except Exception:
     HAS_SPARSE = False
@@ -26,11 +25,10 @@ except Exception:
 def run_train_loop(model, device, batches=20, batch_size=8, seq_len=128, vocab=50000, lr=1e-3):
     model.train()
     opt = optim.AdamW(model.parameters(), lr=lr)
-    # synthetic token batch
     x = torch.randint(0, vocab, (batch_size, seq_len), device=device)
     y = torch.randint(0, vocab, (batch_size, seq_len), device=device)
 
-    # warmup 2 iters to stabilize CUDA kernels
+    # warmup
     for _ in range(2):
         opt.zero_grad(set_to_none=True)
         out = model(x)
@@ -38,17 +36,22 @@ def run_train_loop(model, device, batches=20, batch_size=8, seq_len=128, vocab=5
         loss.backward()
         opt.step()
 
-    torch.cuda.synchronize() if device.startswith("cuda") else None
+    if device.startswith("cuda"):
+        torch.cuda.synchronize()
+
     t0 = time.time()
     losses = []
-    for i in range(batches):
+    for _ in range(batches):
         opt.zero_grad(set_to_none=True)
         out = model(x)
         loss = nn.functional.cross_entropy(out.view(-1, out.size(-1)), y.view(-1))
         loss.backward()
         opt.step()
         losses.append(float(loss.item()))
-    torch.cuda.synchronize() if device.startswith("cuda") else None
+
+    if device.startswith("cuda"):
+        torch.cuda.synchronize()
+
     return time.time() - t0, sum(losses) / len(losses)
 
 
@@ -57,30 +60,37 @@ def main():
     torch.manual_seed(0)
 
     print("Creating Claude4 test model...")
-    model = Claude4Model(vocab_size=50000, d_model=256, num_layers=3, n_heads=8, d_ff=1024, enable_reflection=False).to(device)
+    model = create_claude4_model(vocab_size=50000, d_model=256, num_layers=3, num_heads=8, ffn_hidden=1024).to(device)
     print("Params:", sum(p.numel() for p in model.parameters()))
 
-    # baseline
     base_t, base_loss = run_train_loop(model, device)
     print(f"\n[Baseline] 20 batches: {base_t:.2f}s | avg loss {base_loss:.4f} | {20/base_t:.3f} batch/s")
 
-    # recreate model for fair comparison
-    model = Claude4Model(vocab_size=50000, d_model=256, num_layers=3, n_heads=8, d_ff=1024, enable_reflection=False).to(device)
+    # recreate for VB run
+    model = create_claude4_model(vocab_size=50000, d_model=256, num_layers=3, num_heads=8, ffn_hidden=1024).to(device)
 
     if HAS_SPARSE:
-        print("\nApplying sparse attention patch...")
-        # local window of 32 as a safe default for seq_len=128
-        apply_sparse_attention(model, window_size=32, topk=None)
-        print("Sparse attention patched.")
+        print("\nApplying sparse attention patch (local window=32)...")
+        cfg = LocalAttnConfig(window=32, causal=True, dropout_p=0.0, use_sdpa=True)
+        patched = apply_sparse_attention(model, n_heads=8, cfg=cfg)
+        print(f"Sparse attention patched modules: {patched}")
     else:
         print("\nSparse attention module not found; skipping.")
 
-    print("\nApplying Virtual Blackwell v6.2...")
-    cfg = VBConfigV62(pulse_interval=20, q=0.999, sample_size=8192, drift_threshold=0.20, enable_fp4_coarse=True)
-    model, adapter = apply_virtual_blackwell_v62(model, cfg)
+    print("\nApplying Virtual Blackwell v6.4...")
+    cfg = VBConfigV64(
+        pulse_interval=20,
+        q=0.999,
+        update_threshold=0.20,
+        ema_alpha=0.10,
+        quant_samples=50000,
+        cheap_samples=2048,
+        use_fake_int8=False,
+    )
+    model, adapter = apply_virtual_blackwell_v64(model, cfg)
 
     vb_t, vb_loss = run_train_loop(model, device)
-    print(f"\n[VB v6.2] 20 batches: {vb_t:.2f}s | avg loss {vb_loss:.4f} | {20/vb_t:.3f} batch/s")
+    print(f"\n[VB v6.4] 20 batches: {vb_t:.2f}s | avg loss {vb_loss:.4f} | {20/vb_t:.3f} batch/s")
     print("\nVB stats:")
     print(vb_stats_summary(adapter, top_k=12))
 

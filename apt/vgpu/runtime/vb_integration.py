@@ -1,37 +1,34 @@
 
 """
-VB Integration v6.2
-- Uses VirtualBlackwellAdapterV62
-- Global-step pulse scheduling with round-robin phases (smooth overhead)
-- Optional sparse attention patching hook (if vb_sparse_attention is available)
+VB Integration v6.4
+-------------------
+- Uses VirtualBlackwellAdapterV64 (scale reuse fixed + optional fake INT8)
+- Round-robin per-layer pulse phases to spread overhead (global-step schedule)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapterV62
+from virtual_blackwell_adapter_v6_4 import VirtualBlackwellAdapterV64
 
 
 @dataclass
-class VBConfigV62:
+class VBConfigV64:
     pulse_interval: int = 20
     q: float = 0.999
-    sample_size: int = 8192
-    drift_threshold: float = 0.20
-    enable_fp4_coarse: bool = True
+    update_threshold: float = 0.20
+    ema_alpha: float = 0.10
+    quant_samples: int = 50000
+    cheap_samples: int = 2048
+    use_fake_int8: bool = False  # OFF by default for speed tests
 
 
 class VBController(nn.Module):
-    """
-    Keeps a global step counter (increments once per model forward).
-    Attached to model as model._vb_controller.
-    """
     def __init__(self):
         super().__init__()
         self.register_buffer("_global_step", torch.zeros((), dtype=torch.long), persistent=False)
@@ -44,11 +41,11 @@ class VBController(nn.Module):
         return int(self._global_step.item())
 
 
-class VBOptimizedLinearV62(nn.Module):
+class VBOptimizedLinearV64(nn.Module):
     def __init__(
         self,
         base: nn.Linear,
-        adapter: VirtualBlackwellAdapterV62,
+        adapter: VirtualBlackwellAdapterV64,
         controller: VBController,
         name: str,
         layer_index: int,
@@ -64,49 +61,43 @@ class VBOptimizedLinearV62(nn.Module):
         self.phase = self.layer_index % self.pulse_interval
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # round-robin pulse: only a subset of layers do pulse in a given step
         step = self.controller.step
         is_pulse = (step % self.pulse_interval) == self.phase
+
+        self.adapter.observe_call(self.name, is_pulse=is_pulse)
+
         if is_pulse:
             return self.adapter.linear_pulse(x, self.base.weight, self.base.bias, self.name)
-        return self.adapter.linear_fast(x, self.base.weight, self.base.bias, self.name)
+        return self.adapter.linear_fast(x, self.base.weight, self.base.bias)
 
 
-def _iter_named_linears(model: nn.Module):
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            yield name, module
-
-
-def apply_virtual_blackwell_v62(
+def apply_virtual_blackwell_v64(
     model: nn.Module,
-    config: Optional[VBConfigV62] = None,
+    config: Optional[VBConfigV64] = None,
     skip_large_out_features: int = 20000,
-) -> Tuple[nn.Module, VirtualBlackwellAdapterV62]:
+) -> Tuple[nn.Module, VirtualBlackwellAdapterV64]:
     """
-    Replace most nn.Linear layers with VBOptimizedLinearV62 in-place.
-    Keeps ultra-large output heads as-is by default (e.g., vocab projection).
+    Replace nn.Linear layers in-place (except huge output heads).
     Returns (model, adapter).
     """
     if config is None:
-        config = VBConfigV62()
+        config = VBConfigV64()
 
-    # attach controller
     controller = VBController()
     model._vb_controller = controller  # type: ignore[attr-defined]
 
-    adapter = VirtualBlackwellAdapterV62(
+    adapter = VirtualBlackwellAdapterV64(
         q=config.q,
-        sample_size=config.sample_size,
-        drift_threshold=config.drift_threshold,
-        enable_fp4_coarse=config.enable_fp4_coarse,
+        update_threshold=config.update_threshold,
+        ema_alpha=config.ema_alpha,
+        quant_samples=config.quant_samples,
+        cheap_samples=config.cheap_samples,
+        use_fake_int8=config.use_fake_int8,
     )
 
-    # bump global step once per forward of the root model
     def _pre_hook(_module, _inputs):
         controller.bump()
 
-    # remove existing hook if any
     if hasattr(model, "_vb_pre_hook_handle"):
         try:
             model._vb_pre_hook_handle.remove()
@@ -114,7 +105,6 @@ def apply_virtual_blackwell_v62(
             pass
     model._vb_pre_hook_handle = model.register_forward_pre_hook(_pre_hook)  # type: ignore[attr-defined]
 
-    # Do replacement by traversing immediate children recursively
     replaced = 0
     layer_index = 0
 
@@ -124,11 +114,10 @@ def apply_virtual_blackwell_v62(
             full_name = f"{prefix}.{child_name}" if prefix else child_name
 
             if isinstance(child, nn.Linear):
-                # Skip enormous vocab heads etc.
                 if child.out_features >= skip_large_out_features:
                     continue
 
-                wrapped = VBOptimizedLinearV62(
+                wrapped = VBOptimizedLinearV64(
                     base=child,
                     adapter=adapter,
                     controller=controller,
@@ -149,29 +138,25 @@ def apply_virtual_blackwell_v62(
     return model, adapter
 
 
-def vb_stats_summary(adapter: VirtualBlackwellAdapterV62, top_k: int = 10) -> str:
-    items = []
-    for name, st in adapter.stats.items():
-        items.append((name, st))
-    # sort by pulse calls desc
-    items.sort(key=lambda t: t[1].pulse_calls, reverse=True)
-    lines = []
-    total_calls = sum(st.total_calls for _, st in items)
-    pulse_calls = sum(st.pulse_calls for _, st in items)
-    fast_calls = sum(st.fast_calls for _, st in items)
-    scale_updates = sum(st.scale_updates for _, st in items)
-    scale_reuses = sum(st.scale_reuses for _, st in items)
+def vb_stats_summary(adapter: VirtualBlackwellAdapterV64, top_k: int = 12) -> str:
+    d = adapter.export_stats()
+    layers = d["layers"]
+    items = sorted(layers.items(), key=lambda kv: kv[1].get("pulse", 0), reverse=True)
 
-    lines.append(f"Total wrapped-linear calls: {total_calls}")
-    lines.append(f"Pulse calls: {pulse_calls} | Fast calls: {fast_calls}")
-    if scale_updates + scale_reuses > 0:
-        hit = 100.0 * scale_reuses / (scale_updates + scale_reuses)
-        lines.append(f"Scale cache reuse: {scale_reuses} / {scale_updates + scale_reuses} ({hit:.1f}%)")
+    lines = []
+    lines.append(f"Total wrapped-linear calls: {d['Total wrapped-linear calls']}")
+    lines.append(f"Pulse calls: {d['Pulse calls']} | Fast calls: {d['Fast calls']}")
+    denom = d["Scale cache updates"] + d["Scale cache reuse"]
+    if denom > 0:
+        hit = 100.0 * d["Scale cache reuse"] / denom
+        lines.append(f"Scale cache reuse: {d['Scale cache reuse']} / {denom} ({hit:.1f}%)")
+    else:
+        lines.append("Scale cache reuse: 0 / 0 (n/a)")
     lines.append("")
     lines.append(f"Top {top_k} layers by pulse calls:")
     for name, st in items[:top_k]:
         lines.append(
-            f"- {name}: total={st.total_calls}, pulse={st.pulse_calls}, fast={st.fast_calls}, "
-            f"scale_updates={st.scale_updates}, scale_reuses={st.scale_reuses}"
+            f"- {name}: total={st['total']}, pulse={st['pulse']}, fast={st['fast']}, "
+            f"scale_updates={st['scale_updates']}, scale_reuses={st['scale_reuses']}"
         )
     return "\n".join(lines)

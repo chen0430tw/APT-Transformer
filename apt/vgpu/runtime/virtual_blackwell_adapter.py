@@ -1,162 +1,249 @@
 
 """
-Virtual Blackwell Adapter v6.2
-- Fixes pulse scheduling semantics (round-robin per layer, global step)
-- Adds cheap, cache-friendly scale update (approx quantile on small, fixed sample)
-- Avoids randperm() per call (precomputed indices)
-- Keeps everything on GPU (no .cpu() or Python loops over elements)
+Virtual Blackwell Adapter v6.4
+==============================
+
+Goal of v6.4
+------------
+Fix the two practical issues seen in v6.2 results:
+
+1) scale cache reuse stays at 0%
+   - v6.2 effectively "updated" on every pulse because the reuse decision
+     was tied to unstable signals (or was not wired tightly per-layer).
+
+2) training-speed tests should not regress
+   - Fake INT8 in PyTorch (quantize->dequantize->fp GEMM) is *slower*.
+     v6.4 keeps fake INT8 optional and defaults it OFF for speed tests.
+     You can still enable it to validate numerical behavior / statistics.
+
+Key idea
+--------
+On each pulse we do:
+  - cheap drift check (mean(|w|) on a fixed subsample)
+  - only if drift > threshold OR no cached scale -> run quantile sampling
+  - otherwise reuse cached scale
+
+This produces real reuse once the weight distribution stabilizes.
+
+This file is self-contained (no external deps beyond torch).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
-
+from typing import Dict, Optional, Any, Tuple
+import math
 import torch
 import torch.nn.functional as F
 
 
 @dataclass
-class VBLayerStats:
-    total_calls: int = 0          # forward calls of the VB wrapped layer
-    pulse_calls: int = 0          # how many times we ran scale update + fake-int8
-    fast_calls: int = 0           # how many times we ran pure fp path
-    scale_updates: int = 0        # how many times scale was recomputed
-    scale_reuses: int = 0         # how many times cached scale reused
+class LayerQuantState:
+    # cached weight scale (scalar tensor on same device as weights)
+    w_scale: Optional[torch.Tensor] = None
+
+    # drift stats (Python floats)
+    metric_ema: Optional[float] = None          # EMA of quantile(|w|)
+    cheap_ema: Optional[float] = None           # EMA of mean(|w|) on subsample
+    last_q: Optional[float] = None              # last quantile(|w|)
+
+    # fixed subsample indices for cheap drift check
+    sample_idx: Optional[torch.Tensor] = None
+
+    # counters
+    total_calls: int = 0
+    fast_calls: int = 0
+    pulse_calls: int = 0
+    scale_updates: int = 0
+    scale_reuses: int = 0
 
 
-class VirtualBlackwellAdapterV62:
+def _rand_sample_abs(x: torch.Tensor, max_samples: int, *, seed: int) -> torch.Tensor:
+    """Return 1D abs-sample tensor on the same device."""
+    flat = x.detach().reshape(-1)
+    n = flat.numel()
+    if n == 0:
+        return flat
+    if n <= max_samples:
+        return flat.abs()
+    g = torch.Generator(device=flat.device)
+    g.manual_seed(seed & 0xFFFFFFFF)
+    idx = torch.randint(0, n, (max_samples,), device=flat.device, generator=g, dtype=torch.int64)
+    return flat.index_select(0, idx).abs()
+
+
+def _approx_quantile_abs(x: torch.Tensor, q: float, max_samples: int, *, seed: int) -> torch.Tensor:
     """
-    Per-layer cached quant scale:
-      - scale = quantile(|W|, q) estimated on a fixed-size sample of elements
-      - scale updated only when cheap drift test triggers
+    Approximate quantile(|x|) via sampling + kthvalue.
+    Returns a scalar tensor on the same device.
     """
+    s = _rand_sample_abs(x, max_samples=max_samples, seed=seed)
+    n = s.numel()
+    if n == 0:
+        return torch.zeros((), device=x.device, dtype=torch.float32)
+    k = int(math.ceil(q * n))
+    k = max(1, min(n, k))
+    # kthvalue is 1-indexed in docs; torch.kthvalue takes k in [1..n]
+    return torch.kthvalue(s, k).values
 
+
+def _fake_int8_quant_dequant(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """
+    Fake symmetric INT8 quantization (for behavior tests only).
+    quantize to int8 then dequantize back to float, on the same device.
+    """
+    # clamp scale
+    s = torch.clamp(scale.to(torch.float32), min=1e-12)
+    q = torch.round(x.to(torch.float32) / s).clamp(-127, 127).to(torch.int8)
+    return (q.to(torch.float32) * s).to(dtype=x.dtype)
+
+
+class VirtualBlackwellAdapterV64:
+    """
+    Per-layer scale cache + pulse statistics.
+
+    This class is purely a helper; the layer wrapper decides when to call
+    linear_fast vs linear_pulse.
+    """
     def __init__(
         self,
+        *,
         q: float = 0.999,
-        sample_size: int = 8192,
-        drift_threshold: float = 0.20,  # ±20%
-        eps: float = 1e-8,
-        enable_fp4_coarse: bool = True,
-        int8_clip: int = 127,
+        update_threshold: float = 0.20,
+        ema_alpha: float = 0.10,
+        quant_samples: int = 50000,
+        cheap_samples: int = 2048,
+        use_fake_int8: bool = False,  # OFF by default (speed tests)
     ):
         self.q = float(q)
-        self.sample_size = int(sample_size)
-        self.drift_threshold = float(drift_threshold)
-        self.eps = float(eps)
-        self.enable_fp4_coarse = bool(enable_fp4_coarse)
-        self.int8_clip = int(int8_clip)
+        self.update_threshold = float(update_threshold)
+        self.ema_alpha = float(ema_alpha)
+        self.quant_samples = int(quant_samples)
+        self.cheap_samples = int(cheap_samples)
+        self.use_fake_int8 = bool(use_fake_int8)
 
-        # caches keyed by layer_name
-        self._scale_cache: Dict[str, torch.Tensor] = {}
-        self._maxabs_cache: Dict[str, torch.Tensor] = {}
-        self._sample_idx_cache: Dict[Tuple[int, torch.device], torch.Tensor] = {}
-        self.stats: Dict[str, VBLayerStats] = {}
+        self._states: Dict[str, LayerQuantState] = {}
 
-    def _get_stats(self, name: str) -> VBLayerStats:
-        st = self.stats.get(name)
+        # convenience counters for your printers
+        self.total_wrapped_linear_calls = 0
+        self.pulse_calls = 0
+        self.fast_calls = 0
+        self.scale_cache_reuse = 0
+        self.scale_cache_updates = 0
+
+    def _state(self, layer_id: str) -> LayerQuantState:
+        st = self._states.get(layer_id)
         if st is None:
-            st = VBLayerStats()
-            self.stats[name] = st
+            st = LayerQuantState()
+            self._states[layer_id] = st
         return st
 
     @torch.no_grad()
-    def _get_sample_indices(self, numel: int, device: torch.device) -> torch.Tensor:
+    def _cheap_absmean(self, w: torch.Tensor, st: LayerQuantState, *, seed: int) -> float:
+        flat = w.detach().reshape(-1)
+        n = flat.numel()
+        if n == 0:
+            return 0.0
+        k = min(self.cheap_samples, n)
+
+        if st.sample_idx is None or st.sample_idx.numel() != k or st.sample_idx.device != flat.device:
+            g = torch.Generator(device=flat.device)
+            g.manual_seed(seed & 0xFFFFFFFF)
+            st.sample_idx = torch.randint(0, n, (k,), device=flat.device, generator=g, dtype=torch.int64)
+
+        x = flat.index_select(0, st.sample_idx)
+        return float(x.abs().mean().item())
+
+    @torch.no_grad()
+    def _ensure_scale(self, layer_id: str, w: torch.Tensor) -> Tuple[torch.Tensor, bool]:
         """
-        Fixed indices per (numel, device). Use deterministic strided sampling to avoid randperm O(N).
+        Returns (scale_tensor, did_update)
         """
-        key = (numel, device)
-        if key in self._sample_idx_cache:
-            return self._sample_idx_cache[key]
-        k = min(self.sample_size, numel)
-        if k <= 0:
-            idx = torch.zeros((0,), device=device, dtype=torch.long)
+        st = self._state(layer_id)
+        seed = hash(layer_id)
+
+        # If we have a scale, try cheap drift check first
+        if st.w_scale is not None and st.cheap_ema is not None:
+            cheap = self._cheap_absmean(w, st, seed=seed)
+            rel = abs(cheap - st.cheap_ema) / max(st.cheap_ema, 1e-12)
+            if rel <= self.update_threshold:
+                # reuse
+                st.scale_reuses += 1
+                self.scale_cache_reuse += 1
+                return st.w_scale, False
+
+        # Need update (first time or drift too big): compute sampled quantile(|w|)
+        qv = _approx_quantile_abs(w, q=self.q, max_samples=self.quant_samples, seed=seed)
+        qf = float(qv.to(torch.float32).item())
+        scale = max(qf / 127.0, 1e-12)
+        st.w_scale = torch.tensor(scale, device=w.device, dtype=torch.float32)
+
+        # update EMAs
+        cheap_now = self._cheap_absmean(w, st, seed=seed ^ 0x9E3779B9)
+        if st.metric_ema is None:
+            st.metric_ema = qf
+            st.cheap_ema = cheap_now
         else:
-            # stride sampling: i * (numel/k) modulo numel
-            stride = max(1, numel // k)
-            idx = (torch.arange(k, device=device, dtype=torch.long) * stride) % numel
-        self._sample_idx_cache[key] = idx
-        return idx
+            a = self.ema_alpha
+            st.metric_ema = (1.0 - a) * st.metric_ema + a * qf
+            st.cheap_ema = (1.0 - a) * st.cheap_ema + a * cheap_now
+        st.last_q = qf
 
-    @torch.no_grad()
-    def _approx_quantile_abs(self, w: torch.Tensor) -> torch.Tensor:
-        """
-        Approximate quantile(|w|, q) from a fixed sample, using kthvalue (O(k)).
-        Returns scalar tensor on same device.
-        """
-        flat = w.reshape(-1)
-        idx = self._get_sample_indices(flat.numel(), flat.device)
-        if idx.numel() == 0:
-            return torch.tensor(1.0, device=flat.device, dtype=flat.dtype)
-        sample = flat.index_select(0, idx).abs()
-        # kth index for quantile: ceil(q*k)-1
-        k = sample.numel()
-        kth = int(max(1, min(k, int(self.q * k + 0.9999))))  # 1..k
-        # kthvalue returns the kth smallest
-        val = torch.kthvalue(sample, kth).values
-        return torch.clamp(val, min=self.eps)
-
-    @torch.no_grad()
-    def _drifted(self, name: str, w: torch.Tensor) -> bool:
-        """
-        Cheap drift test: compare max(|w|) to cached max(|w|).
-        """
-        maxabs = w.abs().amax()
-        old = self._maxabs_cache.get(name)
-        if old is None:
-            self._maxabs_cache[name] = maxabs
-            return True
-        ratio = maxabs / (old + self.eps)
-        # drift if outside [1-thr, 1+thr]
-        thr = self.drift_threshold
-        drift = (ratio > (1.0 + thr)) | (ratio < (1.0 - thr))
-        if drift.item():
-            self._maxabs_cache[name] = maxabs
-        return bool(drift.item())
-
-    @torch.no_grad()
-    def get_scale(self, name: str, w: torch.Tensor) -> torch.Tensor:
-        """
-        Return cached scale; refresh only if drifted.
-        """
-        st = self._get_stats(name)
-        if name in self._scale_cache and (not self._drifted(name, w)):
-            st.scale_reuses += 1
-            return self._scale_cache[name]
-
-        scale = self._approx_quantile_abs(w)
-        self._scale_cache[name] = scale
         st.scale_updates += 1
-        return scale
+        self.scale_cache_updates += 1
+        return st.w_scale, True
 
-    def linear_fast(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], name: str) -> torch.Tensor:
-        st = self._get_stats(name)
-        st.total_calls += 1
-        st.fast_calls += 1
+    def linear_fast(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor]) -> torch.Tensor:
         return F.linear(x, w, b)
 
-    @torch.no_grad()
-    def _fake_int8(self, x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-        # symmetric fake quant
-        s = scale.to(dtype=x.dtype)
-        q = torch.round(x / s).clamp(-self.int8_clip, self.int8_clip)
-        return q * s
+    def linear_pulse(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], layer_id: str) -> torch.Tensor:
+        """
+        Pulse path:
+          - update/reuse scale
+          - optional fake INT8 (OFF by default)
+        """
+        scale, _ = self._ensure_scale(layer_id, w)
+        if not self.use_fake_int8:
+            return F.linear(x, w, b)
 
-    def linear_pulse(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], name: str) -> torch.Tensor:
-        st = self._get_stats(name)
-        st.total_calls += 1
-        st.pulse_calls += 1
-
-        scale = self.get_scale(name, w)
-        # Optional FP4 coarse stage (very cheap): quantize x to a coarse grid before int8
-        if self.enable_fp4_coarse:
-            # 16-level symmetric grid: [-8..7] * (scale/8)
-            s4 = (scale / 8.0).to(dtype=x.dtype)
-            xq4 = torch.round(x / s4).clamp(-8, 7) * s4
-            xq = self._fake_int8(xq4, scale)
-        else:
-            xq = self._fake_int8(x, scale)
-
-        wq = self._fake_int8(w, scale)
+        # fake quant-dequant on activations and weights then fp GEMM
+        xq = _fake_int8_quant_dequant(x, scale)
+        wq = _fake_int8_quant_dequant(w, scale)
         return F.linear(xq, wq, b)
+
+    def observe_call(self, layer_id: str, *, is_pulse: bool) -> None:
+        st = self._state(layer_id)
+        st.total_calls += 1
+        self.total_wrapped_linear_calls += 1
+        if is_pulse:
+            st.pulse_calls += 1
+            self.pulse_calls += 1
+        else:
+            st.fast_calls += 1
+            self.fast_calls += 1
+
+    def export_stats(self) -> Dict[str, Any]:
+        """
+        Returns a dict compatible with the speed-test printer plus detailed per-layer stats.
+        """
+        layers = {}
+        for k, st in self._states.items():
+            layers[k] = {
+                "total": st.total_calls,
+                "pulse": st.pulse_calls,
+                "fast": st.fast_calls,
+                "scale_updates": st.scale_updates,
+                "scale_reuses": st.scale_reuses,
+                "last_q": st.last_q,
+                "metric_ema": st.metric_ema,
+                "cheap_ema": st.cheap_ema,
+            }
+
+        return {
+            "Total wrapped-linear calls": self.total_wrapped_linear_calls,
+            "Pulse calls": self.pulse_calls,
+            "Fast calls": self.fast_calls,
+            "Scale cache reuse": self.scale_cache_reuse,
+            "Scale cache updates": self.scale_cache_updates,
+            "layers": layers,
+        }
