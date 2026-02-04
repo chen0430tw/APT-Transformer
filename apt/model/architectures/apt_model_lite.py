@@ -11,6 +11,8 @@ import os
 SUPPRESS_APT_WARNINGS = os.environ.get('SUPPRESS_APT_WARNINGS', 'False').lower() in ('true', '1', 'yes')
 from apt.core.fake_torch import get_torch
 torch = get_torch()
+from apt.core.fake_torch import get_torch
+torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 import math
@@ -24,6 +26,250 @@ from apt.model.layers.left_spin_smooth import (
     LeftSpinResidual,
     AdaptiveLeftSpinStep
 )
+
+# =========================
+# APT-Lite additions
+# =========================
+
+class RMSNorm(nn.Module):
+    """RMSNorm (轻量稳定)"""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        # x: (..., dim)
+        norm = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (x / norm) * self.weight
+
+
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: (xW1) * silu(xW3) -> W2"""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.0):
+        super().__init__()
+        self.w12 = nn.Linear(d_model, d_ff)   # like w1
+        self.w3  = nn.Linear(d_model, d_ff)   # like w3 (gate)
+        self.w2  = nn.Linear(d_ff, d_model)   # like w2
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x):
+        return self.w2(self.drop(F.silu(self.w3(x)) * self.w12(x)))
+
+
+class AutopoieticGate(nn.Module):
+    """
+    APT-Lite 的“偷懒但仍自生成”的最小实现：
+    不去做重型的注意力矩阵卷积变换，而是在 residual 上做一个可学习的“自生成门控”。
+
+    直觉：
+      - 输入能量越高 / 越不稳定，门控越收缩（减少爆炸）
+      - 输入越稳定，门控越放行（保留表达）
+    """
+    def __init__(self, d_model: int, eps: float = 1e-6, init: float = 0.0):
+        super().__init__()
+        self.eps = eps
+        # 单标量门控也足够表达“偷懒”倾向；需要更强可换成向量门控
+        self.logit = nn.Parameter(torch.tensor(float(init)))
+
+    def forward(self, x):
+        # x: (B,T,C)
+        # energy ~ rms
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        g = torch.sigmoid(self.logit) / (1.0 + rms)  # (B,T,1)
+        return g
+
+
+class LiteSelfAttention(nn.Module):
+    """
+    轻量自注意力：优先走 scaled_dot_product_attention（若可用），否则回退到显式 softmax。
+    与 APT-Lite 的门控结合使用。
+    """
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0, batch_first: bool = True):
+        super().__init__()
+        assert d_model % nhead == 0, "d_model must be divisible by nhead"
+        self.d_model = d_model
+        self.nhead = nhead
+        self.head_dim = d_model // nhead
+        self.scale = self.head_dim ** -0.5
+        self.batch_first = batch_first
+        # fused qkv projection
+        self.w_qkv = nn.Linear(d_model, 3 * d_model)
+        self.w_o = nn.Linear(d_model, d_model)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x, attn_mask=None, key_padding_mask=None, is_causal: bool = False):
+        # x: (B,T,C) if batch_first
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+        B, T, C = x.shape
+        qkv = self.w_qkv(x)  # (B,T,3C)
+        q, k, v = qkv.chunk(3, dim=-1)
+
+        # reshape to (B, h, T, hd)
+        def reshape(t):
+            return t.view(B, T, self.nhead, self.head_dim).transpose(1, 2)
+        q = reshape(q)
+        k = reshape(k)
+        v = reshape(v)
+
+        # build additive mask if needed
+        # attn_mask expected broadcastable to (B,h,T,S) or (T,S)
+        # key_padding_mask: (B,T) where True means masked
+        if key_padding_mask is not None:
+            # convert to additive mask
+            kp = key_padding_mask.view(B, 1, 1, T).to(dtype=x.dtype)
+            # use -inf for masked positions; fake_torch may not have inf, use large negative
+            neg = torch.tensor(-1e9, device=x.device, dtype=x.dtype)
+            kp = torch.where(kp > 0, neg, torch.zeros_like(kp))
+        else:
+            kp = None
+
+        # use PyTorch SDPA if available
+        sdpa = getattr(F, "scaled_dot_product_attention", None)
+        if callable(sdpa):
+            # F.scaled_dot_product_attention expects (B,h,T,hd)
+            # It supports attn_mask as float/bool. Combine masks if both.
+            merged = attn_mask
+            if kp is not None:
+                merged = kp if merged is None else (merged + kp)
+            out = sdpa(q, k, v, attn_mask=merged, dropout_p=self.drop.p if self.training else 0.0, is_causal=is_causal)
+        else:
+            # manual attention
+            scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # (B,h,T,T)
+            if attn_mask is not None:
+                scores = scores + attn_mask
+            if kp is not None:
+                scores = scores + kp
+            attn = torch.softmax(scores, dim=-1)
+            attn = self.drop(attn)
+            out = torch.matmul(attn, v)  # (B,h,T,hd)
+
+        # merge heads -> (B,T,C)
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        out = self.w_o(out)
+
+        if not self.batch_first:
+            out = out.transpose(0, 1)
+        return out, None
+
+
+class APTLiteEncoderLayer(nn.Module):
+    """
+    APT-Lite 编码层：
+      - RMSNorm（更稳）
+      - LiteSelfAttention（尽量走 SDPA）
+      - AutopoieticGate：保留“自生成/偷懒”倾向（门控收缩）
+      - SwiGLU FFN
+    """
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float = 0.1,
+        batch_first: bool = True,
+        norm_eps: float = 1e-6,
+        gate_init: float = 0.0,
+        **kwargs
+    ):
+        super().__init__()
+        self.batch_first = batch_first
+        self.norm1 = RMSNorm(d_model, eps=norm_eps)
+        self.norm2 = RMSNorm(d_model, eps=norm_eps)
+        self.attn = LiteSelfAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.gate = AutopoieticGate(d_model, eps=norm_eps, init=gate_init)
+        self.drop = nn.Dropout(dropout)
+        self.ffn = SwiGLU(d_model, dim_feedforward, dropout=dropout)
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+        # pre-norm
+        x = src
+        h = self.norm1(x)
+        attn_out, _ = self.attn(h, attn_mask=src_mask, key_padding_mask=src_key_padding_mask, is_causal=False)
+        g = self.gate(h)
+        x = x + self.drop(attn_out) - self.drop(g * x)  # 门控收缩 residual 的一部分（“偷懒”）
+        # ffn
+        h2 = self.norm2(x)
+        x = x + self.drop(self.ffn(h2))
+        return x
+
+
+class APTLiteDecoderLayer(nn.Module):
+    """
+    APT-Lite 解码层（简化）：自注意力 + 交叉注意力 + SwiGLU。
+    交叉注意力也走 LiteSelfAttention（把 memory 当作 kv）。
+    """
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float = 0.1,
+        batch_first: bool = True,
+        norm_eps: float = 1e-6,
+        gate_init: float = 0.0,
+        **kwargs
+    ):
+        super().__init__()
+        self.batch_first = batch_first
+        self.norm1 = RMSNorm(d_model, eps=norm_eps)
+        self.norm2 = RMSNorm(d_model, eps=norm_eps)
+        self.norm3 = RMSNorm(d_model, eps=norm_eps)
+        self.self_attn = LiteSelfAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.cross_q = nn.Linear(d_model, d_model)
+        self.cross_kv = nn.Linear(d_model, 2*d_model)
+        self.cross_o = nn.Linear(d_model, d_model)
+        self.nhead = nhead
+        self.head_dim = d_model // nhead
+        self.scale = self.head_dim ** -0.5
+        self.drop = nn.Dropout(dropout)
+        self.ffn = SwiGLU(d_model, dim_feedforward, dropout=dropout)
+        self.gate = AutopoieticGate(d_model, eps=norm_eps, init=gate_init)
+
+    def _cross_attention(self, x, mem, mem_key_padding_mask=None):
+        if not self.batch_first:
+            x = x.transpose(0,1); mem = mem.transpose(0,1)
+        B, T, C = x.shape
+        S = mem.shape[1]
+        q = self.cross_q(x)
+        kv = self.cross_kv(mem)
+        k, v = kv.chunk(2, dim=-1)
+
+        def reshape(t, L):
+            return t.view(B, L, self.nhead, self.head_dim).transpose(1,2)
+        q = reshape(q, T)
+        k = reshape(k, S)
+        v = reshape(v, S)
+
+        scores = torch.matmul(q, k.transpose(-2,-1)) * self.scale  # (B,h,T,S)
+        if mem_key_padding_mask is not None:
+            kp = mem_key_padding_mask.view(B,1,1,S).to(dtype=x.dtype)
+            neg = torch.tensor(-1e9, device=x.device, dtype=x.dtype)
+            scores = scores + torch.where(kp > 0, neg, torch.zeros_like(kp))
+        attn = torch.softmax(scores, dim=-1)
+        attn = self.drop(attn)
+        out = torch.matmul(attn, v)  # (B,h,T,hd)
+        out = out.transpose(1,2).contiguous().view(B,T,C)
+        out = self.cross_o(out)
+        if not self.batch_first:
+            out = out.transpose(0,1)
+        return out
+
+    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None,
+                tgt_key_padding_mask=None, memory_key_padding_mask=None):
+        x = tgt
+        h = self.norm1(x)
+        attn_out, _ = self.self_attn(h, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, is_causal=True)
+        g = self.gate(h)
+        x = x + self.drop(attn_out) - self.drop(g * x)
+        h2 = self.norm2(x)
+        x = x + self.drop(self._cross_attention(h2, memory, mem_key_padding_mask=memory_key_padding_mask))
+        h3 = self.norm3(x)
+        x = x + self.drop(self.ffn(h3))
+        return x
+
+
 
 
 class DBCDAC_Optimizer:
@@ -391,35 +637,6 @@ def add_gradient_hooks_to_model(model, dbc_dac_optimizer):
     return hooks
 
 
-class RMSNorm(nn.Module):
-    """RMSNorm (Root Mean Square LayerNorm), no mean subtraction."""
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (..., dim)
-        norm = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        return x * norm * self.weight
-
-
-class SwiGLU(nn.Module):
-    """SwiGLU feed-forward: (xW1) * silu(xW2) then W3."""
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, dropout: float = 0.0):
-        super().__init__()
-        self.w12 = nn.Linear(in_dim, hidden_dim * 2)
-        self.w3 = nn.Linear(hidden_dim, out_dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x12 = self.w12(x)
-        x1, x2 = x12.chunk(2, dim=-1)
-        # silu = x * sigmoid(x)
-        x = x1 * torch.sigmoid(x2)  # lightweight SiLU-ish gating (silu(x2) * x1 approximated)
-        x = self.dropout(x)
-        return self.w3(x)
-
 class PositionalEncoding(nn.Module):
     """位置编码实现，支持动态扩展"""
     def __init__(self, d_model, max_len=5000, dropout=0.1):
@@ -463,188 +680,423 @@ class PositionalEncoding(nn.Module):
 DEBUG_LOG_FILE = "autopoietic_debug.log"
 
 class AutopoieticAttention(nn.Module):
-    """自生成注意力机制（优化版）
-
-    设计目标：
-    - 热路径优先：尽量让注意力走到 PyTorch SDPA（Flash/Math/Memory-efficient）实现
-    - 保留“自生成”味道：用低秩自生成分量 + 门控温度 τ 对注意力输出做可学习扰动
-    - 保持接口兼容：forward 返回 (attn_out, attn_weights_or_None)
     """
-
+    自生成注意力机制 - 论文完整实现版本
+    实现自生成变换器(APT)的核心自生成注意力计算
+    集成DBC-DAC稳定化技术
+    """
     def __init__(
         self,
         embed_dim: int,
         num_heads: int,
         dropout: float = 0.0,
-        eps: float = 1e-6,
-        alpha: float = 0.1,
-        init_tau: float = 1.0,
-        sr_ratio: int = 4,
-        use_autopoietic: bool = True,
+        eps: float = 1e-6,  # 无穷倒数缩放因子
+        alpha: float = 0.1,  # 泰勒展开系数
+        init_tau: float = 1.0,  # 初始温度参数
+        sr_ratio: int = 4,  # 自生成矩阵压缩比
+        use_autopoietic: bool = True,  # 是否使用自生成机制
         batch_first: bool = True,
+        # DBC-DAC相关参数（此处仅保留接口，不影响本类核心实现）
         use_dbc_dac: bool = True,
         debug_mode: bool = False,
         rank_ratio_proj: float = 0.1,
         rank_ratio_res: float = 0.05,
         dbc_threshold: float = 1e-6,
-        dbc_iterations: int = 1,
-        use_fused_qkv: bool = True,
+        dbc_iterations: int = 1
     ):
         super().__init__()
-        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        self.dropout = float(dropout)
+        self.dropout = dropout
         self.head_dim = embed_dim // num_heads
-        self.batch_first = batch_first
+        self.scaling = self.head_dim ** -0.5
+        self.eps = eps
+        self.alpha = alpha
+        self.init_tau = init_tau
+        self.sr_ratio = sr_ratio
         self.use_autopoietic = use_autopoietic
-        self.alpha = float(alpha)
-        self.eps = float(eps)
-        self.debug_mode = bool(debug_mode)
+        self.batch_first = batch_first
+        self.res_scale = 1.0
 
-        # fused QKV for better kernel shapes
-        self.use_fused_qkv = bool(use_fused_qkv)
-        if self.use_fused_qkv:
-            self.qkv_proj = nn.Linear(embed_dim, 3 * embed_dim)
-            self.q_proj = self.k_proj = self.v_proj = None
-        else:
-            self.q_proj = nn.Linear(embed_dim, embed_dim)
-            self.k_proj = nn.Linear(embed_dim, embed_dim)
-            self.v_proj = nn.Linear(embed_dim, embed_dim)
-            self.qkv_proj = None
-
+        # 查询、键、值的线性变换
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
-        # 可学习温度（用于“自生成门控”）
-        self.tau = nn.Parameter(torch.ones(1) * float(init_tau))
+        # 自生成变换网络 - 使用卷积层处理注意力矩阵
+        hidden_dim = max(16, embed_dim // sr_ratio)
+        self.sr_conv1 = nn.Conv2d(1, hidden_dim, kernel_size=1)
+        self.sr_layernorm = nn.LayerNorm([hidden_dim])
+        self.sr_conv2 = nn.Conv2d(hidden_dim, 1, kernel_size=1)
 
-        # 低秩“自生成”分量：Δ = (x U) V
-        # sr_ratio 越大，rank 越小（更省 FLOPs）
-        r = max(4, embed_dim // max(1, int(sr_ratio)))
-        self.auto_u = nn.Linear(embed_dim, r, bias=False)
-        self.auto_v = nn.Linear(r, embed_dim, bias=False)
-        self.auto_gate = nn.Linear(embed_dim, num_heads, bias=True)
+        # 可学习的温度参数
+        self.tau = nn.Parameter(torch.ones(1) * init_tau)
 
-        self.dropout_layer = nn.Dropout(self.dropout)
+        # 创建dropout层
+        self.dropout_layer = nn.Dropout(dropout)
 
-    def _shape(self, x: torch.Tensor) -> torch.Tensor:
-        # (B,T,C) -> (B,H,T,D)
-        b, t, c = x.shape
-        x = x.view(b, t, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
-        return x
+        self._reset_parameters()
+        self.res_scale = 1.0
 
-    def _merge(self, x: torch.Tensor) -> torch.Tensor:
-        # (B,H,T,D) -> (B,T,C)
-        b, h, t, d = x.shape
-        return x.transpose(1, 2).contiguous().view(b, t, h * d)
+        self.debug_mode = debug_mode # 保存状态
+
+    def _reset_parameters(self):
+        nn.init.xavier_uniform_(self.q_proj.weight)
+        nn.init.xavier_uniform_(self.k_proj.weight)
+        nn.init.xavier_uniform_(self.v_proj.weight)
+        nn.init.xavier_uniform_(self.out_proj.weight)
+        nn.init.xavier_uniform_(self.sr_conv1.weight)
+        nn.init.xavier_uniform_(self.sr_conv2.weight)
+        nn.init.constant_(self.q_proj.bias, 0.)
+        nn.init.constant_(self.k_proj.bias, 0.)
+        nn.init.constant_(self.v_proj.bias, 0.)
+        nn.init.constant_(self.out_proj.bias, 0.)
+        nn.init.constant_(self.sr_conv1.bias, 0.)
+        nn.init.constant_(self.sr_conv2.bias, 0.)
+
+    def log_debug(self, message: str):
+            # 【修改点】如果不开启 debug 模式，直接跳过，绝不执行 IO
+            if not getattr(self, 'debug_mode', False):
+                return
+            
+            # 只有开启了才写文件
+            try:
+                with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(message + "\n")
+            except Exception:
+                pass
+
+    def autopoietic_transform(
+        self, 
+        attention_scores: torch.Tensor,
+        attn_mask: torch.Tensor = None
+    ) -> torch.Tensor:
+        
+        # 1. 给统计代码加上“阀门”
+        if self.debug_mode:
+            debug_lines = []
+            debug_lines.append("...")
+            min_val = attention_scores.min().item() # 只有开启debug才执行同步
+
+        """
+        自生成变换过程：对输入的注意力分数进行一系列变换。
+        这里添加详细的统计信息打印，并写入DEBUG_LOG_FILE。
+        """
+        # 第一步：打印输入attention_scores统计
+        debug_lines = []  # 初始化变量防止下面报错
+        
+        # 加上阀门！
+        if getattr(self, 'debug_mode', False):
+            # 第一步：打印输入attention_scores统计
+            debug_lines.append("\n[autopoietic_transform] >>>>>>>>> ENTER FUNCTION <<<<<<<<")
+            
+            # 【重点】把下面这些会卡顿的代码统统缩进进来！
+            min_val = attention_scores.min().item()
+            max_val = attention_scores.max().item()
+            mean_val = attention_scores.mean().item()
+            std_val = attention_scores.std().item()
+            has_nan = torch.isnan(attention_scores).any().item()
+            has_inf = torch.isinf(attention_scores).any().item()
+
+            debug_lines.append(
+                f"[Input Stats] shape={list(attention_scores.shape)} "
+                f"min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}, std={std_val:.4f}, "
+                f"NaN={has_nan}, Inf={has_inf}"
+            )
+
+        # 如果不使用自生成机制，直接返回
+        if not self.use_autopoietic:
+            debug_lines.append("[Info] use_autopoietic=False, skipping transform.")
+            self.log_debug("\n".join(debug_lines))
+            return attention_scores
+
+        # 对输入进行 clamp / nan_to_num 以保证数值安全
+        attention_scores = torch.nan_to_num(attention_scores, nan=0.0, posinf=10.0, neginf=-10.0)
+        attention_scores = torch.clamp(attention_scores, min=-15.0, max=15.0)
+
+        # 开始变换
+        original_scores = attention_scores.clone()
+        batch_size, num_heads, seq_len1, seq_len2 = attention_scores.shape
+        transformed_batch_list = []
+
+        for b in range(batch_size):
+            batch_scores = attention_scores[b]  # shape: [num_heads, seq_len1, seq_len2]
+            mean_attention = batch_scores.mean(dim=0)  # [seq_len1, seq_len2]
+
+            # 记录一下batch_scores统计
+            b_min = batch_scores.min().item()
+            b_max = batch_scores.max().item()
+            b_mean = batch_scores.mean().item()
+            b_std = batch_scores.std().item()
+            debug_lines.append(
+                f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
+                f"mean={b_mean:.4f}, std={b_std:.4f}"
+            )
+
+            # eps处理
+            eps_safe = torch.clamp(torch.tensor(self.eps, device=attention_scores.device), min=0.05, max=0.8)
+            scaled_attention = torch.clamp(mean_attention, min=-8.0, max=8.0) * eps_safe
+            scaled_attention = torch.clamp(scaled_attention, min=-10.0, max=10.0)
+
+            # 卷积映射
+            try:
+                reshaped_attn = scaled_attention.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len1, seq_len2]
+                hidden_attn = self.sr_conv1(reshaped_attn)
+                hidden_attn = F.relu(torch.clamp(hidden_attn, min=-5.0, max=5.0))
+                autopoietic_attn = self.sr_conv2(hidden_attn)
+                autopoietic_attn = autopoietic_attn.squeeze(0).squeeze(0)  # [seq_len1, seq_len2]
+                autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
+            except Exception as e:
+                debug_lines.append(
+                    f"[Batch {b}] 卷积映射出错: {e}, 使用平滑替代"
+                )
+                kernel_size = min(5, min(seq_len1, seq_len2))
+                if kernel_size % 2 == 0:
+                    kernel_size -= 1
+                if kernel_size >= 3:
+                    try:
+                        gaussian_kernel = torch.ones((1, 1, kernel_size, kernel_size), device=attention_scores.device)
+                        gaussian_kernel = gaussian_kernel / gaussian_kernel.sum()
+                        smoothed = F.conv2d(
+                            scaled_attention.unsqueeze(0).unsqueeze(0),
+                            gaussian_kernel,
+                            padding=kernel_size//2
+                        )
+                        autopoietic_attn = smoothed.squeeze(0).squeeze(0)
+                        autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
+                    except Exception:
+                        autopoietic_attn = torch.tanh(scaled_attention * 0.5) * 2.0
+                else:
+                    autopoietic_attn = torch.tanh(scaled_attention * 0.5) * 2.0
+
+            # 检查 NaN/Inf
+                autopoietic_attn = torch.nan_to_num(autopoietic_attn, nan=0.0, posinf=2.0, neginf=-2.0)
+                autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
+
+            # 处理掩码
+            mean_padding_mask = None
+            if attn_mask is not None:
+                if attn_mask.dim() == 2:
+                    mean_padding_mask = attn_mask.clone()
+                elif attn_mask.dim() == 3 and attn_mask.size(0) == batch_size:
+                    mean_padding_mask = attn_mask[b]
+                elif attn_mask.dim() == 4:
+                    mean_padding_mask = attn_mask[b, 0]
+                if mean_padding_mask is not None and mean_padding_mask.dtype != torch.bool:
+                    mean_padding_mask = mean_padding_mask.to(torch.bool)
+
+
+            # 🚀 左旋平滑替换泰勒展开
+            # 传统: taylor = 1.0 + α·Δ  (遇尖点会炸)
+            # 左旋: taylor = 1.0 + g(φ)·Δ  (遇尖点自动缩小步长)
+
+            # 计算尖点强度（基于二范数）
+            base_value = torch.ones_like(autopoietic_attn)
+            delta_attn = autopoietic_attn  # 增量部分
+
+            # 计算相对变化强度
+            norm_base = torch.norm(base_value, p=2, dim=-1, keepdim=True) + 1e-8
+            norm_delta = torch.norm(delta_attn, p=2, dim=-1, keepdim=True)
+            spike_strength = norm_delta / norm_base
+
+            # 缓冲角: φ = α·softplus(s - τ)
+            left_spin_alpha = 0.5
+            left_spin_tau = 0.3
+            phi = left_spin_alpha * F.softplus(spike_strength - left_spin_tau)
+
+            # 门控函数: g(φ) = 1/√(1+φ²)
+            gate = 1.0 / torch.sqrt(1.0 + phi ** 2)
+
+            # 应用左旋平滑
+            scale_factor = 50.0
+            scaled_attn_2 = autopoietic_attn * scale_factor * gate  # 🔥 关键替换
+            alpha_safe = 0.05
+            taylor_expanded = 1.0 + alpha_safe * scaled_attn_2
+            taylor_expanded = torch.clamp(taylor_expanded, min=0.5, max=1.5)
+
+            if mean_padding_mask is not None:
+                taylor_expanded = torch.where(
+                    mean_padding_mask,
+                    torch.ones_like(taylor_expanded),
+                    taylor_expanded
+                )
+
+            # Sigmoid平滑
+            sigmoid_smoothed = torch.sigmoid(taylor_expanded)
+
+            # 模糊概率
+            try:
+                safe_mean = torch.clamp(mean_attention, min=-10.0, max=10.0)
+                attn_probs = F.softmax(safe_mean, dim=-1)
+                epsilon = 1e-6
+                H = -attn_probs * torch.log(attn_probs + epsilon)
+                lambda_param = torch.tensor(3.0, device=attention_scores.device)
+                F_matrix = F.softmax(lambda_param * H, dim=-1)
+                F_matrix = torch.nan_to_num(F_matrix, nan=1.0/seq_len2)
+            except Exception as e:
+                debug_lines.append(f"[Batch {b}] 模糊概率计算出错: {e}")
+                F_matrix = torch.ones_like(mean_attention) / seq_len2
+
+            transformed = sigmoid_smoothed * F_matrix
+
+            # 能量平衡
+            try:
+                energy_original = torch.norm(mean_attention, p='fro') + 1e-4
+                energy_transformed = torch.norm(transformed, p='fro') + 1e-4
+                gamma = torch.clamp(energy_original / energy_transformed, min=0.8, max=1.2)
+                transformed = gamma * transformed
+            except Exception as e:
+                debug_lines.append(f"[Batch {b}] 能量平衡计算出错: {e}")
+
+            # 动态标准差调整
+            try:
+                t_mean = transformed.mean()
+                o_mean = mean_attention.mean()
+                min_var = 1e-2
+                t_var = torch.clamp(((transformed - t_mean) ** 2).mean(), min=min_var)
+                o_var = torch.clamp(((mean_attention - o_mean) ** 2).mean(), min=min_var)
+                t_std = torch.sqrt(t_var)
+                o_std = torch.sqrt(o_var)
+                gamma_dyn = torch.clamp(o_std / t_std, min=0.8, max=1.2)
+                available_range = torch.clamp(torch.abs(mean_attention).max(), min=1.0, max=10.0)
+                std_multiplier = 0.3 * (1.0 / torch.log(1.0 + available_range))
+                std_multiplier = torch.clamp(std_multiplier, min=0.1, max=0.5)
+                centered = transformed - t_mean
+                scaled = std_multiplier * gamma_dyn * centered
+                scaled_transform = t_mean + scaled
+                entropy = torch.mean(H)
+                max_entropy = -torch.log(torch.tensor(1.0/seq_len2, device=attention_scores.device))
+                normalized_entropy = entropy / max_entropy
+                base_ratio = 0.4
+                entropy_factor = torch.clamp(normalized_entropy, min=0.0, max=0.4)
+                residual_ratio = base_ratio + entropy_factor
+                final_scores = (1 - residual_ratio) * scaled_transform + residual_ratio * mean_attention
+            except Exception as e:
+                debug_lines.append(f"[Batch {b}] 标准差调整出错: {e}")
+                final_scores = 0.5 * transformed + 0.5 * mean_attention
+
+            # 自适应温度调节
+            try:
+                base_tau = torch.clamp(self.tau, min=1.0, max=1.5)
+                values = final_scores.reshape(-1)
+                q_75 = torch.quantile(values, 0.75)
+                q_25 = torch.quantile(values, 0.25)
+                score_range = torch.clamp(q_75 - q_25, min=0.5, max=5.0)
+                adaptive_tau = base_tau * (1.0 + 0.1 * torch.log1p(score_range))
+                adaptive_tau = torch.clamp(adaptive_tau, min=1.0, max=2.0)
+                final_scores = final_scores / adaptive_tau
+                final_scores = torch.clamp(final_scores, min=-15.0, max=15.0)
+            except Exception as e:
+                debug_lines.append(f"[Batch {b}] 温度调节出错: {e}")
+                final_scores = torch.clamp(final_scores / 1.0, min=-10.0, max=10.0)
+
+            # 检查异常值比例
+            abnormal_mask = torch.isnan(final_scores) | torch.isinf(final_scores)
+            abnormal_ratio = abnormal_mask.float().mean().item()
+            if abnormal_ratio > 0.2:
+                debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio*100:.2f}%), 使用安全回退 -> mean_attention")
+                final_scores = torch.clamp(mean_attention, min=-10.0, max=10.0)
+            else:
+                final_scores = torch.nan_to_num(final_scores, nan=0.0)
+                final_scores = torch.clamp(final_scores, min=-10.0, max=10.0)
+
+            batch_transform = []
+            for h in range(batch_scores.size(0)):
+                head_base = final_scores.clone()
+                head_delta = batch_scores[h] - mean_attention
+                delta_scale = 0.2
+                head_specific = head_base + delta_scale * head_delta
+                head_specific = torch.clamp(head_specific, min=-15.0, max=15.0)
+                batch_transform.append(head_specific)
+            if len(batch_transform) > 0:
+                batch_transform = torch.stack(batch_transform)
+            else:
+                batch_transform = final_scores.unsqueeze(0)
+            transformed_batch_list.append(batch_transform)
+
+        transform_scores = torch.stack(transformed_batch_list)
+
+        # 处理全局 attn_mask
+        if attn_mask is not None:
+            if attn_mask.dim() == 2:
+                attn_mask = attn_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, self.num_heads, -1, -1)
+            elif attn_mask.dim() == 3:
+                attn_mask = attn_mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+            transform_scores = transform_scores + self.res_scale * attn_mask
+
+        transform_scores = torch.nan_to_num(transform_scores, nan=0.0)
+        transform_scores = torch.clamp(transform_scores, min=-30.0, max=30.0)
+
+        # 打印 transform_scores 统计
+        final_min = transform_scores.min().item()
+        final_max = transform_scores.max().item()
+        final_mean = transform_scores.mean().item()
+        final_std = transform_scores.std().item()
+        final_has_nan = torch.isnan(transform_scores).any().item()
+        final_has_inf = torch.isinf(transform_scores).any().item()
+        debug_lines.append(
+            f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
+            f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
+            f"NaN={final_has_nan}, Inf={final_has_inf}"
+        )
+        debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
+
+        # 将所有调试信息写入日志
+        self.log_debug("\n".join(debug_lines))
+        return transform_scores
 
     def forward(
-        self,
-        query: torch.Tensor,
+        self, query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attn_mask: Optional[torch.Tensor] = None,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        need_weights: bool = False,
-        is_causal: bool = False,
-    ):
-        # 统一 batch_first
+        attn_mask: torch.Tensor = None,
+        key_padding_mask: torch.Tensor = None,
+        need_weights: bool = True
+        ) -> tuple:
         if not self.batch_first:
-            # (T,B,C) -> (B,T,C)
             query = query.transpose(0, 1)
             key = key.transpose(0, 1)
             value = value.transpose(0, 1)
 
-        b, t, c = query.shape
+        batch_size, tgt_len, embed_dim = query.size()
+        src_len = key.size(1)
+        q = self.q_proj(query)
+        k = self.k_proj(key)
+        v = self.v_proj(value)
+        q = q.view(batch_size, tgt_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, src_len, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, src_len, self.num_heads, self.head_dim).transpose(1, 2)
+        q = q * self.scaling
+        attn_weights = torch.matmul(q, k.transpose(-2, -1))
 
-        if self.use_fused_qkv and (query is key) and (key is value):
-            qkv = self.qkv_proj(query)  # (B,T,3C)
-            q, k, v = qkv.chunk(3, dim=-1)
-        else:
-            if self.use_fused_qkv:
-                q = self.qkv_proj(query)[..., :c]
-                k = self.qkv_proj(key)[..., c:2*c]
-                v = self.qkv_proj(value)[..., 2*c:]
-            else:
-                q = self.q_proj(query)
-                k = self.k_proj(key)
-                v = self.v_proj(value)
-
-        q = self._shape(q)
-        k = self._shape(k)
-        v = self._shape(v)
-
-        # key_padding_mask: (B,T) -> (B,1,1,T) additive mask for SDPA when needed
-        # SDPA in PyTorch supports attn_mask; we compose a boolean mask if possible.
-        composed_mask = None
         if key_padding_mask is not None:
-            # True means "pad" (masked)
-            kpm = key_padding_mask.view(b, 1, 1, -1).to(dtype=torch.bool)
-            composed_mask = kpm if composed_mask is None else (composed_mask | kpm)
+            key_padding_mask_expanded = key_padding_mask.unsqueeze(1).unsqueeze(2)
+            attn_weights = attn_weights.masked_fill(key_padding_mask_expanded, float('-inf'))
 
         if attn_mask is not None:
-            # accept (T,T), (B,T,T), or already broadcastable
-            am = attn_mask
-            if am.dtype != torch.bool and am.dtype != torch.float16 and am.dtype != torch.float32 and am.dtype != torch.float64:
-                # fallback to bool
-                am = am.to(dtype=torch.bool)
-            # broadcast to (B,1,T,T) for bool masks
-            if am.dim() == 2:
-                am = am.view(1, 1, am.size(0), am.size(1)).expand(b, 1, -1, -1)
-            elif am.dim() == 3:
-                am = am.view(b, 1, am.size(-2), am.size(-1))
-            # merge with key padding mask if bool
-            if am.dtype == torch.bool:
-                composed_mask = am if composed_mask is None else (composed_mask | am)
-            else:
-                # float additive mask: keep separate (SDPA supports float mask)
-                composed_mask = am if composed_mask is None else composed_mask  # don't merge different types
+            if attn_mask.dim() == 2:
+                attn_mask = attn_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, self.num_heads, -1, -1)
+            elif attn_mask.dim() == 3:
+                attn_mask = attn_mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+            attn_weights = attn_weights + self.res_scale * attn_mask
 
-        # SDPA fast path
-        if hasattr(F, "scaled_dot_product_attention"):
-            # dropout only during training
-            dropout_p = self.dropout if self.training else 0.0
-            attn_out = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=composed_mask,
-                dropout_p=dropout_p,
-                is_causal=is_causal
-            )  # (B,H,T,D)
-            attn_weights = None
-        else:
-            # fallback: explicit softmax
-            scale = 1.0 / math.sqrt(self.head_dim)
-            scores = torch.matmul(q, k.transpose(-2, -1)) * scale  # (B,H,T,T)
-            if composed_mask is not None:
-                if composed_mask.dtype == torch.bool:
-                    scores = scores.masked_fill(composed_mask, float("-inf"))
-                else:
-                    scores = scores + composed_mask
-            if is_causal:
-                causal = torch.triu(torch.ones(t, t, device=scores.device, dtype=torch.bool), diagonal=1)
-                scores = scores.masked_fill(causal.view(1,1,t,t), float("-inf"))
-            attn = torch.softmax(scores, dim=-1)
-            attn = self.dropout_layer(attn)
-            attn_out = torch.matmul(attn, v)
-            attn_weights = attn if need_weights else None
+        attn_weights = self.autopoietic_transform(attn_weights, attn_mask)
+        attn_probs = F.softmax(attn_weights, dim=-1)
+        attn_probs = self.dropout_layer(attn_probs)
 
-        out = self._merge(attn_out)  # (B,T,C)
-
-        # 自生成扰动：低秩分量 + 门控温度
-        if self.use_autopoietic:
-            # gate per-head from mean token embedding
-            g = torch.sigmoid(self.auto_gate(query.mean(dim=1)))  # (B,H)
-            g = g.view(b, self.num_heads, 1, 1)
-            delta = self._shape(self.auto_v(self.auto_u(query)))  # (B,H,T,D)
-            # 温度 τ 与 alpha 控制扰动强度
-            out = out + self.alpha * torch.tanh(self.tau) * self._merge(delta * g)
-
-        out = self.out_proj(out)
+        attn_output = torch.matmul(attn_probs, v)
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, tgt_len, embed_dim)
+        attn_output = self.out_proj(attn_output)
 
         if not self.batch_first:
-            out = out.transpose(0, 1)
+            attn_output = attn_output.transpose(0, 1)
 
-        return out, attn_weights
+        if need_weights:
+            avg_weights = attn_probs.mean(dim=1)
+            return attn_output, avg_weights
+        return attn_output, None
+
 
 class APTEncoderLayer(nn.Module):
     """
@@ -675,13 +1127,11 @@ class APTEncoderLayer(nn.Module):
         left_spin_alpha: float = 0.5,
         left_spin_tau: float = 0.3,
         left_spin_beta: float = 0.7,
-        # 现代化组件开关
-        use_rmsnorm: bool = True,
-        use_swiglu: bool = True
+        # lite兼容（忽略即可）
+        gate_init: float = 0.0,
+        **kwargs
     ):
         super().__init__()
-        self.use_rmsnorm = use_rmsnorm
-        self.use_swiglu = use_swiglu
 
         # 自生成注意力层
         self.self_attn = AutopoieticAttention(
@@ -702,23 +1152,13 @@ class APTEncoderLayer(nn.Module):
         )
 
         # 前馈网络
-        # 前馈网络：默认 SwiGLU（更接近主流大模型 FFN）
-        if self.use_swiglu:
-            self.swiglu = SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout)
-            # 兼容字段（不使用）
-            self.linear1 = None
-            self.linear2 = None
-            self.dropout = None
-        else:
-            self.linear1 = nn.Linear(d_model, dim_feedforward)
-            self.dropout = nn.Dropout(dropout)
-            self.linear2 = nn.Linear(dim_feedforward, d_model)
-            self.swiglu = None
-
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
         # 层归一化
-        self.norm1 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
-        self.norm2 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
@@ -789,7 +1229,7 @@ class APTEncoderLayer(nn.Module):
         src = self.norm1(src)
 
         # 🚀 前馈网络子层（左旋平滑残差连接）
-        src2 = self.swiglu(src) if self.swiglu is not None else self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src2_dropout = self.dropout2(src2)
 
         # 替换: src = src + src2  →  src = LeftSpin(src, src2)
@@ -833,13 +1273,11 @@ class APTDecoderLayer(nn.Module):
         left_spin_alpha: float = 0.5,
         left_spin_tau: float = 0.3,
         left_spin_beta: float = 0.7,
-        # 现代化组件开关
-        use_rmsnorm: bool = True,
-        use_swiglu: bool = True
+        # lite兼容（忽略即可）
+        gate_init: float = 0.0,
+        **kwargs
     ):
         super().__init__()
-        self.use_rmsnorm = use_rmsnorm
-        self.use_swiglu = use_swiglu
 
         # 自注意力层(掩码)
         self.self_attn = AutopoieticAttention(
@@ -878,24 +1316,14 @@ class APTDecoderLayer(nn.Module):
         )
 
         # 前馈网络
-        # 前馈网络：默认 SwiGLU（更接近主流大模型 FFN）
-        if self.use_swiglu:
-            self.swiglu = SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout)
-            # 兼容字段（不使用）
-            self.linear1 = None
-            self.linear2 = None
-            self.dropout = None
-        else:
-            self.linear1 = nn.Linear(d_model, dim_feedforward)
-            self.dropout = nn.Dropout(dropout)
-            self.linear2 = nn.Linear(dim_feedforward, d_model)
-            self.swiglu = None
-
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
         # 层归一化
-        self.norm1 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
-        self.norm2 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
-        self.norm3 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
@@ -993,7 +1421,7 @@ class APTDecoderLayer(nn.Module):
         tgt = self.norm2(tgt)
 
         # 🚀 前馈网络子层（左旋平滑残差连接）
-        tgt2 = self.swiglu(tgt) if self.swiglu is not None else self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
         tgt2_dropout = self.dropout3(tgt2)
 
         if self.use_left_spin and self.left_spin_ffn is not None:
@@ -1041,6 +1469,11 @@ class APTModelConfiguration:
         left_spin_alpha: float = 0.5,  # 缓冲强度系数
         left_spin_tau: float = 0.3,  # 尖点阈值
         left_spin_beta: float = 0.7,  # 惯性系数
+        # APT 变体
+        model_variant: str = 'normal',  # 'normal' | 'lite'
+        lite_gate_init: float = 0.0,
+        lite_use_swiglu: bool = True,
+        lite_use_rmsnorm: bool = True,
         **kwargs  # 其他参数
     ):
         self.vocab_size = vocab_size
@@ -1076,6 +1509,11 @@ class APTModelConfiguration:
         self.left_spin_alpha = left_spin_alpha
         self.left_spin_tau = left_spin_tau
         self.left_spin_beta = left_spin_beta
+        # variant
+        self.model_variant = model_variant
+        self.lite_gate_init = lite_gate_init
+        self.lite_use_swiglu = lite_use_swiglu
+        self.lite_use_rmsnorm = lite_use_rmsnorm
 
         # 添加任何额外参数
         for key, value in kwargs.items():
@@ -1127,8 +1565,7 @@ class APTModel(nn.Module):
     def __init__(self, config: APTModelConfiguration):
         super().__init__()
         self.config = config
-        use_rmsnorm = getattr(config, 'use_rmsnorm', True)
-        use_swiglu = getattr(config, 'use_swiglu', True)
+        
         # 词嵌入
         self.token_embedding = nn.Embedding(
             config.vocab_size, 
@@ -1161,7 +1598,8 @@ class APTModel(nn.Module):
         encoder_layers = []
         for _ in range(config.num_encoder_layers):
             encoder_layers.append(
-                APTEncoderLayer(d_model=config.d_model,
+                (APTLiteEncoderLayer if getattr(config, 'model_variant', 'normal') == 'lite' else APTEncoderLayer)(
+                    d_model=config.d_model,
                     nhead=config.num_heads,
                     dim_feedforward=config.d_ff,
                     dropout=config.dropout,
@@ -1181,14 +1619,17 @@ class APTModel(nn.Module):
                     use_left_spin=use_left_spin,
                     left_spin_alpha=left_spin_alpha,
                     left_spin_tau=left_spin_tau,
-                    left_spin_beta=left_spin_beta, use_rmsnorm=use_rmsnorm, use_swiglu=use_swiglu)
+                    left_spin_beta=left_spin_beta,
+                    gate_init=getattr(config, 'lite_gate_init', 0.0)
+                )
             )
 
         # 创建解码器层
         decoder_layers = []
         for _ in range(config.num_decoder_layers):
             decoder_layers.append(
-                APTDecoderLayer(d_model=config.d_model,
+                (APTLiteDecoderLayer if getattr(config, 'model_variant', 'normal') == 'lite' else APTDecoderLayer)(
+                    d_model=config.d_model,
                     nhead=config.num_heads,
                     dim_feedforward=config.d_ff,
                     dropout=config.dropout,
@@ -1208,7 +1649,9 @@ class APTModel(nn.Module):
                     use_left_spin=use_left_spin,
                     left_spin_alpha=left_spin_alpha,
                     left_spin_tau=left_spin_tau,
-                    left_spin_beta=left_spin_beta, use_rmsnorm=use_rmsnorm, use_swiglu=use_swiglu)
+                    left_spin_beta=left_spin_beta,
+                    gate_init=getattr(config, 'lite_gate_init', 0.0)
+                )
             )
         
         # 编码器和解码器
@@ -1216,8 +1659,8 @@ class APTModel(nn.Module):
         self.decoder_layers = nn.ModuleList(decoder_layers)
         
         # 最终层归一化
-        self.encoder_norm = RMSNorm(config.d_model, eps=getattr(config, 'layer_norm_eps', 1e-6)) if use_rmsnorm else nn.LayerNorm(config.d_model)
-        self.decoder_norm = RMSNorm(config.d_model, eps=getattr(config, 'layer_norm_eps', 1e-6)) if use_rmsnorm else nn.LayerNorm(config.d_model)
+        self.encoder_norm = nn.LayerNorm(config.d_model)
+        self.decoder_norm = nn.LayerNorm(config.d_model)
         
         # 输出投影
         self.output_projection = nn.Linear(config.d_model, config.vocab_size, bias=False)
