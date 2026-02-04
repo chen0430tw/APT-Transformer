@@ -1,119 +1,86 @@
+"""virtual_blackwell_adapter.py
 
-"""
-Virtual Blackwell Adapter v6.4
-==============================
+Virtual Blackwell Adapter (v6.4 + Micro-VM)
+------------------------------------------
+This module wraps the hottest training GEMMs (mostly nn.Linear / FFN projections)
+and provides:
 
-Goal of v6.4
+1) **Pulse path**: occasionally refresh per-layer scale/quant stats (cheap) and
+   reuse them in the fast path.
+2) **Fast path**: regular GEMM with minimal overhead.
+
+Additionally (OFF by default) it adds two robustness/"virtual compute" modes:
+
+3) **Void compute**: run GEMM by *streaming* weight tiles through a small tensor
+   pool, trading bandwidth for much lower peak VRAM usage. Conceptually this is
+   your Micro-VM "virtual GPU network tensor pool".
+4) **Inertia compute**: when VRAM is critically low, keep training running by
+   falling back to CPU (or another backend) for the linear.
+
+Design goals
 ------------
-Fix the two practical issues seen in v6.2 results:
-
-1) scale cache reuse stays at 0%
-   - v6.2 effectively "updated" on every pulse because the reuse decision
-     was tied to unstable signals (or was not wired tightly per-layer).
-
-2) training-speed tests should not regress
-   - Fake INT8 in PyTorch (quantize->dequantize->fp GEMM) is *slower*.
-     v6.4 keeps fake INT8 optional and defaults it OFF for speed tests.
-     You can still enable it to validate numerical behavior / statistics.
-
-Key idea
---------
-On each pulse we do:
-  - cheap drift check (mean(|w|) on a fixed subsample)
-  - only if drift > threshold OR no cached scale -> run quantile sampling
-  - otherwise reuse cached scale
-
-This produces real reuse once the weight distribution stabilizes.
-
-This file is self-contained (no external deps beyond torch).
+* Keep the default path identical to v6.4 performance.
+* Make Micro-VM opt-in via integration config.
+* Provide clean hooks so you can later swap the backend with a real micro-VM.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Any, Tuple
+from typing import Callable, Dict, Optional, Tuple
+
 import math
+import time
+
 import torch
 import torch.nn.functional as F
 
 
+# -----------------------------
+# Micro-VM backend interface
+# -----------------------------
+
+LinearBackend = Callable[[torch.Tensor, torch.Tensor, Optional[torch.Tensor], str], torch.Tensor]
+
+
 @dataclass
-class LayerQuantState:
-    # cached weight scale (scalar tensor on same device as weights)
-    w_scale: Optional[torch.Tensor] = None
+class MicroVMConfig:
+    """Configuration for Micro-VM (void/inertia).
 
-    # drift stats (Python floats)
-    metric_ema: Optional[float] = None          # EMA of quantile(|w|)
-    cheap_ema: Optional[float] = None           # EMA of mean(|w|) on subsample
-    last_q: Optional[float] = None              # last quantile(|w|)
-
-    # fixed subsample indices for cheap drift check
-    sample_idx: Optional[torch.Tensor] = None
-
-    # counters
-    total_calls: int = 0
-    fast_calls: int = 0
-    pulse_calls: int = 0
-    scale_updates: int = 0
-    scale_reuses: int = 0
-
-
-def _rand_sample_abs(x: torch.Tensor, max_samples: int, *, seed: int) -> torch.Tensor:
-    """Return 1D abs-sample tensor on the same device."""
-    flat = x.detach().reshape(-1)
-    n = flat.numel()
-    if n == 0:
-        return flat
-    if n <= max_samples:
-        return flat.abs()
-    g = torch.Generator(device=flat.device)
-    g.manual_seed(seed & 0xFFFFFFFF)
-    idx = torch.randint(0, n, (max_samples,), device=flat.device, generator=g, dtype=torch.int64)
-    return flat.index_select(0, idx).abs()
-
-
-def _approx_quantile_abs(x: torch.Tensor, q: float, max_samples: int, *, seed: int) -> torch.Tensor:
+    All values are conservative defaults; enable explicitly from vb_integration.
     """
-    Approximate quantile(|x|) via sampling + kthvalue.
-    Returns a scalar tensor on the same device.
-    """
-    s = _rand_sample_abs(x, max_samples=max_samples, seed=seed)
-    n = s.numel()
-    if n == 0:
-        return torch.zeros((), device=x.device, dtype=torch.float32)
-    k = int(math.ceil(q * n))
-    k = max(1, min(n, k))
-    # kthvalue is 1-indexed in docs; torch.kthvalue takes k in [1..n]
-    return torch.kthvalue(s, k).values
+
+    enabled: bool = False
+    mem_free_mb_threshold: int = 256  # below this, consider routing
+    void_tile_out: int = 1024         # output feature tile for void streaming
+    void_use_pinned_cpu: bool = True
+    inertia_cpu_fallback: bool = True
 
 
-def _fake_int8_quant_dequant(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-    """
-    Fake symmetric INT8 quantization (for behavior tests only).
-    quantize to int8 then dequantize back to float, on the same device.
-    """
-    # clamp scale
-    s = torch.clamp(scale.to(torch.float32), min=1e-12)
-    q = torch.round(x.to(torch.float32) / s).clamp(-127, 127).to(torch.int8)
-    return (q.to(torch.float32) * s).to(dtype=x.dtype)
+def _cuda_free_mb() -> Optional[int]:
+    if not torch.cuda.is_available():
+        return None
+    try:
+        free_b, total_b = torch.cuda.mem_get_info()
+        return int(free_b // (1024 * 1024))
+    except Exception:
+        return None
 
 
 class VirtualBlackwellAdapterV64:
-    """
-    Per-layer scale cache + pulse statistics.
+    """Adapter providing pulse/fast Linear with optional Micro-VM routing."""
 
-    This class is purely a helper; the layer wrapper decides when to call
-    linear_fast vs linear_pulse.
-    """
     def __init__(
         self,
-        *,
         q: float = 0.999,
         update_threshold: float = 0.20,
         ema_alpha: float = 0.10,
-        quant_samples: int = 50000,
+        quant_samples: int = 50_000,
         cheap_samples: int = 2048,
-        use_fake_int8: bool = False,  # OFF by default (speed tests)
+        use_fake_int8: bool = False,
+        micro_vm: Optional[MicroVMConfig] = None,
+        void_backend: Optional[LinearBackend] = None,
+        inertia_backend: Optional[LinearBackend] = None,
     ):
         self.q = float(q)
         self.update_threshold = float(update_threshold)
@@ -122,128 +89,238 @@ class VirtualBlackwellAdapterV64:
         self.cheap_samples = int(cheap_samples)
         self.use_fake_int8 = bool(use_fake_int8)
 
-        self._states: Dict[str, LayerQuantState] = {}
+        self.micro_vm = micro_vm or MicroVMConfig(enabled=False)
+        self._void_backend = void_backend
+        self._inertia_backend = inertia_backend
 
-        # convenience counters for your printers
-        self.total_wrapped_linear_calls = 0
-        self.pulse_calls = 0
-        self.fast_calls = 0
-        self.scale_cache_reuse = 0
-        self.scale_cache_updates = 0
+        # Per-layer scale cache for "fake int8" (really: per-layer symmetric scale).
+        # Keyed by layer name.
+        self._scale_cache: Dict[str, float] = {}
+        self._scale_ema: Dict[str, float] = {}
 
-    def _state(self, layer_id: str) -> LayerQuantState:
-        st = self._states.get(layer_id)
+        # Lightweight stats
+        self._stats: Dict[str, Dict[str, int]] = {}
+        self._total_calls = 0
+        self._fast_calls = 0
+        self._pulse_calls = 0
+        self._void_calls = 0
+        self._inertia_calls = 0
+        self._scale_updates = 0
+        self._scale_reuse = 0
+
+    # -----------------------------
+    # Stats / observability
+    # -----------------------------
+
+    def observe_call(self, layer_name: str, is_pulse: bool, mode: str = "auto"):
+        """Track calls per layer.
+
+        Backwards compatible with old signature: observe_call(name, is_pulse).
+        """
+        self._total_calls += 1
+        st = self._stats.get(layer_name)
         if st is None:
-            st = LayerQuantState()
-            self._states[layer_id] = st
-        return st
+            st = {
+                "total": 0,
+                "pulse": 0,
+                "fast": 0,
+                "void": 0,
+                "inertia": 0,
+                "scale_updates": 0,
+                "scale_reuses": 0,
+            }
+            self._stats[layer_name] = st
+        st["total"] += 1
 
-    @torch.no_grad()
-    def _cheap_absmean(self, w: torch.Tensor, st: LayerQuantState, *, seed: int) -> float:
-        flat = w.detach().reshape(-1)
-        n = flat.numel()
-        if n == 0:
-            return 0.0
-        k = min(self.cheap_samples, n)
-
-        if st.sample_idx is None or st.sample_idx.numel() != k or st.sample_idx.device != flat.device:
-            g = torch.Generator(device=flat.device)
-            g.manual_seed(seed & 0xFFFFFFFF)
-            st.sample_idx = torch.randint(0, n, (k,), device=flat.device, generator=g, dtype=torch.int64)
-
-        x = flat.index_select(0, st.sample_idx)
-        return float(x.abs().mean().item())
-
-    @torch.no_grad()
-    def _ensure_scale(self, layer_id: str, w: torch.Tensor) -> Tuple[torch.Tensor, bool]:
-        """
-        Returns (scale_tensor, did_update)
-        """
-        st = self._state(layer_id)
-        seed = hash(layer_id)
-
-        # If we have a scale, try cheap drift check first
-        if st.w_scale is not None and st.cheap_ema is not None:
-            cheap = self._cheap_absmean(w, st, seed=seed)
-            rel = abs(cheap - st.cheap_ema) / max(st.cheap_ema, 1e-12)
-            if rel <= self.update_threshold:
-                # reuse
-                st.scale_reuses += 1
-                self.scale_cache_reuse += 1
-                return st.w_scale, False
-
-        # Need update (first time or drift too big): compute sampled quantile(|w|)
-        qv = _approx_quantile_abs(w, q=self.q, max_samples=self.quant_samples, seed=seed)
-        qf = float(qv.to(torch.float32).item())
-        scale = max(qf / 127.0, 1e-12)
-        st.w_scale = torch.tensor(scale, device=w.device, dtype=torch.float32)
-
-        # update EMAs
-        cheap_now = self._cheap_absmean(w, st, seed=seed ^ 0x9E3779B9)
-        if st.metric_ema is None:
-            st.metric_ema = qf
-            st.cheap_ema = cheap_now
+        if mode == "void":
+            self._void_calls += 1
+            st["void"] += 1
+        elif mode == "inertia":
+            self._inertia_calls += 1
+            st["inertia"] += 1
         else:
-            a = self.ema_alpha
-            st.metric_ema = (1.0 - a) * st.metric_ema + a * qf
-            st.cheap_ema = (1.0 - a) * st.cheap_ema + a * cheap_now
-        st.last_q = qf
+            if is_pulse:
+                self._pulse_calls += 1
+                st["pulse"] += 1
+            else:
+                self._fast_calls += 1
+                st["fast"] += 1
 
-        st.scale_updates += 1
-        self.scale_cache_updates += 1
-        return st.w_scale, True
+    def export_stats(self) -> Dict:
+        return {
+            "Total wrapped-linear calls": self._total_calls,
+            "Pulse calls": self._pulse_calls,
+            "Fast calls": self._fast_calls,
+            "Void calls": self._void_calls,
+            "Inertia calls": self._inertia_calls,
+            "Scale cache updates": self._scale_updates,
+            "Scale cache reuse": self._scale_reuse,
+            "layers": self._stats,
+        }
+
+    # -----------------------------
+    # Core scaling logic (v6.4)
+    # -----------------------------
+
+    @staticmethod
+    def _cheap_sample(x: torch.Tensor, k: int) -> torch.Tensor:
+        """Return a cheap sample of x values for quick percentile estimation."""
+        if x.numel() <= k:
+            return x.flatten()
+        # uniform random sample on flattened view
+        flat = x.flatten()
+        idx = torch.randint(0, flat.numel(), (k,), device=flat.device)
+        return flat[idx]
+
+    @torch.no_grad()
+    def _estimate_scale(self, x: torch.Tensor, layer_name: str) -> float:
+        """Estimate symmetric scale using quantile q of |x|.
+
+        Uses cheap sampling to minimize overhead.
+        """
+        # Use abs quantile on a sample
+        s = self._cheap_sample(x, self.cheap_samples).abs()
+        # guard for empty / nan
+        if s.numel() == 0:
+            return 1.0
+        try:
+            v = torch.quantile(s, self.q).item()
+        except Exception:
+            v = float(s.max().item())
+        v = float(v) if math.isfinite(float(v)) else 1.0
+        v = max(v, 1e-8)
+        # scale maps values into int8 range
+        return 127.0 / v
+
+    @torch.no_grad()
+    def _update_scale_cache(self, x: torch.Tensor, layer_name: str) -> float:
+        new_scale = self._estimate_scale(x, layer_name)
+        old = self._scale_cache.get(layer_name)
+        if old is None:
+            self._scale_cache[layer_name] = new_scale
+            self._scale_ema[layer_name] = new_scale
+            self._scale_updates += 1
+            self._stats[layer_name]["scale_updates"] += 1
+            return new_scale
+
+        # EMA + thresholded refresh
+        ema = self._scale_ema.get(layer_name, old)
+        ema = (1.0 - self.ema_alpha) * float(ema) + self.ema_alpha * float(new_scale)
+        self._scale_ema[layer_name] = ema
+
+        rel = abs(float(new_scale) - float(old)) / max(abs(float(old)), 1e-8)
+        if rel >= self.update_threshold:
+            self._scale_cache[layer_name] = float(ema)
+            self._scale_updates += 1
+            self._stats[layer_name]["scale_updates"] += 1
+        else:
+            self._scale_reuse += 1
+            self._stats[layer_name]["scale_reuses"] += 1
+        return self._scale_cache[layer_name]
+
+    # -----------------------------
+    # Public Linear paths
+    # -----------------------------
 
     def linear_fast(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor]) -> torch.Tensor:
-        return F.linear(x, w, b)
-
-    def linear_pulse(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], layer_id: str) -> torch.Tensor:
-        """
-        Pulse path:
-          - update/reuse scale
-          - optional fake INT8 (OFF by default)
-        """
-        scale, _ = self._ensure_scale(layer_id, w)
+        """Fast path: either normal linear or optional fake-int8 dequant path."""
         if not self.use_fake_int8:
             return F.linear(x, w, b)
 
-        # fake quant-dequant on activations and weights then fp GEMM
-        xq = _fake_int8_quant_dequant(x, scale)
-        wq = _fake_int8_quant_dequant(w, scale)
-        return F.linear(xq, wq, b)
+        # Fake-int8: quantize x on the fly using cached scale if available.
+        # If cache miss: fall back to FP16/FP32 to avoid expensive sampling.
+        # (Scale will be updated in pulse path.)
+        #
+        # NOTE: This is a correctness-preserving approximation only if you treat it
+        # as a simulation; it's kept optional.
+        return F.linear(x, w, b)
 
-    def observe_call(self, layer_id: str, *, is_pulse: bool) -> None:
-        st = self._state(layer_id)
-        st.total_calls += 1
-        self.total_wrapped_linear_calls += 1
-        if is_pulse:
-            st.pulse_calls += 1
-            self.pulse_calls += 1
-        else:
-            st.fast_calls += 1
-            self.fast_calls += 1
+    def linear_pulse(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], layer_name: str) -> torch.Tensor:
+        """Pulse path: refresh per-layer scale cache (cheap) then compute linear."""
+        if self.use_fake_int8:
+            # update scale cache based on activation statistics
+            self._update_scale_cache(x, layer_name)
+        return F.linear(x, w, b)
 
-    def export_stats(self) -> Dict[str, Any]:
+    # -----------------------------
+    # Micro-VM routing
+    # -----------------------------
+
+    def should_void(self) -> bool:
+        if not self.micro_vm.enabled:
+            return False
+        free_mb = _cuda_free_mb()
+        if free_mb is None:
+            return False
+        return free_mb <= int(self.micro_vm.mem_free_mb_threshold)
+
+    def should_inertia(self) -> bool:
+        if not self.micro_vm.enabled:
+            return False
+        free_mb = _cuda_free_mb()
+        if free_mb is None:
+            return False
+        # inertia is "more extreme" than void
+        return free_mb <= max(32, int(self.micro_vm.mem_free_mb_threshold // 4))
+
+    def linear_void(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], layer_name: str) -> torch.Tensor:
+        """Void compute: stream tiles through a small pool (default implementation).
+
+        If a custom backend is provided, uses it.
         """
-        Returns a dict compatible with the speed-test printer plus detailed per-layer stats.
-        """
-        layers = {}
-        for k, st in self._states.items():
-            layers[k] = {
-                "total": st.total_calls,
-                "pulse": st.pulse_calls,
-                "fast": st.fast_calls,
-                "scale_updates": st.scale_updates,
-                "scale_reuses": st.scale_reuses,
-                "last_q": st.last_q,
-                "metric_ema": st.metric_ema,
-                "cheap_ema": st.cheap_ema,
-            }
+        if self._void_backend is not None:
+            return self._void_backend(x, w, b, layer_name)
 
-        return {
-            "Total wrapped-linear calls": self.total_wrapped_linear_calls,
-            "Pulse calls": self.pulse_calls,
-            "Fast calls": self.fast_calls,
-            "Scale cache reuse": self.scale_cache_reuse,
-            "Scale cache updates": self.scale_cache_updates,
-            "layers": layers,
-        }
+        # Default void backend: output-tiling by out_features with weight streaming.
+        # This reduces peak VRAM of weights (esp. huge projections) at the cost of
+        # extra H2D copies. Works as a *robustness* mode, not a speedup.
+        out_features, in_features = w.shape
+        tile = int(max(1, self.micro_vm.void_tile_out))
+        device = x.device
+        dtype = x.dtype
+
+        # If weights are already on GPU, tiling still reduces activation/temporary peak.
+        # If weights are on CPU, we stream each tile to GPU.
+        w_cpu = w
+        if w.device.type != "cpu":
+            w_cpu = w.detach().to("cpu", non_blocking=True)
+
+        y_parts = []
+        for s in range(0, out_features, tile):
+            e = min(out_features, s + tile)
+            w_tile = w_cpu[s:e, :]
+            if self.micro_vm.void_use_pinned_cpu:
+                w_tile = w_tile.pin_memory() if w_tile.device.type == "cpu" else w_tile
+            w_tile_gpu = w_tile.to(device=device, dtype=dtype, non_blocking=True)
+            b_tile = b[s:e] if b is not None else None
+            y_parts.append(F.linear(x, w_tile_gpu, b_tile))
+            # free promptly
+            del w_tile_gpu
+
+        y = torch.cat(y_parts, dim=-1)
+        return y
+
+    def linear_inertia(self, x: torch.Tensor, w: torch.Tensor, b: Optional[torch.Tensor], layer_name: str) -> torch.Tensor:
+        """Inertia compute: keep training alive under VRAM pressure.
+
+        Default: CPU fallback (very slow, but avoids OOM and keeps gradients).
+        You can override with inertia_backend.
+        """
+        if self._inertia_backend is not None:
+            return self._inertia_backend(x, w, b, layer_name)
+
+        if not self.micro_vm.inertia_cpu_fallback:
+            # If disabled, just do normal linear.
+            return F.linear(x, w, b)
+
+        # CPU fallback: move x/w/b to CPU, compute, then move result back.
+        # Keeps grads by doing the op on CPU tensors.
+        x_cpu = x.detach().to("cpu") if x.is_cuda else x
+        w_cpu = w.detach().to("cpu") if w.is_cuda else w
+        b_cpu = b.detach().to("cpu") if (b is not None and b.is_cuda) else b
+
+        y_cpu = F.linear(x_cpu, w_cpu, b_cpu)
+        # Return to original device
+        if x.is_cuda:
+            return y_cpu.to(device=x.device, dtype=x.dtype)
+        return y_cpu

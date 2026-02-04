@@ -1,9 +1,16 @@
+"""vb_integration.py
 
-"""
-VB Integration v6.4
--------------------
-- Uses VirtualBlackwellAdapterV64 (scale reuse fixed + optional fake INT8)
-- Round-robin per-layer pulse phases to spread overhead (global-step schedule)
+VB Integration (v6.4 + Micro-VM)
+--------------------------------
+Replaces nn.Linear with a wrapper that routes through VirtualBlackwellAdapterV64.
+
+Default behavior matches v6.4:
+  - pulse/fast schedule for scale updates + reuse
+  - optional fake INT8 scaling (OFF by default)
+
+Optional (OFF by default): Micro-VM routing
+  - Void compute: streamed tiled GEMM to reduce peak VRAM
+  - Inertia compute: CPU fallback when VRAM is critically low
 """
 
 from __future__ import annotations
@@ -14,18 +21,27 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from apt.vgpu.runtime.virtual_blackwell_adapter import VirtualBlackwellAdapterV64
+# IMPORTANT: relative import so this works inside apt.vgpu.runtime
+from .virtual_blackwell_adapter import MicroVMConfig, VirtualBlackwellAdapterV64
 
 
 @dataclass
 class VBConfigV64:
+    # v6.4 pulse scheduling
     pulse_interval: int = 20
     q: float = 0.999
     update_threshold: float = 0.20
     ema_alpha: float = 0.10
-    quant_samples: int = 50000
+    quant_samples: int = 50_000
     cheap_samples: int = 2048
     use_fake_int8: bool = False  # OFF by default for speed tests
+
+    # Micro-VM (OFF by default)
+    enable_micro_vm: bool = False
+    mem_free_mb_threshold: int = 256
+    void_tile_out: int = 1024
+    void_use_pinned_cpu: bool = True
+    inertia_cpu_fallback: bool = True
 
 
 class VBController(nn.Module):
@@ -64,8 +80,18 @@ class VBOptimizedLinearV64(nn.Module):
         step = self.controller.step
         is_pulse = (step % self.pulse_interval) == self.phase
 
-        self.adapter.observe_call(self.name, is_pulse=is_pulse)
+        # Micro-VM routing (optional)
+        if self.adapter.micro_vm.enabled:
+            if self.adapter.should_inertia():
+                self.adapter.observe_call(self.name, is_pulse=is_pulse, mode="inertia")
+                return self.adapter.linear_inertia(x, self.base.weight, self.base.bias, self.name)
 
+            if self.adapter.should_void():
+                self.adapter.observe_call(self.name, is_pulse=is_pulse, mode="void")
+                return self.adapter.linear_void(x, self.base.weight, self.base.bias, self.name)
+
+        # Default v6.4 routing
+        self.adapter.observe_call(self.name, is_pulse=is_pulse, mode="pulse" if is_pulse else "fast")
         if is_pulse:
             return self.adapter.linear_pulse(x, self.base.weight, self.base.bias, self.name)
         return self.adapter.linear_fast(x, self.base.weight, self.base.bias)
@@ -76,15 +102,20 @@ def apply_virtual_blackwell_v64(
     config: Optional[VBConfigV64] = None,
     skip_large_out_features: int = 20000,
 ) -> Tuple[nn.Module, VirtualBlackwellAdapterV64]:
-    """
-    Replace nn.Linear layers in-place (except huge output heads).
-    Returns (model, adapter).
-    """
+    """Replace nn.Linear layers in-place (except huge output heads)."""
     if config is None:
         config = VBConfigV64()
 
     controller = VBController()
     model._vb_controller = controller  # type: ignore[attr-defined]
+
+    micro_vm = MicroVMConfig(
+        enabled=bool(config.enable_micro_vm),
+        mem_free_mb_threshold=int(config.mem_free_mb_threshold),
+        void_tile_out=int(config.void_tile_out),
+        void_use_pinned_cpu=bool(config.void_use_pinned_cpu),
+        inertia_cpu_fallback=bool(config.inertia_cpu_fallback),
+    )
 
     adapter = VirtualBlackwellAdapterV64(
         q=config.q,
@@ -93,6 +124,7 @@ def apply_virtual_blackwell_v64(
         quant_samples=config.quant_samples,
         cheap_samples=config.cheap_samples,
         use_fake_int8=config.use_fake_int8,
+        micro_vm=micro_vm,
     )
 
     def _pre_hook(_module, _inputs):
@@ -145,18 +177,31 @@ def vb_stats_summary(adapter: VirtualBlackwellAdapterV64, top_k: int = 12) -> st
 
     lines = []
     lines.append(f"Total wrapped-linear calls: {d['Total wrapped-linear calls']}")
-    lines.append(f"Pulse calls: {d['Pulse calls']} | Fast calls: {d['Fast calls']}")
+    lines.append(
+        f"Pulse calls: {d['Pulse calls']} | Fast calls: {d['Fast calls']} | "
+        f"Void calls: {d['Void calls']} | Inertia calls: {d['Inertia calls']}"
+    )
     denom = d["Scale cache updates"] + d["Scale cache reuse"]
     if denom > 0:
         hit = 100.0 * d["Scale cache reuse"] / denom
         lines.append(f"Scale cache reuse: {d['Scale cache reuse']} / {denom} ({hit:.1f}%)")
     else:
         lines.append("Scale cache reuse: 0 / 0 (n/a)")
+
+    if d.get("Micro-VM enabled", False):
+        lines.append(
+            f"Micro-VM: enabled | mem_free_mb_threshold={d.get('Micro-VM mem_free_mb_threshold')} "
+            f"| void_tile_out={d.get('Micro-VM void_tile_out')}"
+        )
+    else:
+        lines.append("Micro-VM: disabled")
+
     lines.append("")
     lines.append(f"Top {top_k} layers by pulse calls:")
     for name, st in items[:top_k]:
         lines.append(
             f"- {name}: total={st['total']}, pulse={st['pulse']}, fast={st['fast']}, "
+            f"void={st.get('void',0)}, inertia={st.get('inertia',0)}, "
             f"scale_updates={st['scale_updates']}, scale_reuses={st['scale_reuses']}"
         )
     return "\n".join(lines)
