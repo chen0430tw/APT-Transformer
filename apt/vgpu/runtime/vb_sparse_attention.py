@@ -24,7 +24,7 @@ from typing import Optional, Any
 
 import torch.nn as nn
 
-from vb_sparse_attention_v5 import patch_sparse_attention
+from vb_sparse_attention import patch_sparse_attention
 
 
 @dataclass
