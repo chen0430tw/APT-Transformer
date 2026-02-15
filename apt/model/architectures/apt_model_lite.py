@@ -11,8 +11,6 @@ import os
 SUPPRESS_APT_WARNINGS = os.environ.get('SUPPRESS_APT_WARNINGS', 'False').lower() in ('true', '1', 'yes')
 from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.core.fake_torch import get_torch
-torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 import math
@@ -119,9 +117,8 @@ class LiteSelfAttention(nn.Module):
         if key_padding_mask is not None:
             # convert to additive mask
             kp = key_padding_mask.view(B, 1, 1, T).to(dtype=x.dtype)
-            # use -inf for masked positions; fake_torch may not have inf, use large negative
-            neg = torch.tensor(-1e9, device=x.device, dtype=x.dtype)
-            kp = torch.where(kp > 0, neg, torch.zeros_like(kp))
+            # use large negative for masked positions (avoid per-forward tensor alloc)
+            kp = torch.where(kp > 0, x.new_full((), -1e9), torch.zeros_like(kp))
         else:
             kp = None
 
@@ -245,8 +242,7 @@ class APTLiteDecoderLayer(nn.Module):
         scores = torch.matmul(q, k.transpose(-2,-1)) * self.scale  # (B,h,T,S)
         if mem_key_padding_mask is not None:
             kp = mem_key_padding_mask.view(B,1,1,S).to(dtype=x.dtype)
-            neg = torch.tensor(-1e9, device=x.device, dtype=x.dtype)
-            scores = scores + torch.where(kp > 0, neg, torch.zeros_like(kp))
+            scores = scores + torch.where(kp > 0, x.new_full((), -1e9), torch.zeros_like(kp))
         attn = torch.softmax(scores, dim=-1)
         attn = self.drop(attn)
         out = torch.matmul(attn, v)  # (B,h,T,hd)
@@ -756,49 +752,35 @@ class AutopoieticAttention(nn.Module):
         nn.init.constant_(self.sr_conv2.bias, 0.)
 
     def log_debug(self, message: str):
-            # 【修改点】如果不开启 debug 模式，直接跳过，绝不执行 IO
-            if not getattr(self, 'debug_mode', False):
-                return
-            
-            # 只有开启了才写文件
-            try:
-                with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
-                    f.write(message + "\n")
-            except Exception:
-                pass
+        """写调试信息到日志文件，仅在 debug_mode=True 时执行。"""
+        if not getattr(self, 'debug_mode', False):
+            return
+        try:
+            with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except Exception:
+            pass
 
     def autopoietic_transform(
-        self, 
+        self,
         attention_scores: torch.Tensor,
         attn_mask: torch.Tensor = None
     ) -> torch.Tensor:
-        
-        # 1. 给统计代码加上“阀门”
-        if self.debug_mode:
-            debug_lines = []
-            debug_lines.append("...")
-            min_val = attention_scores.min().item() # 只有开启debug才执行同步
-
         """
         自生成变换过程：对输入的注意力分数进行一系列变换。
-        这里添加详细的统计信息打印，并写入DEBUG_LOG_FILE。
+        仅在 debug_mode=True 时收集统计信息并写入 DEBUG_LOG_FILE。
         """
-        # 第一步：打印输入attention_scores统计
-        debug_lines = []  # 初始化变量防止下面报错
-        
-        # 加上阀门！
-        if getattr(self, 'debug_mode', False):
-            # 第一步：打印输入attention_scores统计
+        debug = getattr(self, 'debug_mode', False)
+        debug_lines = []
+
+        if debug:
             debug_lines.append("\n[autopoietic_transform] >>>>>>>>> ENTER FUNCTION <<<<<<<<")
-            
-            # 【重点】把下面这些会卡顿的代码统统缩进进来！
             min_val = attention_scores.min().item()
             max_val = attention_scores.max().item()
             mean_val = attention_scores.mean().item()
             std_val = attention_scores.std().item()
             has_nan = torch.isnan(attention_scores).any().item()
             has_inf = torch.isinf(attention_scores).any().item()
-
             debug_lines.append(
                 f"[Input Stats] shape={list(attention_scores.shape)} "
                 f"min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}, std={std_val:.4f}, "
@@ -807,8 +789,9 @@ class AutopoieticAttention(nn.Module):
 
         # 如果不使用自生成机制，直接返回
         if not self.use_autopoietic:
-            debug_lines.append("[Info] use_autopoietic=False, skipping transform.")
-            self.log_debug("\n".join(debug_lines))
+            if debug:
+                debug_lines.append("[Info] use_autopoietic=False, skipping transform.")
+                self.log_debug("\n".join(debug_lines))
             return attention_scores
 
         # 对输入进行 clamp / nan_to_num 以保证数值安全
@@ -824,15 +807,16 @@ class AutopoieticAttention(nn.Module):
             batch_scores = attention_scores[b]  # shape: [num_heads, seq_len1, seq_len2]
             mean_attention = batch_scores.mean(dim=0)  # [seq_len1, seq_len2]
 
-            # 记录一下batch_scores统计
-            b_min = batch_scores.min().item()
-            b_max = batch_scores.max().item()
-            b_mean = batch_scores.mean().item()
-            b_std = batch_scores.std().item()
-            debug_lines.append(
-                f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
-                f"mean={b_mean:.4f}, std={b_std:.4f}"
-            )
+            # 记录一下batch_scores统计（仅 debug 模式）
+            if debug:
+                b_min = batch_scores.min().item()
+                b_max = batch_scores.max().item()
+                b_mean = batch_scores.mean().item()
+                b_std = batch_scores.std().item()
+                debug_lines.append(
+                    f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
+                    f"mean={b_mean:.4f}, std={b_std:.4f}"
+                )
 
             # eps处理
             eps_safe = torch.clamp(torch.tensor(self.eps, device=attention_scores.device), min=0.05, max=0.8)
@@ -848,9 +832,10 @@ class AutopoieticAttention(nn.Module):
                 autopoietic_attn = autopoietic_attn.squeeze(0).squeeze(0)  # [seq_len1, seq_len2]
                 autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
             except Exception as e:
-                debug_lines.append(
-                    f"[Batch {b}] 卷积映射出错: {e}, 使用平滑替代"
-                )
+                if debug:
+                    debug_lines.append(
+                        f"[Batch {b}] 卷积映射出错: {e}, 使用平滑替代"
+                    )
                 kernel_size = min(5, min(seq_len1, seq_len2))
                 if kernel_size % 2 == 0:
                     kernel_size -= 1
@@ -870,9 +855,9 @@ class AutopoieticAttention(nn.Module):
                 else:
                     autopoietic_attn = torch.tanh(scaled_attention * 0.5) * 2.0
 
-            # 检查 NaN/Inf
-                autopoietic_attn = torch.nan_to_num(autopoietic_attn, nan=0.0, posinf=2.0, neginf=-2.0)
-                autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
+            # 检查 NaN/Inf（在 try/except 之后，对所有路径都执行）
+            autopoietic_attn = torch.nan_to_num(autopoietic_attn, nan=0.0, posinf=2.0, neginf=-2.0)
+            autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
 
             # 处理掩码
             mean_padding_mask = None
@@ -935,7 +920,8 @@ class AutopoieticAttention(nn.Module):
                 F_matrix = F.softmax(lambda_param * H, dim=-1)
                 F_matrix = torch.nan_to_num(F_matrix, nan=1.0/seq_len2)
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 模糊概率计算出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 模糊概率计算出错: {e}")
                 F_matrix = torch.ones_like(mean_attention) / seq_len2
 
             transformed = sigmoid_smoothed * F_matrix
@@ -947,7 +933,8 @@ class AutopoieticAttention(nn.Module):
                 gamma = torch.clamp(energy_original / energy_transformed, min=0.8, max=1.2)
                 transformed = gamma * transformed
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 能量平衡计算出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 能量平衡计算出错: {e}")
 
             # 动态标准差调整
             try:
@@ -973,7 +960,8 @@ class AutopoieticAttention(nn.Module):
                 residual_ratio = base_ratio + entropy_factor
                 final_scores = (1 - residual_ratio) * scaled_transform + residual_ratio * mean_attention
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 标准差调整出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 标准差调整出错: {e}")
                 final_scores = 0.5 * transformed + 0.5 * mean_attention
 
             # 自适应温度调节
@@ -988,17 +976,22 @@ class AutopoieticAttention(nn.Module):
                 final_scores = final_scores / adaptive_tau
                 final_scores = torch.clamp(final_scores, min=-15.0, max=15.0)
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 温度调节出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 温度调节出错: {e}")
                 final_scores = torch.clamp(final_scores / 1.0, min=-10.0, max=10.0)
 
-            # 检查异常值比例
+            # 检查异常值：先用 nan_to_num 清理，若异常过多则回退
             abnormal_mask = torch.isnan(final_scores) | torch.isinf(final_scores)
-            abnormal_ratio = abnormal_mask.float().mean().item()
-            if abnormal_ratio > 0.2:
-                debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio*100:.2f}%), 使用安全回退 -> mean_attention")
-                final_scores = torch.clamp(mean_attention, min=-10.0, max=10.0)
+            if abnormal_mask.any():
+                abnormal_ratio = abnormal_mask.float().mean().item()
+                if abnormal_ratio > 0.2:
+                    if debug:
+                        debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio*100:.2f}%), 使用安全回退 -> mean_attention")
+                    final_scores = torch.clamp(mean_attention, min=-10.0, max=10.0)
+                else:
+                    final_scores = torch.nan_to_num(final_scores, nan=0.0)
+                    final_scores = torch.clamp(final_scores, min=-10.0, max=10.0)
             else:
-                final_scores = torch.nan_to_num(final_scores, nan=0.0)
                 final_scores = torch.clamp(final_scores, min=-10.0, max=10.0)
 
             batch_transform = []
@@ -1028,22 +1021,22 @@ class AutopoieticAttention(nn.Module):
         transform_scores = torch.nan_to_num(transform_scores, nan=0.0)
         transform_scores = torch.clamp(transform_scores, min=-30.0, max=30.0)
 
-        # 打印 transform_scores 统计
-        final_min = transform_scores.min().item()
-        final_max = transform_scores.max().item()
-        final_mean = transform_scores.mean().item()
-        final_std = transform_scores.std().item()
-        final_has_nan = torch.isnan(transform_scores).any().item()
-        final_has_inf = torch.isinf(transform_scores).any().item()
-        debug_lines.append(
-            f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
-            f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
-            f"NaN={final_has_nan}, Inf={final_has_inf}"
-        )
-        debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
+        # 打印 transform_scores 统计（仅 debug 模式，避免 GPU 同步）
+        if debug:
+            final_min = transform_scores.min().item()
+            final_max = transform_scores.max().item()
+            final_mean = transform_scores.mean().item()
+            final_std = transform_scores.std().item()
+            final_has_nan = torch.isnan(transform_scores).any().item()
+            final_has_inf = torch.isinf(transform_scores).any().item()
+            debug_lines.append(
+                f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
+                f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
+                f"NaN={final_has_nan}, Inf={final_has_inf}"
+            )
+            debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
+            self.log_debug("\n".join(debug_lines))
 
-        # 将所有调试信息写入日志
-        self.log_debug("\n".join(debug_lines))
         return transform_scores
 
     def forward(
@@ -1189,8 +1182,8 @@ class APTEncoderLayer(nn.Module):
             self.left_spin_attn = None
             self.left_spin_ffn = None
 
-        # 【新增这行】默认关闭 debug，防止拖慢速度
-        self.debug_mode = getattr(config, 'debug_mode', False) if 'config' in locals() else False
+        # debug 模式：通过 kwargs 传入，默认关闭
+        self.debug_mode = kwargs.get('debug_mode', False)
     
     def forward(
         self,
