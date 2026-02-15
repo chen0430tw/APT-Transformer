@@ -196,6 +196,7 @@ class APTLiteDecoderLayer(nn.Module):
     """
     APT-Lite 解码层（简化）：自注意力 + 交叉注意力 + SwiGLU。
     交叉注意力也走 LiteSelfAttention（把 memory 当作 kv）。
+    当 use_cross_attn=False 或 memory=None 时跳过交叉注意力（GPT-only 模式）。
     """
     def __init__(
         self,
@@ -206,10 +207,12 @@ class APTLiteDecoderLayer(nn.Module):
         batch_first: bool = True,
         norm_eps: float = 1e-6,
         gate_init: float = 0.0,
+        use_cross_attn: bool = True,
         **kwargs
     ):
         super().__init__()
         self.batch_first = batch_first
+        self.use_cross_attn = use_cross_attn
         self.norm1 = RMSNorm(d_model, eps=norm_eps)
         self.norm2 = RMSNorm(d_model, eps=norm_eps)
         self.norm3 = RMSNorm(d_model, eps=norm_eps)
@@ -252,15 +255,17 @@ class APTLiteDecoderLayer(nn.Module):
             out = out.transpose(0,1)
         return out
 
-    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None,
+    def forward(self, tgt, memory=None, tgt_mask=None, memory_mask=None,
                 tgt_key_padding_mask=None, memory_key_padding_mask=None):
         x = tgt
         h = self.norm1(x)
         attn_out, _ = self.self_attn(h, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, is_causal=True)
         g = self.gate(h)
         x = x + self.drop(attn_out) - self.drop(g * x)
-        h2 = self.norm2(x)
-        x = x + self.drop(self._cross_attention(h2, memory, mem_key_padding_mask=memory_key_padding_mask))
+        # 交叉注意力（旁路式：memory=None 或 use_cross_attn=False 时跳过）
+        if memory is not None and self.use_cross_attn:
+            h2 = self.norm2(x)
+            x = x + self.drop(self._cross_attention(h2, memory, mem_key_padding_mask=memory_key_padding_mask))
         h3 = self.norm3(x)
         x = x + self.drop(self.ffn(h3))
         return x
@@ -1241,6 +1246,7 @@ class APTDecoderLayer(nn.Module):
     """
     APT解码器层
     集成自生成注意力机制 + 左旋平滑残差连接
+    当 use_cross_attn=False 或 memory=None 时跳过交叉注意力（GPT-only 模式）。
     """
     def __init__(
         self,
@@ -1266,11 +1272,14 @@ class APTDecoderLayer(nn.Module):
         left_spin_alpha: float = 0.5,
         left_spin_tau: float = 0.3,
         left_spin_beta: float = 0.7,
+        # GPT-only 开关
+        use_cross_attn: bool = True,
         # lite兼容（忽略即可）
         gate_init: float = 0.0,
         **kwargs
     ):
         super().__init__()
+        self.use_cross_attn = use_cross_attn
 
         # 自注意力层(掩码)
         self.self_attn = AutopoieticAttention(
@@ -1359,7 +1368,7 @@ class APTDecoderLayer(nn.Module):
     def forward(
         self,
         tgt: torch.Tensor,
-        memory: torch.Tensor,
+        memory: Optional[torch.Tensor] = None,
         tgt_mask: Optional[torch.Tensor] = None,
         memory_mask: Optional[torch.Tensor] = None,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
@@ -1370,7 +1379,7 @@ class APTDecoderLayer(nn.Module):
 
         参数:
             tgt: 目标序列 [seq_len, batch_size, d_model] 或 [batch_size, seq_len, d_model]
-            memory: 编码器输出 同上
+            memory: 编码器输出（可为 None，此时跳过 cross-attn，等价 GPT block）
             tgt_mask: 目标序列掩码 [tgt_len, tgt_len] 或 [batch_size, tgt_len, tgt_len]
             memory_mask: 记忆掩码 [tgt_len, src_len]
             tgt_key_padding_mask: 目标填充掩码 [batch_size, tgt_len]
@@ -1396,22 +1405,28 @@ class APTDecoderLayer(nn.Module):
 
         tgt = self.norm1(tgt)
 
-        # 🚀 编码器-解码器注意力子层（左旋平滑残差连接）
-        tgt2, _ = self.multihead_attn(
-            query=tgt,
-            key=memory,
-            value=memory,
-            attn_mask=memory_mask,
-            key_padding_mask=memory_key_padding_mask
+        # 🚀 编码器-解码器注意力子层（旁路式：memory=None 或 use_cross_attn=False 时跳过）
+        do_cross = (
+            memory is not None
+            and getattr(self, "use_cross_attn", True)
+            and getattr(self, "multihead_attn", None) is not None
         )
-        tgt2_dropout = self.dropout2(tgt2)
+        if do_cross:
+            tgt2, _ = self.multihead_attn(
+                query=tgt,
+                key=memory,
+                value=memory,
+                attn_mask=memory_mask,
+                key_padding_mask=memory_key_padding_mask
+            )
+            tgt2_dropout = self.dropout2(tgt2)
 
-        if self.use_left_spin and self.left_spin_cross_attn is not None:
-            tgt = self.left_spin_cross_attn(tgt, tgt2_dropout)
-        else:
-            tgt = tgt + tgt2_dropout
+            if self.use_left_spin and self.left_spin_cross_attn is not None:
+                tgt = self.left_spin_cross_attn(tgt, tgt2_dropout)
+            else:
+                tgt = tgt + tgt2_dropout
 
-        tgt = self.norm2(tgt)
+            tgt = self.norm2(tgt)
 
         # 🚀 前馈网络子层（左旋平滑残差连接）
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
@@ -1462,6 +1477,9 @@ class APTModelConfiguration:
         left_spin_alpha: float = 0.5,  # 缓冲强度系数
         left_spin_tau: float = 0.3,  # 尖点阈值
         left_spin_beta: float = 0.7,  # 惯性系数
+        # GPT-only 开关（旁路式，保留 Encoder 结构不删除）
+        decoder_only: bool = True,   # True=GPT-only forward；False=seq2seq forward
+        use_cross_attn: bool = False,  # DecoderLayer 是否启用 cross-attn
         # APT 变体
         model_variant: str = 'normal',  # 'normal' | 'lite'
         lite_gate_init: float = 0.0,
@@ -1502,6 +1520,9 @@ class APTModelConfiguration:
         self.left_spin_alpha = left_spin_alpha
         self.left_spin_tau = left_spin_tau
         self.left_spin_beta = left_spin_beta
+        # GPT-only 开关
+        self.decoder_only = decoder_only
+        self.use_cross_attn = use_cross_attn
         # variant
         self.model_variant = model_variant
         self.lite_gate_init = lite_gate_init
@@ -1587,6 +1608,10 @@ class APTModel(nn.Module):
         left_spin_tau = getattr(config, "left_spin_tau", 0.3)
         left_spin_beta = getattr(config, "left_spin_beta", 0.7)
 
+        # GPT-only 开关
+        self.decoder_only = bool(getattr(config, "decoder_only", True))
+        use_cross_attn = bool(getattr(config, "use_cross_attn", False))
+
         # 创建编码器层
         encoder_layers = []
         for _ in range(config.num_encoder_layers):
@@ -1643,10 +1668,11 @@ class APTModel(nn.Module):
                     left_spin_alpha=left_spin_alpha,
                     left_spin_tau=left_spin_tau,
                     left_spin_beta=left_spin_beta,
-                    gate_init=getattr(config, 'lite_gate_init', 0.0)
+                    gate_init=getattr(config, 'lite_gate_init', 0.0),
+                    use_cross_attn=use_cross_attn
                 )
             )
-        
+
         # 编码器和解码器
         self.encoder_layers = nn.ModuleList(encoder_layers)
         self.decoder_layers = nn.ModuleList(decoder_layers)
@@ -1685,6 +1711,170 @@ class APTModel(nn.Module):
         if self.token_embedding.padding_idx is not None:
             with torch.no_grad():
                 self.token_embedding.weight[self.token_embedding.padding_idx].fill_(0)
+
+    # ------------------------------------------------------------------
+    # GPT-only 路径
+    # ------------------------------------------------------------------
+
+    def _build_causal_mask(self, tgt_len: int, device) -> torch.Tensor:
+        """构建 causal mask：bool 矩阵，True 表示「被遮掉（不可见）」。"""
+        return torch.triu(
+            torch.ones((tgt_len, tgt_len), device=device, dtype=torch.bool),
+            diagonal=1
+        )
+
+    def forward_lm(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        return_hidden: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Decoder-only LM forward（纯 GPT 路径）。
+
+        参数:
+            input_ids: (B, S) — token id
+            attention_mask: (B, S)，可选。
+                - dtype=bool → True=keep（HF 风格），内部转为 True=mask
+                - dtype=int/float → 1=keep, 0=pad
+            return_hidden: 是否同时返回最后一层 hidden states
+
+        返回:
+            logits (B, S, vocab_size)，或 (logits, hidden) 当 return_hidden=True
+        """
+        bsz, seqlen = input_ids.shape
+        device = input_ids.device
+
+        x = self.token_embedding(input_ids)
+        x = self.positional_encoding(x)
+
+        # causal mask (S, S)，True=mask
+        causal_mask = self._build_causal_mask(seqlen, device=device)
+
+        # key padding mask (B, S)，True=mask
+        key_padding_mask: Optional[torch.Tensor] = None
+        if attention_mask is not None:
+            if attention_mask.dtype == torch.bool:
+                key_padding_mask = ~attention_mask
+            else:
+                key_padding_mask = (attention_mask == 0)
+
+        for layer in self.decoder_layers:
+            x = layer(
+                tgt=x,
+                memory=None,
+                tgt_mask=causal_mask,
+                tgt_key_padding_mask=key_padding_mask,
+                memory_mask=None,
+                memory_key_padding_mask=None,
+            )
+
+        x = self.decoder_norm(x)
+        logits = self.output_projection(x)
+
+        if return_hidden:
+            return logits, x
+        return logits
+
+    @torch.no_grad()
+    def generate_lm(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int = 50,
+        temperature: float = 1.0,
+        top_k: int = 50,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.0,
+        do_sample: bool = True,
+        eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
+    ) -> torch.Tensor:
+        """
+        Decoder-only (GPT) 自回归生成。
+
+        参数:
+            input_ids: (B, S) — prompt token ids
+            max_new_tokens: 最多额外生成的 token 数量
+
+        返回:
+            generated_ids: (B, max_new_tokens) — 仅新生成的部分
+        """
+        if input_ids is None:
+            raise ValueError("input_ids 不能为空")
+
+        device = input_ids.device
+        batch_size = input_ids.size(0)
+
+        if eos_token_id is None:
+            eos_token_id = getattr(self.config, "eos_token_id", 3)
+        if pad_token_id is None:
+            pad_token_id = getattr(self.config, "pad_token_id", 0)
+        unk_token_id = getattr(self.config, "unk_token_id", None)
+
+        cur_ids = input_ids.clone()
+        generated_ids = torch.empty((batch_size, 0), device=device, dtype=torch.long)
+
+        was_training = self.training
+        self.eval()
+
+        try:
+            for _ in range(max_new_tokens):
+                logits = self.forward_lm(cur_ids)
+                next_token_logits = logits[:, -1, :]
+
+                # 重复惩罚
+                if repetition_penalty != 1.0:
+                    for i in range(batch_size):
+                        history = set(cur_ids[i].tolist())
+                        for tid in history:
+                            if next_token_logits[i, tid] > 0:
+                                next_token_logits[i, tid] /= repetition_penalty
+                            else:
+                                next_token_logits[i, tid] *= repetition_penalty
+
+                # 温度
+                next_token_logits = next_token_logits / max(float(temperature), 1e-5)
+
+                # 屏蔽特殊符号
+                if pad_token_id is not None and 0 <= pad_token_id < next_token_logits.size(-1):
+                    next_token_logits[:, pad_token_id] = -float("inf")
+                if unk_token_id is not None and 0 <= unk_token_id < next_token_logits.size(-1):
+                    next_token_logits[:, unk_token_id] = -float("inf")
+
+                # 采样 / 贪心
+                if do_sample:
+                    if top_k > 0:
+                        v, _ = torch.topk(next_token_logits, min(top_k, next_token_logits.size(-1)))
+                        next_token_logits[next_token_logits < v[:, [-1]]] = -float("inf")
+                    if 0 < top_p < 1.0:
+                        sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                        sorted_probs = F.softmax(sorted_logits, dim=-1)
+                        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                        sorted_indices_to_remove = cumulative_probs > top_p
+                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                        sorted_indices_to_remove[..., 0] = 0
+                        for i in range(batch_size):
+                            indices_to_remove = sorted_indices[i][sorted_indices_to_remove[i]]
+                            next_token_logits[i, indices_to_remove] = -float("inf")
+                    probs = F.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                cur_ids = torch.cat([cur_ids, next_token], dim=1)
+
+                if (next_token == eos_token_id).all():
+                    break
+        finally:
+            if was_training:
+                self.train()
+
+        return generated_ids
+
+    # ------------------------------------------------------------------
+    # Seq2seq 路径（保留旧逻辑）
+    # ------------------------------------------------------------------
 
     def encode(
         self,
@@ -1796,7 +1986,59 @@ class APTModel(nn.Module):
         need_weights: bool = True,
         **kwargs
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-        
+        """前向路由器：decoder_only=True 时走 GPT 路径，否则走 seq2seq 路径。"""
+        if getattr(self, "decoder_only", True):
+            # GPT-only 路径
+            input_ids = src_tokens if src_tokens is not None else kwargs.get("input_ids")
+            if input_ids is None and query is not None:
+                input_ids = query
+            attention_mask = src_key_padding_mask if src_key_padding_mask is not None else kwargs.get("attention_mask")
+            return_hidden = kwargs.get("return_hidden", False)
+            return self.forward_lm(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_hidden=return_hidden,
+            )
+        # seq2seq 路径
+        return self.forward_seq2seq(
+            src_tokens=src_tokens,
+            tgt_tokens=tgt_tokens,
+            src_mask=src_mask,
+            tgt_mask=tgt_mask,
+            memory_mask=memory_mask,
+            src_key_padding_mask=src_key_padding_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            memory_key_padding_mask=memory_key_padding_mask,
+            return_dict=return_dict,
+            query=query,
+            key=key,
+            value=value,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
+            **kwargs,
+        )
+
+    def forward_seq2seq(
+        self,
+        src_tokens: torch.Tensor = None,
+        tgt_tokens: Optional[torch.Tensor] = None,
+        src_mask: Optional[torch.Tensor] = None,
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+        tgt_key_padding_mask: Optional[torch.Tensor] = None,
+        memory_key_padding_mask: Optional[torch.Tensor] = None,
+        return_dict: bool = False,
+        query: torch.Tensor = None,
+        key: torch.Tensor = None,
+        value: torch.Tensor = None,
+        attn_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = True,
+        **kwargs
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Seq2seq forward（编码器-解码器路径）。"""
         # 将自注意力接口的参数映射到Transformer接口
         if src_tokens is None and query is not None:
             src_tokens = query
@@ -1809,8 +2051,8 @@ class APTModel(nn.Module):
             src_mask = attn_mask
         if src_key_padding_mask is None and key_padding_mask is not None:
             src_key_padding_mask = key_padding_mask
-        
-        # **确保掩码是bool类型**（若原本是float或long，则转为bool）
+
+        # **确保掩码是bool类型**
         if src_mask is not None and src_mask.dtype != torch.bool:
             src_mask = src_mask.to(torch.bool)
         if tgt_mask is not None and tgt_mask.dtype != torch.bool:
@@ -1823,7 +2065,7 @@ class APTModel(nn.Module):
             tgt_key_padding_mask = tgt_key_padding_mask.to(torch.bool)
         if memory_key_padding_mask is not None and memory_key_padding_mask.dtype != torch.bool:
             memory_key_padding_mask = memory_key_padding_mask.to(torch.bool)
-    
+
         memory = self.encode(
             src_tokens=src_tokens,
             src_mask=src_mask,
@@ -1837,10 +2079,10 @@ class APTModel(nn.Module):
             tgt_key_padding_mask=tgt_key_padding_mask,
             memory_key_padding_mask=memory_key_padding_mask if memory_key_padding_mask is not None else src_key_padding_mask
         )
-        
+
         # 生成logits
         logits = self.output_projection(decoder_output)
-        
+
         # 根据return_dict参数决定返回形式
         if return_dict:
             return {
@@ -1849,7 +2091,6 @@ class APTModel(nn.Module):
                 "decoder_output": decoder_output
             }
         else:
-            # 默认直接返回logits
             return logits
 
     def generate(
@@ -1885,6 +2126,21 @@ class APTModel(nn.Module):
         """
         del num_beams  # 当前实现不支持beam search，避免未使用参数警告
 
+        # GPT-only 路径：走 generate_lm
+        if getattr(self, "decoder_only", True):
+            return self.generate_lm(
+                input_ids=input_ids,
+                max_new_tokens=max_length,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                do_sample=do_sample,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
+            )
+
+        # --- 以下为 Encoder-Decoder 生成路径 ---
         if input_ids is None:
             raise ValueError("input_ids 不能为空")
 
@@ -1899,12 +2155,7 @@ class APTModel(nn.Module):
             pad_token_id = getattr(self.config, "pad_token_id", 0)
         unk_token_id = getattr(self.config, "unk_token_id", None)
 
-        # ------------------------------------------------------------------
-        # 🚀 核心逻辑修复：从 GPT 模式切换回 Encoder-Decoder 模式
-        # ------------------------------------------------------------------
-        
         # 2. 编码阶段 (Encoder)
-        # 一次性读懂 Prompt，获取记忆
         memory = self.encode(
             src_tokens=input_ids,
             src_key_padding_mask=(input_ids == pad_token_id)
