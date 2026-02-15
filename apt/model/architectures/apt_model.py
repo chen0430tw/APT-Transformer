@@ -420,6 +420,234 @@ class SwiGLU(nn.Module):
         x = self.dropout(x)
         return self.w3(x)
 
+# ---------------------------------------------------------------------------
+# MoE (Mixture-of-Experts) 组件
+# ---------------------------------------------------------------------------
+
+class TopKRouter(nn.Module):
+    """Top-K 门控路由器（Switch/ST-MoE 风格）
+
+    职责:
+      1. 将 token hidden state 映射到 num_experts 维 logits
+      2. 选出 top_k 专家并返回归一化权重
+      3. 计算 load-balancing aux loss + router z-loss
+
+    参数:
+        d_model:        隐藏维度
+        num_experts:    专家总数
+        top_k:          每个 token 选几个专家
+        noisy_gating:   训练时是否加噪声探索
+        noise_std:      噪声标准差
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_experts: int,
+        top_k: int = 1,
+        noisy_gating: bool = True,
+        noise_std: float = 1.0,
+    ):
+        super().__init__()
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.noisy_gating = noisy_gating
+        self.noise_std = noise_std
+
+        self.gate = nn.Linear(d_model, num_experts, bias=False)
+        if noisy_gating:
+            self.noise_linear = nn.Linear(d_model, num_experts, bias=False)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        参数:
+            x: (B, T, D)  token hidden states
+
+        返回:
+            weights:   (B, T, top_k)   归一化路由权重
+            indices:   (B, T, top_k)   所选专家下标
+            aux_loss:  scalar          辅助损失 (balance + z-loss)
+        """
+        # logits: (B, T, E)
+        logits = self.gate(x)
+
+        # 训练时添加可学习噪声以促进探索
+        if self.training and self.noisy_gating:
+            noise = torch.randn_like(logits) * F.softplus(self.noise_linear(x)) * self.noise_std
+            logits = logits + noise
+
+        # --- 辅助损失 ---
+        aux_loss = self._compute_aux_loss(logits)
+
+        # top-k 选择
+        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=-1)  # (B,T,k)
+        top_k_weights = torch.softmax(top_k_logits, dim=-1)                    # (B,T,k)
+
+        return top_k_weights, top_k_indices, aux_loss
+
+    def _compute_aux_loss(self, logits: torch.Tensor) -> torch.Tensor:
+        """计算 Switch-style load-balancing loss + router z-loss。
+
+        balance loss = N * sum_i(f_i * P_i)
+        z-loss       = mean(logsumexp(logits)^2)
+        """
+        # logits: (B, T, E)
+        num_experts = logits.size(-1)
+        probs = torch.softmax(logits, dim=-1)  # (B,T,E)
+
+        # f_i: 每个专家被 top-k 选中的 token 比例
+        _, top_indices = torch.topk(logits, self.top_k, dim=-1)          # (B,T,k)
+        expert_mask = torch.zeros_like(probs)
+        expert_mask.scatter_(-1, top_indices, 1.0)                        # (B,T,E)
+        f = expert_mask.float().mean(dim=(0, 1))                          # (E,)
+
+        # P_i: 每个专家获得的平均路由概率
+        P = probs.mean(dim=(0, 1))                                        # (E,)
+
+        # Switch Transformer balance loss
+        balance_loss = num_experts * (f * P).sum()
+
+        # Router z-loss: 防止 logits 过大导致数值不稳
+        z_loss = torch.logsumexp(logits, dim=-1).pow(2).mean()
+
+        return balance_loss + z_loss
+
+
+class MoEFFN(nn.Module):
+    """MoE-Ready FFN：支持 Dense / MoE 可切换的前馈网络
+
+    当 use_moe=False 时退化为普通 Dense FFN (aux_loss=0)。
+    当 use_moe=True 时：
+      - 创建 num_experts 个 FFN 专家
+      - 用 TopKRouter 选专家
+      - 可选 shared_expert（always-on 的 dense 专家当底盘）
+      - forward 返回 (output, aux_loss)
+
+    后端策略（可扩展）:
+      - 默认: 纯 PyTorch loop dispatch (兼容性最好)
+      - 可选: megablocks / scattermoe / tutel (安装后自动启用)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        dim_feedforward: int,
+        dropout: float = 0.0,
+        activation: str = "gelu",
+        use_swiglu: bool = True,
+        # --- MoE 参数 ---
+        use_moe: bool = False,
+        num_experts: int = 8,
+        top_k: int = 1,
+        capacity_factor: float = 1.25,
+        shared_expert: bool = True,
+        noisy_gating: bool = True,
+    ):
+        super().__init__()
+        self.use_moe = use_moe
+        self.d_model = d_model
+        self.top_k = top_k
+        self.capacity_factor = capacity_factor
+        self.use_shared_expert = shared_expert and use_moe
+
+        if not use_moe:
+            # --- Dense 模式 ---
+            if use_swiglu:
+                self.dense_ffn = SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout)
+            else:
+                self.dense_ffn = nn.Sequential(
+                    nn.Linear(d_model, dim_feedforward),
+                    nn.GELU() if activation == "gelu" else nn.ReLU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(dim_feedforward, d_model),
+                )
+        else:
+            # --- MoE 模式 ---
+            self.router = TopKRouter(
+                d_model=d_model,
+                num_experts=num_experts,
+                top_k=top_k,
+                noisy_gating=noisy_gating,
+            )
+
+            # 创建 num_experts 个独立 FFN 专家
+            experts = []
+            for _ in range(num_experts):
+                if use_swiglu:
+                    experts.append(SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout))
+                else:
+                    experts.append(nn.Sequential(
+                        nn.Linear(d_model, dim_feedforward),
+                        nn.GELU() if activation == "gelu" else nn.ReLU(),
+                        nn.Dropout(dropout),
+                        nn.Linear(dim_feedforward, d_model),
+                    ))
+            self.experts = nn.ModuleList(experts)
+
+            # 可选 shared expert (always-on dense 专家)
+            if self.use_shared_expert:
+                if use_swiglu:
+                    self.shared_expert_ffn = SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout)
+                else:
+                    self.shared_expert_ffn = nn.Sequential(
+                        nn.Linear(d_model, dim_feedforward),
+                        nn.GELU() if activation == "gelu" else nn.ReLU(),
+                        nn.Dropout(dropout),
+                        nn.Linear(dim_feedforward, d_model),
+                    )
+                # 融合门控：控制 shared_expert 和 routed_expert 的比例
+                self.shared_gate = nn.Linear(d_model, 1, bias=True)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        参数:
+            x: (B, T, D)
+
+        返回:
+            output:   (B, T, D)
+            aux_loss: scalar (Dense 模式下为 0)
+        """
+        if not self.use_moe:
+            return self.dense_ffn(x), torch.tensor(0.0, device=x.device, dtype=x.dtype)
+
+        # --- MoE dispatch ---
+        B, T, D = x.shape
+        weights, indices, aux_loss = self.router(x)  # (B,T,k), (B,T,k), scalar
+
+        # Token-level dispatch: 对每个 token 加权组合 top_k 专家输出
+        # 使用高效的 batch 实现，避免 python-level loop over tokens
+        x_flat = x.view(B * T, D)                                  # (N, D)
+        weights_flat = weights.view(B * T, self.top_k)              # (N, k)
+        indices_flat = indices.view(B * T, self.top_k)              # (N, k)
+
+        # 收集所有专家需要处理的 token 并批量执行
+        output = torch.zeros_like(x_flat)  # (N, D)
+
+        for k_idx in range(self.top_k):
+            expert_indices_k = indices_flat[:, k_idx]   # (N,)
+            weights_k = weights_flat[:, k_idx]           # (N,)
+
+            for e_idx in range(len(self.experts)):
+                mask = (expert_indices_k == e_idx)       # (N,)
+                if mask.any():
+                    expert_input = x_flat[mask]          # (n_e, D)
+                    expert_output = self.experts[e_idx](expert_input)  # (n_e, D)
+                    output[mask] += weights_k[mask].unsqueeze(-1) * expert_output
+
+        output = output.view(B, T, D)
+
+        # --- Shared expert ---
+        if self.use_shared_expert:
+            shared_out = self.shared_expert_ffn(x)                      # (B,T,D)
+            gate = torch.sigmoid(self.shared_gate(x.mean(dim=1, keepdim=True)))  # (B,1,1)
+            output = gate * shared_out + (1.0 - gate) * output
+
+        return output, aux_loss
+
+
 class PositionalEncoding(nn.Module):
     """位置编码实现，支持动态扩展"""
     def __init__(self, d_model, max_len=5000, dropout=0.1):
@@ -651,7 +879,7 @@ class AutopoieticAttention(nn.Module):
 class APTEncoderLayer(nn.Module):
     """
     APT编码器层
-    集成自生成注意力机制 + 左旋平滑残差连接
+    集成自生成注意力机制 + 左旋平滑残差连接 + MoE-Ready FFN
     """
     def __init__(
         self,
@@ -679,11 +907,24 @@ class APTEncoderLayer(nn.Module):
         left_spin_beta: float = 0.7,
         # 现代化组件开关
         use_rmsnorm: bool = True,
-        use_swiglu: bool = True
+        use_swiglu: bool = True,
+        # FFN 扩展倍率（Phi-3 风格）
+        ffn_ratio: Optional[float] = None,
+        # MoE 参数（默认全关闭，不影响现有训练）
+        use_moe: bool = False,
+        moe_num_experts: int = 8,
+        moe_top_k: int = 1,
+        moe_capacity_factor: float = 1.25,
+        moe_shared_expert: bool = True,
+        moe_noisy_gating: bool = True,
     ):
         super().__init__()
         self.use_rmsnorm = use_rmsnorm
         self.use_swiglu = use_swiglu
+
+        # FFN 扩展倍率覆盖
+        if ffn_ratio is not None:
+            dim_feedforward = round(d_model * ffn_ratio)
 
         # 自生成注意力层
         self.self_attn = AutopoieticAttention(
@@ -703,20 +944,25 @@ class APTEncoderLayer(nn.Module):
             dbc_iterations=dbc_iterations
         )
 
-        # 前馈网络
-        # 前馈网络：默认 SwiGLU（更接近主流大模型 FFN）
-        if self.use_swiglu:
-            self.swiglu = SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout)
-            # 兼容字段（不使用）
-            self.linear1 = None
-            self.linear2 = None
-            self.dropout = None
-        else:
-            self.linear1 = nn.Linear(d_model, dim_feedforward)
-            self.dropout = nn.Dropout(dropout)
-            self.linear2 = nn.Linear(dim_feedforward, d_model)
-            self.swiglu = None
-
+        # 前馈网络：统一走 MoEFFN (Dense / MoE 可切换)
+        self.ffn = MoEFFN(
+            d_model=d_model,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation=activation,
+            use_swiglu=use_swiglu,
+            use_moe=use_moe,
+            num_experts=moe_num_experts,
+            top_k=moe_top_k,
+            capacity_factor=moe_capacity_factor,
+            shared_expert=moe_shared_expert,
+            noisy_gating=moe_noisy_gating,
+        )
+        # 兼容旧代码的字段引用
+        self.swiglu = None
+        self.linear1 = None
+        self.linear2 = None
+        self.dropout = None
 
         # 层归一化
         self.norm1 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
@@ -725,11 +971,14 @@ class APTEncoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
         # 激活函数
-        self.activation = F.gelu if activation == "gelu" else F.relu
+        self.activation_fn = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
         self.use_left_spin = use_left_spin
+
+        # 辅助损失缓存（每层独立）
+        self._aux_loss = torch.tensor(0.0)
 
         # 🚀 左旋平滑残差连接（替换传统泰勒展开）
         if use_left_spin:
@@ -751,9 +1000,8 @@ class APTEncoderLayer(nn.Module):
             self.left_spin_attn = None
             self.left_spin_ffn = None
 
-        # 【新增这行】默认关闭 debug，防止拖慢速度
-        self.debug_mode = getattr(config, 'debug_mode', False) if 'config' in locals() else False
-    
+        self.debug_mode = False
+
     def forward(
         self,
         src: torch.Tensor,
@@ -761,7 +1009,7 @@ class APTEncoderLayer(nn.Module):
         src_key_padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        编码器层前向传播（集成左旋平滑）
+        编码器层前向传播（集成左旋平滑 + MoE）
 
         参数:
             src: 输入张量 [seq_len, batch_size, d_model] 或 [batch_size, seq_len, d_model]
@@ -781,24 +1029,21 @@ class APTEncoderLayer(nn.Module):
         )
         src2_dropout = self.dropout1(src2)
 
-        # 替换: src = src + src2  →  src = LeftSpin(src, src2)
         if self.use_left_spin and self.left_spin_attn is not None:
             src = self.left_spin_attn(src, src2_dropout)
         else:
-            # 降级为标准残差
             src = src + src2_dropout
 
         src = self.norm1(src)
 
-        # 🚀 前馈网络子层（左旋平滑残差连接）
-        src2 = self.swiglu(src) if self.swiglu is not None else self.linear2(self.dropout(self.activation(self.linear1(src))))
+        # 🚀 前馈网络子层（MoE-Ready: 返回 (output, aux_loss)）
+        src2, aux_loss = self.ffn(src)
+        self._aux_loss = aux_loss
         src2_dropout = self.dropout2(src2)
 
-        # 替换: src = src + src2  →  src = LeftSpin(src, src2)
         if self.use_left_spin and self.left_spin_ffn is not None:
             src = self.left_spin_ffn(src, src2_dropout)
         else:
-            # 降级为标准残差
             src = src + src2_dropout
 
         src = self.norm2(src)
@@ -809,7 +1054,7 @@ class APTEncoderLayer(nn.Module):
 class APTDecoderLayer(nn.Module):
     """
     APT解码器层
-    集成自生成注意力机制 + 左旋平滑残差连接
+    集成自生成注意力机制 + 左旋平滑残差连接 + MoE-Ready FFN
     """
     def __init__(
         self,
@@ -840,11 +1085,24 @@ class APTDecoderLayer(nn.Module):
         use_swiglu: bool = True,
         # GPT-only 开关：False 时 cross-attn 被旁路
         use_cross_attn: bool = True,
+        # FFN 扩展倍率（Phi-3 风格）
+        ffn_ratio: Optional[float] = None,
+        # MoE 参数（默认全关闭，不影响现有训练）
+        use_moe: bool = False,
+        moe_num_experts: int = 8,
+        moe_top_k: int = 1,
+        moe_capacity_factor: float = 1.25,
+        moe_shared_expert: bool = True,
+        moe_noisy_gating: bool = True,
     ):
         super().__init__()
         self.use_rmsnorm = use_rmsnorm
         self.use_swiglu = use_swiglu
         self.use_cross_attn = use_cross_attn
+
+        # FFN 扩展倍率覆盖
+        if ffn_ratio is not None:
+            dim_feedforward = round(d_model * ffn_ratio)
 
         # 自注意力层(掩码)
         self.self_attn = AutopoieticAttention(
@@ -882,20 +1140,25 @@ class APTDecoderLayer(nn.Module):
             dbc_iterations=dbc_iterations
         )
 
-        # 前馈网络
-        # 前馈网络：默认 SwiGLU（更接近主流大模型 FFN）
-        if self.use_swiglu:
-            self.swiglu = SwiGLU(d_model, dim_feedforward, d_model, dropout=dropout)
-            # 兼容字段（不使用）
-            self.linear1 = None
-            self.linear2 = None
-            self.dropout = None
-        else:
-            self.linear1 = nn.Linear(d_model, dim_feedforward)
-            self.dropout = nn.Dropout(dropout)
-            self.linear2 = nn.Linear(dim_feedforward, d_model)
-            self.swiglu = None
-
+        # 前馈网络：统一走 MoEFFN (Dense / MoE 可切换)
+        self.ffn = MoEFFN(
+            d_model=d_model,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation=activation,
+            use_swiglu=use_swiglu,
+            use_moe=use_moe,
+            num_experts=moe_num_experts,
+            top_k=moe_top_k,
+            capacity_factor=moe_capacity_factor,
+            shared_expert=moe_shared_expert,
+            noisy_gating=moe_noisy_gating,
+        )
+        # 兼容旧代码的字段引用
+        self.swiglu = None
+        self.linear1 = None
+        self.linear2 = None
+        self.dropout = None
 
         # 层归一化
         self.norm1 = RMSNorm(d_model, eps=eps) if self.use_rmsnorm else nn.LayerNorm(d_model)
@@ -906,11 +1169,14 @@ class APTDecoderLayer(nn.Module):
         self.dropout3 = nn.Dropout(dropout)
 
         # 激活函数
-        self.activation = F.gelu if activation == "gelu" else F.relu
+        self.activation_fn = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
         self.use_left_spin = use_left_spin
+
+        # 辅助损失缓存（每层独立）
+        self._aux_loss = torch.tensor(0.0)
 
         # 🚀 左旋平滑残差连接（3个子层）
         if use_left_spin:
@@ -939,7 +1205,7 @@ class APTDecoderLayer(nn.Module):
             self.left_spin_self_attn = None
             self.left_spin_cross_attn = None
             self.left_spin_ffn = None
-    
+
     def forward(
         self,
         tgt: torch.Tensor,
@@ -950,7 +1216,7 @@ class APTDecoderLayer(nn.Module):
         memory_key_padding_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        解码器层前向传播（集成左旋平滑）
+        解码器层前向传播（集成左旋平滑 + MoE）
 
         参数:
             tgt: 目标序列 [seq_len, batch_size, d_model] 或 [batch_size, seq_len, d_model]
@@ -1003,8 +1269,9 @@ class APTDecoderLayer(nn.Module):
 
             tgt = self.norm2(tgt)
 
-        # 🚀 前馈网络子层（左旋平滑残差连接）
-        tgt2 = self.swiglu(tgt) if self.swiglu is not None else self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        # 🚀 前馈网络子层（MoE-Ready: 返回 (output, aux_loss)）
+        tgt2, aux_loss = self.ffn(tgt)
+        self._aux_loss = aux_loss
         tgt2_dropout = self.dropout3(tgt2)
 
         if self.use_left_spin and self.left_spin_ffn is not None:
@@ -1018,7 +1285,7 @@ class APTDecoderLayer(nn.Module):
 
 
 class APTModelConfiguration:
-    """APT模型配置类（集成左旋平滑）"""
+    """APT模型配置类（集成左旋平滑 + MoE）"""
     def __init__(
         self,
         vocab_size: int = 30522,  # 词汇表大小
@@ -1055,6 +1322,17 @@ class APTModelConfiguration:
         # GPT-only 开关（旁路式，保留 Encoder 结构不删除）
         decoder_only: bool = True,   # True=GPT-only forward；False=seq2seq forward
         use_cross_attn: bool = False,  # DecoderLayer 是否启用 cross-attn
+        # FFN 扩展倍率（Phi-3 风格，None 保持 d_ff 不变）
+        ffn_ratio: Optional[float] = None,
+        # MoE 参数（默认全关闭，不影响现有训练）
+        use_moe: bool = False,              # 是否启用 MoE FFN
+        moe_num_experts: int = 8,           # 专家总数（常用 8/16）
+        moe_top_k: int = 1,                 # 每 token 选几个专家（先 Top-1 最稳）
+        moe_capacity_factor: float = 1.25,  # 容量因子（防溢出）
+        moe_aux_weight: float = 0.01,       # 辅助损失权重（训练时用）
+        moe_shared_expert: bool = True,     # 是否启用 shared expert（always-on 底盘）
+        moe_noisy_gating: bool = True,      # 训练时路由器加噪声探索
+        moe_router_z_loss: float = 0.0,     # z-loss 额外缩放（0 = 走默认）
         **kwargs  # 其他参数
     ):
         self.vocab_size = vocab_size
@@ -1094,6 +1372,19 @@ class APTModelConfiguration:
         # GPT-only 开关
         self.decoder_only = decoder_only
         self.use_cross_attn = use_cross_attn
+
+        # FFN 扩展倍率
+        self.ffn_ratio = ffn_ratio
+
+        # MoE 参数
+        self.use_moe = use_moe
+        self.moe_num_experts = moe_num_experts
+        self.moe_top_k = moe_top_k
+        self.moe_capacity_factor = moe_capacity_factor
+        self.moe_aux_weight = moe_aux_weight
+        self.moe_shared_expert = moe_shared_expert
+        self.moe_noisy_gating = moe_noisy_gating
+        self.moe_router_z_loss = moe_router_z_loss
 
         # 添加任何额外参数
         for key, value in kwargs.items():
@@ -1179,6 +1470,16 @@ class APTModel(nn.Module):
         self.decoder_only = bool(getattr(config, "decoder_only", True))
         use_cross_attn = bool(getattr(config, "use_cross_attn", False))
 
+        # MoE 参数
+        ffn_ratio = getattr(config, "ffn_ratio", None)
+        use_moe = getattr(config, "use_moe", False)
+        moe_num_experts = getattr(config, "moe_num_experts", 8)
+        moe_top_k = getattr(config, "moe_top_k", 1)
+        moe_capacity_factor = getattr(config, "moe_capacity_factor", 1.25)
+        moe_shared_expert = getattr(config, "moe_shared_expert", True)
+        moe_noisy_gating = getattr(config, "moe_noisy_gating", True)
+        self.moe_aux_weight = float(getattr(config, "moe_aux_weight", 0.01))
+
         # 创建编码器层
         encoder_layers = []
         for _ in range(config.num_encoder_layers):
@@ -1203,7 +1504,17 @@ class APTModel(nn.Module):
                     use_left_spin=use_left_spin,
                     left_spin_alpha=left_spin_alpha,
                     left_spin_tau=left_spin_tau,
-                    left_spin_beta=left_spin_beta, use_rmsnorm=use_rmsnorm, use_swiglu=use_swiglu)
+                    left_spin_beta=left_spin_beta,
+                    use_rmsnorm=use_rmsnorm,
+                    use_swiglu=use_swiglu,
+                    # MoE 参数
+                    ffn_ratio=ffn_ratio,
+                    use_moe=use_moe,
+                    moe_num_experts=moe_num_experts,
+                    moe_top_k=moe_top_k,
+                    moe_capacity_factor=moe_capacity_factor,
+                    moe_shared_expert=moe_shared_expert,
+                    moe_noisy_gating=moe_noisy_gating)
             )
 
         # 创建解码器层
@@ -1233,7 +1544,15 @@ class APTModel(nn.Module):
                     left_spin_beta=left_spin_beta,
                     use_rmsnorm=use_rmsnorm,
                     use_swiglu=use_swiglu,
-                    use_cross_attn=use_cross_attn)
+                    use_cross_attn=use_cross_attn,
+                    # MoE 参数
+                    ffn_ratio=ffn_ratio,
+                    use_moe=use_moe,
+                    moe_num_experts=moe_num_experts,
+                    moe_top_k=moe_top_k,
+                    moe_capacity_factor=moe_capacity_factor,
+                    moe_shared_expert=moe_shared_expert,
+                    moe_noisy_gating=moe_noisy_gating)
             )
         
         # 编码器和解码器
@@ -1276,6 +1595,19 @@ class APTModel(nn.Module):
                 self.token_embedding.weight[self.token_embedding.padding_idx].fill_(0)
 
     # ------------------------------------------------------------------
+    # MoE aux_loss 聚合
+    # ------------------------------------------------------------------
+
+    def _gather_aux_loss(self, layers) -> torch.Tensor:
+        """从所有层收集 MoE 辅助损失并求和。"""
+        total = torch.tensor(0.0, device=next(self.parameters()).device)
+        for layer in layers:
+            layer_aux = getattr(layer, "_aux_loss", None)
+            if layer_aux is not None and isinstance(layer_aux, torch.Tensor):
+                total = total + layer_aux
+        return total
+
+    # ------------------------------------------------------------------
     # GPT-only 路径（Patch 1）
     # ------------------------------------------------------------------
 
@@ -1304,6 +1636,7 @@ class APTModel(nn.Module):
 
         返回:
             logits (B, S, vocab_size)，或 (logits, hidden) 当 return_hidden=True
+            注: 当 use_moe=True 时，可通过 model.last_aux_loss 获取辅助损失
         """
         bsz, seqlen = input_ids.shape
         device = input_ids.device
@@ -1318,16 +1651,14 @@ class APTModel(nn.Module):
         key_padding_mask: Optional[torch.Tensor] = None
         if attention_mask is not None:
             if attention_mask.dtype == torch.bool:
-                # 假设 HF 风格：True=keep → 取反得到 True=mask
                 key_padding_mask = ~attention_mask
             else:
-                # 1=keep, 0=pad
                 key_padding_mask = (attention_mask == 0)
 
         for layer in self.decoder_layers:
             x = layer(
                 tgt=x,
-                memory=None,           # 强制跳过 cross-attn
+                memory=None,
                 tgt_mask=causal_mask,
                 tgt_key_padding_mask=key_padding_mask,
                 memory_mask=None,
@@ -1336,6 +1667,9 @@ class APTModel(nn.Module):
 
         x = self.decoder_norm(x)
         logits = self.output_projection(x)
+
+        # 聚合 MoE 辅助损失（挂在 self 上供训练脚本使用）
+        self.last_aux_loss = self._gather_aux_loss(self.decoder_layers) * self.moe_aux_weight
 
         if return_hidden:
             return logits, x
@@ -1552,13 +1886,19 @@ class APTModel(nn.Module):
         
         # 生成logits
         logits = self.output_projection(decoder_output)
-        
+
+        # 聚合 MoE 辅助损失
+        aux_enc = self._gather_aux_loss(self.encoder_layers)
+        aux_dec = self._gather_aux_loss(self.decoder_layers)
+        self.last_aux_loss = (aux_enc + aux_dec) * self.moe_aux_weight
+
         # 根据return_dict参数决定返回形式
         if return_dict:
             return {
                 "logits": logits,
                 "encoder_output": memory,
-                "decoder_output": decoder_output
+                "decoder_output": decoder_output,
+                "aux_loss": self.last_aux_loss,
             }
         else:
             # 默认直接返回logits
