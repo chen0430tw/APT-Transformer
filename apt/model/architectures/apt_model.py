@@ -590,20 +590,17 @@ class AutopoieticAttention(nn.Module):
         if attn_mask is not None:
             # accept (T,T), (B,T,T), or already broadcastable
             am = attn_mask
-            if am.dtype != torch.bool and am.dtype != torch.float16 and am.dtype != torch.float32 and am.dtype != torch.float64:
-                # fallback to bool
-                am = am.to(dtype=torch.bool)
-            # broadcast to (B,1,T,T) for bool masks
+            # 统一转为 bool：-inf / 非零 → True（遮掉），0.0 → False（放通）
+            # 这样 float causal mask 和 bool kpm 可以安全地用 | 合并，
+            # 避免 float mask 在 composed_mask 已存在时被静默丢弃。
+            if am.dtype != torch.bool:
+                am = am.bool()
+            # broadcast to (B,1,T,T)
             if am.dim() == 2:
                 am = am.view(1, 1, am.size(0), am.size(1)).expand(b, 1, -1, -1)
             elif am.dim() == 3:
                 am = am.view(b, 1, am.size(-2), am.size(-1))
-            # merge with key padding mask if bool
-            if am.dtype == torch.bool:
-                composed_mask = am if composed_mask is None else (composed_mask | am)
-            else:
-                # float additive mask: keep separate (SDPA supports float mask)
-                composed_mask = am if composed_mask is None else composed_mask  # don't merge different types
+            composed_mask = am if composed_mask is None else (composed_mask | am)
 
         # SDPA fast path
         if hasattr(F, "scaled_dot_product_attention"):
