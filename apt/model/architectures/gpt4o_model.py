@@ -445,6 +445,9 @@ class GPT4oModel(nn.Module):
         # Add learned positional embeddings.  Sequence length is derived
         # from the encoded representation.
         B, T, _ = x.shape
+        max_pos = self.pos_emb.num_embeddings
+        if T > max_pos:
+            raise ValueError(f"Sequence length {T} exceeds max_seq_len {max_pos}")
         pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
         x = x + self.pos_emb(pos_ids)
         # Pass through transformer blocks
