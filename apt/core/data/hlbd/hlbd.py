@@ -22,8 +22,6 @@ from typing import Optional, Dict, Any
 
 from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.core.fake_torch import get_torch
-torch = get_torch()
 DataLoader = torch.utils.data.DataLoader
 
 # 添加项目根目录到路径
@@ -54,7 +52,7 @@ from apt.apps.evaluation import UnifiedEvaluator
 # 模型和训练模块
 from apt.model.architectures.apt_model import APTModel
 from apt.trainops.checkpoints.checkpoint import CheckpointManager
-from apt.apt_model.training.optimizer import create_optimizer_and_scheduler
+from apt.trainops.engine.optimizer import create_optimizer_and_scheduler
 
 # Config模块 - 使用新的APTConfig
 try:
@@ -388,12 +386,12 @@ def train_hlbd_model(args, model, tokenizer, processor, device, logger):
     model = model.to(device)
 
     # 设置优化器（使用重构后的optimizer模块）
-    total_steps = args.epochs * len(train_loader)
+    # create_optimizer_and_scheduler 签名: (model, learning_rate, steps_per_epoch, epochs)
     optimizer, scheduler = create_optimizer_and_scheduler(
-        model=model,
-        learning_rate=args.learning_rate,
-        warmup_steps=args.warmup_steps,
-        total_steps=total_steps
+        model,
+        args.learning_rate,
+        len(train_loader),
+        args.epochs
     )
 
     logger.info(f"优化器: Adam, 学习率={args.learning_rate}")
@@ -401,8 +399,7 @@ def train_hlbd_model(args, model, tokenizer, processor, device, logger):
 
     # 创建检查点管理器
     checkpoint_manager = CheckpointManager(
-        save_dir=args.output_dir,
-        max_checkpoints=3
+        save_dir=args.output_dir
     )
 
     # 训练循环
@@ -481,6 +478,8 @@ def train_hlbd_model(args, model, tokenizer, processor, device, logger):
             optimizer=optimizer,
             scheduler=scheduler,
             epoch=epoch,
+            global_step=global_step,
+            loss_history=[],
             metrics={'train_loss': avg_train_loss, 'val_loss': avg_val_loss},
             is_best=is_best
         )
