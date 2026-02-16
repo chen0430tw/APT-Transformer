@@ -110,7 +110,12 @@ class MultiHeadAttention(nn.Module):
             scale = (self.head_dim ** -0.5)
             attn = (q * scale) @ k.transpose(-2, -1)  # [B,H,S,S]
             if attn_mask is not None:
-                attn = attn + attn_mask
+                if attn_mask.dtype == torch.bool:
+                    # bool mask: True = masked position
+                    attn = attn.masked_fill(attn_mask, float("-inf"))
+                else:
+                    # float additive mask (e.g. -inf for masked positions)
+                    attn = attn + attn_mask
             if is_causal:
                 causal = torch.triu(torch.ones(S, S, device=x.device, dtype=torch.bool), diagonal=1)
                 attn = attn.masked_fill(causal, float("-inf"))
@@ -126,9 +131,10 @@ class MultiHeadAttention(nn.Module):
 class ReflectionBlock(nn.Module):
     """
     "True reflection" module:
-      RMSNorm -> FlashAttention -> residual
+      RMSNorm -> FlashAttention (causal) -> residual
       RMSNorm -> SwiGLU -> residual
-    Additionally outputs a lightweight "reflection score" for debugging.
+    Additionally outputs a lightweight "reflection score" for debugging
+    (only computed when return_reflection=True to avoid GPU sync).
     """
     def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.0):
         super().__init__()
@@ -138,18 +144,19 @@ class ReflectionBlock(nn.Module):
         self.ffn = SwiGLU(d_model, d_ff)
         self.score_head = nn.Linear(d_model, 1, bias=True)
 
-    def forward(self, x) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        h = self.attn(self.norm1(x), is_causal=False)
+    def forward(self, x, return_reflection: bool = False) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
+        h = self.attn(self.norm1(x), is_causal=True)
         x = x + h
         h2 = self.ffn(self.norm2(x))
         x = x + h2
 
-        # score: [B, S, 1] -> [B, 1] pooled
-        # score: [B, S, 1] -> [B, 1] pooled
-        score = torch.sigmoid(self.score_head(x)).mean(dim=1)  # [B,1]
-        info = {
-            "reflection_score_mean": float(score.mean().item()) if score.numel() else 0.0,
-        }
+        info = None
+        if return_reflection:
+            # score: [B, S, 1] -> [B, 1] pooled
+            score = torch.sigmoid(self.score_head(x)).mean(dim=1)  # [B,1]
+            info = {
+                "reflection_score_mean": float(score.mean().item()),
+            }
         return x, info
 
 class FeedForward(nn.Module):
@@ -174,7 +181,7 @@ class TransformerBlock(nn.Module):
         self.enable_reflection = enable_reflection
         self.reflection = ReflectionBlock(d_model, n_heads, d_ff, dropout=dropout) if enable_reflection else None
 
-    def forward(self, x) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
+    def forward(self, x, return_reflection: bool = False) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
         # Attention
         x = x + self.attn(self.attn_norm(x), is_causal=True)
         # FFN
@@ -182,7 +189,7 @@ class TransformerBlock(nn.Module):
 
         refl_info = None
         if self.reflection is not None:
-            x, refl_info = self.reflection(x)
+            x, refl_info = self.reflection(x, return_reflection=return_reflection)
 
         return x, refl_info
 
@@ -202,6 +209,7 @@ class Claude4Model(nn.Module):
         n_heads: int = 8,
         d_ff: int = 1024,
         num_layers: int = 6,
+        max_seq_len: int = 4096,
         enable_reflection: bool = True,
         reflection_layers: Optional[List[int]] = None,
         dropout: float = 0.0,
@@ -210,9 +218,10 @@ class Claude4Model(nn.Module):
         self.vocab_size = vocab_size
         self.d_model = d_model
         self.num_layers = num_layers
+        self.max_seq_len = max_seq_len
 
         self.tok_emb = nn.Embedding(vocab_size, d_model)
-        self.pos_emb = nn.Embedding(4096, d_model)  # large enough for tests
+        self.pos_emb = nn.Embedding(max_seq_len, d_model)
 
         if reflection_layers is None:
             reflection_layers = list(range(num_layers)) if enable_reflection else []
@@ -240,7 +249,7 @@ class Claude4Model(nn.Module):
 
         refl_all: List[Dict[str, Any]] = []
         for blk in self.blocks:
-            x, info = blk(x)
+            x, info = blk(x, return_reflection=return_reflection)
             if return_reflection and info is not None:
                 refl_all.append(info)
 
@@ -262,6 +271,7 @@ def create_claude4_model(
     num_layers: int = 6,
     num_heads: int = 8,
     ffn_hidden: int = 1024,
+    max_seq_len: int = 4096,
     enable_reflection: bool = False,
     **kwargs
 ):
@@ -275,6 +285,7 @@ def create_claude4_model(
         num_layers=num_layers,
         n_heads=num_heads,
         d_ff=ffn_hidden,
+        max_seq_len=max_seq_len,
         enable_reflection=enable_reflection,
         **kwargs
     )

@@ -11,8 +11,6 @@ import os
 SUPPRESS_APT_WARNINGS = os.environ.get('SUPPRESS_APT_WARNINGS', 'False').lower() in ('true', '1', 'yes')
 from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.core.fake_torch import get_torch
-torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 import math
@@ -119,9 +117,8 @@ class LiteSelfAttention(nn.Module):
         if key_padding_mask is not None:
             # convert to additive mask
             kp = key_padding_mask.view(B, 1, 1, T).to(dtype=x.dtype)
-            # use -inf for masked positions; fake_torch may not have inf, use large negative
-            neg = torch.tensor(-1e9, device=x.device, dtype=x.dtype)
-            kp = torch.where(kp > 0, neg, torch.zeros_like(kp))
+            # use large negative for masked positions (avoid per-forward tensor alloc)
+            kp = torch.where(kp > 0, x.new_full((), -1e9), torch.zeros_like(kp))
         else:
             kp = None
 
@@ -199,6 +196,7 @@ class APTLiteDecoderLayer(nn.Module):
     """
     APT-Lite 解码层（简化）：自注意力 + 交叉注意力 + SwiGLU。
     交叉注意力也走 LiteSelfAttention（把 memory 当作 kv）。
+    当 use_cross_attn=False 或 memory=None 时跳过交叉注意力（GPT-only 模式）。
     """
     def __init__(
         self,
@@ -209,10 +207,12 @@ class APTLiteDecoderLayer(nn.Module):
         batch_first: bool = True,
         norm_eps: float = 1e-6,
         gate_init: float = 0.0,
+        use_cross_attn: bool = True,
         **kwargs
     ):
         super().__init__()
         self.batch_first = batch_first
+        self.use_cross_attn = use_cross_attn
         self.norm1 = RMSNorm(d_model, eps=norm_eps)
         self.norm2 = RMSNorm(d_model, eps=norm_eps)
         self.norm3 = RMSNorm(d_model, eps=norm_eps)
@@ -245,8 +245,7 @@ class APTLiteDecoderLayer(nn.Module):
         scores = torch.matmul(q, k.transpose(-2,-1)) * self.scale  # (B,h,T,S)
         if mem_key_padding_mask is not None:
             kp = mem_key_padding_mask.view(B,1,1,S).to(dtype=x.dtype)
-            neg = torch.tensor(-1e9, device=x.device, dtype=x.dtype)
-            scores = scores + torch.where(kp > 0, neg, torch.zeros_like(kp))
+            scores = scores + torch.where(kp > 0, x.new_full((), -1e9), torch.zeros_like(kp))
         attn = torch.softmax(scores, dim=-1)
         attn = self.drop(attn)
         out = torch.matmul(attn, v)  # (B,h,T,hd)
@@ -256,15 +255,17 @@ class APTLiteDecoderLayer(nn.Module):
             out = out.transpose(0,1)
         return out
 
-    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None,
+    def forward(self, tgt, memory=None, tgt_mask=None, memory_mask=None,
                 tgt_key_padding_mask=None, memory_key_padding_mask=None):
         x = tgt
         h = self.norm1(x)
         attn_out, _ = self.self_attn(h, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, is_causal=True)
         g = self.gate(h)
         x = x + self.drop(attn_out) - self.drop(g * x)
-        h2 = self.norm2(x)
-        x = x + self.drop(self._cross_attention(h2, memory, mem_key_padding_mask=memory_key_padding_mask))
+        # 交叉注意力（旁路式：memory=None 或 use_cross_attn=False 时跳过）
+        if memory is not None and self.use_cross_attn:
+            h2 = self.norm2(x)
+            x = x + self.drop(self._cross_attention(h2, memory, mem_key_padding_mask=memory_key_padding_mask))
         h3 = self.norm3(x)
         x = x + self.drop(self.ffn(h3))
         return x
@@ -756,49 +757,35 @@ class AutopoieticAttention(nn.Module):
         nn.init.constant_(self.sr_conv2.bias, 0.)
 
     def log_debug(self, message: str):
-            # 【修改点】如果不开启 debug 模式，直接跳过，绝不执行 IO
-            if not getattr(self, 'debug_mode', False):
-                return
-            
-            # 只有开启了才写文件
-            try:
-                with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
-                    f.write(message + "\n")
-            except Exception:
-                pass
+        """写调试信息到日志文件，仅在 debug_mode=True 时执行。"""
+        if not getattr(self, 'debug_mode', False):
+            return
+        try:
+            with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except Exception:
+            pass
 
     def autopoietic_transform(
-        self, 
+        self,
         attention_scores: torch.Tensor,
         attn_mask: torch.Tensor = None
     ) -> torch.Tensor:
-        
-        # 1. 给统计代码加上“阀门”
-        if self.debug_mode:
-            debug_lines = []
-            debug_lines.append("...")
-            min_val = attention_scores.min().item() # 只有开启debug才执行同步
-
         """
         自生成变换过程：对输入的注意力分数进行一系列变换。
-        这里添加详细的统计信息打印，并写入DEBUG_LOG_FILE。
+        仅在 debug_mode=True 时收集统计信息并写入 DEBUG_LOG_FILE。
         """
-        # 第一步：打印输入attention_scores统计
-        debug_lines = []  # 初始化变量防止下面报错
-        
-        # 加上阀门！
-        if getattr(self, 'debug_mode', False):
-            # 第一步：打印输入attention_scores统计
+        debug = getattr(self, 'debug_mode', False)
+        debug_lines = []
+
+        if debug:
             debug_lines.append("\n[autopoietic_transform] >>>>>>>>> ENTER FUNCTION <<<<<<<<")
-            
-            # 【重点】把下面这些会卡顿的代码统统缩进进来！
             min_val = attention_scores.min().item()
             max_val = attention_scores.max().item()
             mean_val = attention_scores.mean().item()
             std_val = attention_scores.std().item()
             has_nan = torch.isnan(attention_scores).any().item()
             has_inf = torch.isinf(attention_scores).any().item()
-
             debug_lines.append(
                 f"[Input Stats] shape={list(attention_scores.shape)} "
                 f"min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}, std={std_val:.4f}, "
@@ -807,8 +794,9 @@ class AutopoieticAttention(nn.Module):
 
         # 如果不使用自生成机制，直接返回
         if not self.use_autopoietic:
-            debug_lines.append("[Info] use_autopoietic=False, skipping transform.")
-            self.log_debug("\n".join(debug_lines))
+            if debug:
+                debug_lines.append("[Info] use_autopoietic=False, skipping transform.")
+                self.log_debug("\n".join(debug_lines))
             return attention_scores
 
         # 对输入进行 clamp / nan_to_num 以保证数值安全
@@ -824,15 +812,16 @@ class AutopoieticAttention(nn.Module):
             batch_scores = attention_scores[b]  # shape: [num_heads, seq_len1, seq_len2]
             mean_attention = batch_scores.mean(dim=0)  # [seq_len1, seq_len2]
 
-            # 记录一下batch_scores统计
-            b_min = batch_scores.min().item()
-            b_max = batch_scores.max().item()
-            b_mean = batch_scores.mean().item()
-            b_std = batch_scores.std().item()
-            debug_lines.append(
-                f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
-                f"mean={b_mean:.4f}, std={b_std:.4f}"
-            )
+            # 记录一下batch_scores统计（仅 debug 模式）
+            if debug:
+                b_min = batch_scores.min().item()
+                b_max = batch_scores.max().item()
+                b_mean = batch_scores.mean().item()
+                b_std = batch_scores.std().item()
+                debug_lines.append(
+                    f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
+                    f"mean={b_mean:.4f}, std={b_std:.4f}"
+                )
 
             # eps处理
             eps_safe = torch.clamp(torch.tensor(self.eps, device=attention_scores.device), min=0.05, max=0.8)
@@ -848,9 +837,10 @@ class AutopoieticAttention(nn.Module):
                 autopoietic_attn = autopoietic_attn.squeeze(0).squeeze(0)  # [seq_len1, seq_len2]
                 autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
             except Exception as e:
-                debug_lines.append(
-                    f"[Batch {b}] 卷积映射出错: {e}, 使用平滑替代"
-                )
+                if debug:
+                    debug_lines.append(
+                        f"[Batch {b}] 卷积映射出错: {e}, 使用平滑替代"
+                    )
                 kernel_size = min(5, min(seq_len1, seq_len2))
                 if kernel_size % 2 == 0:
                     kernel_size -= 1
@@ -870,9 +860,9 @@ class AutopoieticAttention(nn.Module):
                 else:
                     autopoietic_attn = torch.tanh(scaled_attention * 0.5) * 2.0
 
-            # 检查 NaN/Inf
-                autopoietic_attn = torch.nan_to_num(autopoietic_attn, nan=0.0, posinf=2.0, neginf=-2.0)
-                autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
+            # 检查 NaN/Inf（在 try/except 之后，对所有路径都执行）
+            autopoietic_attn = torch.nan_to_num(autopoietic_attn, nan=0.0, posinf=2.0, neginf=-2.0)
+            autopoietic_attn = torch.clamp(autopoietic_attn, min=-5.0, max=5.0)
 
             # 处理掩码
             mean_padding_mask = None
@@ -935,7 +925,8 @@ class AutopoieticAttention(nn.Module):
                 F_matrix = F.softmax(lambda_param * H, dim=-1)
                 F_matrix = torch.nan_to_num(F_matrix, nan=1.0/seq_len2)
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 模糊概率计算出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 模糊概率计算出错: {e}")
                 F_matrix = torch.ones_like(mean_attention) / seq_len2
 
             transformed = sigmoid_smoothed * F_matrix
@@ -947,7 +938,8 @@ class AutopoieticAttention(nn.Module):
                 gamma = torch.clamp(energy_original / energy_transformed, min=0.8, max=1.2)
                 transformed = gamma * transformed
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 能量平衡计算出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 能量平衡计算出错: {e}")
 
             # 动态标准差调整
             try:
@@ -973,7 +965,8 @@ class AutopoieticAttention(nn.Module):
                 residual_ratio = base_ratio + entropy_factor
                 final_scores = (1 - residual_ratio) * scaled_transform + residual_ratio * mean_attention
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 标准差调整出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 标准差调整出错: {e}")
                 final_scores = 0.5 * transformed + 0.5 * mean_attention
 
             # 自适应温度调节
@@ -988,17 +981,22 @@ class AutopoieticAttention(nn.Module):
                 final_scores = final_scores / adaptive_tau
                 final_scores = torch.clamp(final_scores, min=-15.0, max=15.0)
             except Exception as e:
-                debug_lines.append(f"[Batch {b}] 温度调节出错: {e}")
+                if debug:
+                    debug_lines.append(f"[Batch {b}] 温度调节出错: {e}")
                 final_scores = torch.clamp(final_scores / 1.0, min=-10.0, max=10.0)
 
-            # 检查异常值比例
+            # 检查异常值：先用 nan_to_num 清理，若异常过多则回退
             abnormal_mask = torch.isnan(final_scores) | torch.isinf(final_scores)
-            abnormal_ratio = abnormal_mask.float().mean().item()
-            if abnormal_ratio > 0.2:
-                debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio*100:.2f}%), 使用安全回退 -> mean_attention")
-                final_scores = torch.clamp(mean_attention, min=-10.0, max=10.0)
+            if abnormal_mask.any():
+                abnormal_ratio = abnormal_mask.float().mean().item()
+                if abnormal_ratio > 0.2:
+                    if debug:
+                        debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio*100:.2f}%), 使用安全回退 -> mean_attention")
+                    final_scores = torch.clamp(mean_attention, min=-10.0, max=10.0)
+                else:
+                    final_scores = torch.nan_to_num(final_scores, nan=0.0)
+                    final_scores = torch.clamp(final_scores, min=-10.0, max=10.0)
             else:
-                final_scores = torch.nan_to_num(final_scores, nan=0.0)
                 final_scores = torch.clamp(final_scores, min=-10.0, max=10.0)
 
             batch_transform = []
@@ -1028,22 +1026,22 @@ class AutopoieticAttention(nn.Module):
         transform_scores = torch.nan_to_num(transform_scores, nan=0.0)
         transform_scores = torch.clamp(transform_scores, min=-30.0, max=30.0)
 
-        # 打印 transform_scores 统计
-        final_min = transform_scores.min().item()
-        final_max = transform_scores.max().item()
-        final_mean = transform_scores.mean().item()
-        final_std = transform_scores.std().item()
-        final_has_nan = torch.isnan(transform_scores).any().item()
-        final_has_inf = torch.isinf(transform_scores).any().item()
-        debug_lines.append(
-            f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
-            f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
-            f"NaN={final_has_nan}, Inf={final_has_inf}"
-        )
-        debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
+        # 打印 transform_scores 统计（仅 debug 模式，避免 GPU 同步）
+        if debug:
+            final_min = transform_scores.min().item()
+            final_max = transform_scores.max().item()
+            final_mean = transform_scores.mean().item()
+            final_std = transform_scores.std().item()
+            final_has_nan = torch.isnan(transform_scores).any().item()
+            final_has_inf = torch.isinf(transform_scores).any().item()
+            debug_lines.append(
+                f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
+                f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
+                f"NaN={final_has_nan}, Inf={final_has_inf}"
+            )
+            debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
+            self.log_debug("\n".join(debug_lines))
 
-        # 将所有调试信息写入日志
-        self.log_debug("\n".join(debug_lines))
         return transform_scores
 
     def forward(
@@ -1189,8 +1187,8 @@ class APTEncoderLayer(nn.Module):
             self.left_spin_attn = None
             self.left_spin_ffn = None
 
-        # 【新增这行】默认关闭 debug，防止拖慢速度
-        self.debug_mode = getattr(config, 'debug_mode', False) if 'config' in locals() else False
+        # debug 模式：通过 kwargs 传入，默认关闭
+        self.debug_mode = kwargs.get('debug_mode', False)
     
     def forward(
         self,
@@ -1248,6 +1246,7 @@ class APTDecoderLayer(nn.Module):
     """
     APT解码器层
     集成自生成注意力机制 + 左旋平滑残差连接
+    当 use_cross_attn=False 或 memory=None 时跳过交叉注意力（GPT-only 模式）。
     """
     def __init__(
         self,
@@ -1273,11 +1272,14 @@ class APTDecoderLayer(nn.Module):
         left_spin_alpha: float = 0.5,
         left_spin_tau: float = 0.3,
         left_spin_beta: float = 0.7,
+        # GPT-only 开关
+        use_cross_attn: bool = True,
         # lite兼容（忽略即可）
         gate_init: float = 0.0,
         **kwargs
     ):
         super().__init__()
+        self.use_cross_attn = use_cross_attn
 
         # 自注意力层(掩码)
         self.self_attn = AutopoieticAttention(
@@ -1366,7 +1368,7 @@ class APTDecoderLayer(nn.Module):
     def forward(
         self,
         tgt: torch.Tensor,
-        memory: torch.Tensor,
+        memory: Optional[torch.Tensor] = None,
         tgt_mask: Optional[torch.Tensor] = None,
         memory_mask: Optional[torch.Tensor] = None,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
@@ -1377,7 +1379,7 @@ class APTDecoderLayer(nn.Module):
 
         参数:
             tgt: 目标序列 [seq_len, batch_size, d_model] 或 [batch_size, seq_len, d_model]
-            memory: 编码器输出 同上
+            memory: 编码器输出（可为 None，此时跳过 cross-attn，等价 GPT block）
             tgt_mask: 目标序列掩码 [tgt_len, tgt_len] 或 [batch_size, tgt_len, tgt_len]
             memory_mask: 记忆掩码 [tgt_len, src_len]
             tgt_key_padding_mask: 目标填充掩码 [batch_size, tgt_len]
@@ -1403,22 +1405,28 @@ class APTDecoderLayer(nn.Module):
 
         tgt = self.norm1(tgt)
 
-        # 🚀 编码器-解码器注意力子层（左旋平滑残差连接）
-        tgt2, _ = self.multihead_attn(
-            query=tgt,
-            key=memory,
-            value=memory,
-            attn_mask=memory_mask,
-            key_padding_mask=memory_key_padding_mask
+        # 🚀 编码器-解码器注意力子层（旁路式：memory=None 或 use_cross_attn=False 时跳过）
+        do_cross = (
+            memory is not None
+            and getattr(self, "use_cross_attn", True)
+            and getattr(self, "multihead_attn", None) is not None
         )
-        tgt2_dropout = self.dropout2(tgt2)
+        if do_cross:
+            tgt2, _ = self.multihead_attn(
+                query=tgt,
+                key=memory,
+                value=memory,
+                attn_mask=memory_mask,
+                key_padding_mask=memory_key_padding_mask
+            )
+            tgt2_dropout = self.dropout2(tgt2)
 
-        if self.use_left_spin and self.left_spin_cross_attn is not None:
-            tgt = self.left_spin_cross_attn(tgt, tgt2_dropout)
-        else:
-            tgt = tgt + tgt2_dropout
+            if self.use_left_spin and self.left_spin_cross_attn is not None:
+                tgt = self.left_spin_cross_attn(tgt, tgt2_dropout)
+            else:
+                tgt = tgt + tgt2_dropout
 
-        tgt = self.norm2(tgt)
+            tgt = self.norm2(tgt)
 
         # 🚀 前馈网络子层（左旋平滑残差连接）
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
@@ -1469,6 +1477,9 @@ class APTModelConfiguration:
         left_spin_alpha: float = 0.5,  # 缓冲强度系数
         left_spin_tau: float = 0.3,  # 尖点阈值
         left_spin_beta: float = 0.7,  # 惯性系数
+        # GPT-only 开关（旁路式，保留 Encoder 结构不删除）
+        decoder_only: bool = True,   # True=GPT-only forward；False=seq2seq forward
+        use_cross_attn: bool = False,  # DecoderLayer 是否启用 cross-attn
         # APT 变体
         model_variant: str = 'normal',  # 'normal' | 'lite'
         lite_gate_init: float = 0.0,
@@ -1509,6 +1520,9 @@ class APTModelConfiguration:
         self.left_spin_alpha = left_spin_alpha
         self.left_spin_tau = left_spin_tau
         self.left_spin_beta = left_spin_beta
+        # GPT-only 开关
+        self.decoder_only = decoder_only
+        self.use_cross_attn = use_cross_attn
         # variant
         self.model_variant = model_variant
         self.lite_gate_init = lite_gate_init
@@ -1594,6 +1608,10 @@ class APTModel(nn.Module):
         left_spin_tau = getattr(config, "left_spin_tau", 0.3)
         left_spin_beta = getattr(config, "left_spin_beta", 0.7)
 
+        # GPT-only 开关
+        self.decoder_only = bool(getattr(config, "decoder_only", True))
+        use_cross_attn = bool(getattr(config, "use_cross_attn", False))
+
         # 创建编码器层
         encoder_layers = []
         for _ in range(config.num_encoder_layers):
@@ -1650,10 +1668,11 @@ class APTModel(nn.Module):
                     left_spin_alpha=left_spin_alpha,
                     left_spin_tau=left_spin_tau,
                     left_spin_beta=left_spin_beta,
-                    gate_init=getattr(config, 'lite_gate_init', 0.0)
+                    gate_init=getattr(config, 'lite_gate_init', 0.0),
+                    use_cross_attn=use_cross_attn
                 )
             )
-        
+
         # 编码器和解码器
         self.encoder_layers = nn.ModuleList(encoder_layers)
         self.decoder_layers = nn.ModuleList(decoder_layers)
@@ -1692,6 +1711,170 @@ class APTModel(nn.Module):
         if self.token_embedding.padding_idx is not None:
             with torch.no_grad():
                 self.token_embedding.weight[self.token_embedding.padding_idx].fill_(0)
+
+    # ------------------------------------------------------------------
+    # GPT-only 路径
+    # ------------------------------------------------------------------
+
+    def _build_causal_mask(self, tgt_len: int, device) -> torch.Tensor:
+        """构建 causal mask：bool 矩阵，True 表示「被遮掉（不可见）」。"""
+        return torch.triu(
+            torch.ones((tgt_len, tgt_len), device=device, dtype=torch.bool),
+            diagonal=1
+        )
+
+    def forward_lm(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        return_hidden: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Decoder-only LM forward（纯 GPT 路径）。
+
+        参数:
+            input_ids: (B, S) — token id
+            attention_mask: (B, S)，可选。
+                - dtype=bool → True=keep（HF 风格），内部转为 True=mask
+                - dtype=int/float → 1=keep, 0=pad
+            return_hidden: 是否同时返回最后一层 hidden states
+
+        返回:
+            logits (B, S, vocab_size)，或 (logits, hidden) 当 return_hidden=True
+        """
+        bsz, seqlen = input_ids.shape
+        device = input_ids.device
+
+        x = self.token_embedding(input_ids)
+        x = self.positional_encoding(x)
+
+        # causal mask (S, S)，True=mask
+        causal_mask = self._build_causal_mask(seqlen, device=device)
+
+        # key padding mask (B, S)，True=mask
+        key_padding_mask: Optional[torch.Tensor] = None
+        if attention_mask is not None:
+            if attention_mask.dtype == torch.bool:
+                key_padding_mask = ~attention_mask
+            else:
+                key_padding_mask = (attention_mask == 0)
+
+        for layer in self.decoder_layers:
+            x = layer(
+                tgt=x,
+                memory=None,
+                tgt_mask=causal_mask,
+                tgt_key_padding_mask=key_padding_mask,
+                memory_mask=None,
+                memory_key_padding_mask=None,
+            )
+
+        x = self.decoder_norm(x)
+        logits = self.output_projection(x)
+
+        if return_hidden:
+            return logits, x
+        return logits
+
+    @torch.no_grad()
+    def generate_lm(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int = 50,
+        temperature: float = 1.0,
+        top_k: int = 50,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.0,
+        do_sample: bool = True,
+        eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
+    ) -> torch.Tensor:
+        """
+        Decoder-only (GPT) 自回归生成。
+
+        参数:
+            input_ids: (B, S) — prompt token ids
+            max_new_tokens: 最多额外生成的 token 数量
+
+        返回:
+            generated_ids: (B, max_new_tokens) — 仅新生成的部分
+        """
+        if input_ids is None:
+            raise ValueError("input_ids 不能为空")
+
+        device = input_ids.device
+        batch_size = input_ids.size(0)
+
+        if eos_token_id is None:
+            eos_token_id = getattr(self.config, "eos_token_id", 3)
+        if pad_token_id is None:
+            pad_token_id = getattr(self.config, "pad_token_id", 0)
+        unk_token_id = getattr(self.config, "unk_token_id", None)
+
+        cur_ids = input_ids.clone()
+        generated_ids = torch.empty((batch_size, 0), device=device, dtype=torch.long)
+
+        was_training = self.training
+        self.eval()
+
+        try:
+            for _ in range(max_new_tokens):
+                logits = self.forward_lm(cur_ids)
+                next_token_logits = logits[:, -1, :]
+
+                # 重复惩罚
+                if repetition_penalty != 1.0:
+                    for i in range(batch_size):
+                        history = set(cur_ids[i].tolist())
+                        for tid in history:
+                            if next_token_logits[i, tid] > 0:
+                                next_token_logits[i, tid] /= repetition_penalty
+                            else:
+                                next_token_logits[i, tid] *= repetition_penalty
+
+                # 温度
+                next_token_logits = next_token_logits / max(float(temperature), 1e-5)
+
+                # 屏蔽特殊符号
+                if pad_token_id is not None and 0 <= pad_token_id < next_token_logits.size(-1):
+                    next_token_logits[:, pad_token_id] = -float("inf")
+                if unk_token_id is not None and 0 <= unk_token_id < next_token_logits.size(-1):
+                    next_token_logits[:, unk_token_id] = -float("inf")
+
+                # 采样 / 贪心
+                if do_sample:
+                    if top_k > 0:
+                        v, _ = torch.topk(next_token_logits, min(top_k, next_token_logits.size(-1)))
+                        next_token_logits[next_token_logits < v[:, [-1]]] = -float("inf")
+                    if 0 < top_p < 1.0:
+                        sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                        sorted_probs = F.softmax(sorted_logits, dim=-1)
+                        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                        sorted_indices_to_remove = cumulative_probs > top_p
+                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                        sorted_indices_to_remove[..., 0] = 0
+                        for i in range(batch_size):
+                            indices_to_remove = sorted_indices[i][sorted_indices_to_remove[i]]
+                            next_token_logits[i, indices_to_remove] = -float("inf")
+                    probs = F.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                cur_ids = torch.cat([cur_ids, next_token], dim=1)
+
+                if (next_token == eos_token_id).all():
+                    break
+        finally:
+            if was_training:
+                self.train()
+
+        return generated_ids
+
+    # ------------------------------------------------------------------
+    # Seq2seq 路径（保留旧逻辑）
+    # ------------------------------------------------------------------
 
     def encode(
         self,
@@ -1803,7 +1986,59 @@ class APTModel(nn.Module):
         need_weights: bool = True,
         **kwargs
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-        
+        """前向路由器：decoder_only=True 时走 GPT 路径，否则走 seq2seq 路径。"""
+        if getattr(self, "decoder_only", True):
+            # GPT-only 路径
+            input_ids = src_tokens if src_tokens is not None else kwargs.get("input_ids")
+            if input_ids is None and query is not None:
+                input_ids = query
+            attention_mask = src_key_padding_mask if src_key_padding_mask is not None else kwargs.get("attention_mask")
+            return_hidden = kwargs.get("return_hidden", False)
+            return self.forward_lm(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_hidden=return_hidden,
+            )
+        # seq2seq 路径
+        return self.forward_seq2seq(
+            src_tokens=src_tokens,
+            tgt_tokens=tgt_tokens,
+            src_mask=src_mask,
+            tgt_mask=tgt_mask,
+            memory_mask=memory_mask,
+            src_key_padding_mask=src_key_padding_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            memory_key_padding_mask=memory_key_padding_mask,
+            return_dict=return_dict,
+            query=query,
+            key=key,
+            value=value,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
+            **kwargs,
+        )
+
+    def forward_seq2seq(
+        self,
+        src_tokens: torch.Tensor = None,
+        tgt_tokens: Optional[torch.Tensor] = None,
+        src_mask: Optional[torch.Tensor] = None,
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+        tgt_key_padding_mask: Optional[torch.Tensor] = None,
+        memory_key_padding_mask: Optional[torch.Tensor] = None,
+        return_dict: bool = False,
+        query: torch.Tensor = None,
+        key: torch.Tensor = None,
+        value: torch.Tensor = None,
+        attn_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = True,
+        **kwargs
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Seq2seq forward（编码器-解码器路径）。"""
         # 将自注意力接口的参数映射到Transformer接口
         if src_tokens is None and query is not None:
             src_tokens = query
@@ -1816,8 +2051,8 @@ class APTModel(nn.Module):
             src_mask = attn_mask
         if src_key_padding_mask is None and key_padding_mask is not None:
             src_key_padding_mask = key_padding_mask
-        
-        # **确保掩码是bool类型**（若原本是float或long，则转为bool）
+
+        # **确保掩码是bool类型**
         if src_mask is not None and src_mask.dtype != torch.bool:
             src_mask = src_mask.to(torch.bool)
         if tgt_mask is not None and tgt_mask.dtype != torch.bool:
@@ -1830,7 +2065,7 @@ class APTModel(nn.Module):
             tgt_key_padding_mask = tgt_key_padding_mask.to(torch.bool)
         if memory_key_padding_mask is not None and memory_key_padding_mask.dtype != torch.bool:
             memory_key_padding_mask = memory_key_padding_mask.to(torch.bool)
-    
+
         memory = self.encode(
             src_tokens=src_tokens,
             src_mask=src_mask,
@@ -1844,10 +2079,10 @@ class APTModel(nn.Module):
             tgt_key_padding_mask=tgt_key_padding_mask,
             memory_key_padding_mask=memory_key_padding_mask if memory_key_padding_mask is not None else src_key_padding_mask
         )
-        
+
         # 生成logits
         logits = self.output_projection(decoder_output)
-        
+
         # 根据return_dict参数决定返回形式
         if return_dict:
             return {
@@ -1856,7 +2091,6 @@ class APTModel(nn.Module):
                 "decoder_output": decoder_output
             }
         else:
-            # 默认直接返回logits
             return logits
 
     def generate(
@@ -1892,6 +2126,21 @@ class APTModel(nn.Module):
         """
         del num_beams  # 当前实现不支持beam search，避免未使用参数警告
 
+        # GPT-only 路径：走 generate_lm
+        if getattr(self, "decoder_only", True):
+            return self.generate_lm(
+                input_ids=input_ids,
+                max_new_tokens=max_length,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                do_sample=do_sample,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
+            )
+
+        # --- 以下为 Encoder-Decoder 生成路径 ---
         if input_ids is None:
             raise ValueError("input_ids 不能为空")
 
@@ -1906,12 +2155,7 @@ class APTModel(nn.Module):
             pad_token_id = getattr(self.config, "pad_token_id", 0)
         unk_token_id = getattr(self.config, "unk_token_id", None)
 
-        # ------------------------------------------------------------------
-        # 🚀 核心逻辑修复：从 GPT 模式切换回 Encoder-Decoder 模式
-        # ------------------------------------------------------------------
-        
         # 2. 编码阶段 (Encoder)
-        # 一次性读懂 Prompt，获取记忆
         memory = self.encode(
             src_tokens=input_ids,
             src_key_padding_mask=(input_ids == pad_token_id)
