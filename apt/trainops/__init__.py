@@ -16,15 +16,15 @@ APT TrainOps Domain
 使用示例：
     try:
         from apt.trainops.engine import Trainer
-    except ImportError:
+    except (ImportError, OSError):
         Trainer = None
     try:
         from apt.trainops.distributed import setup_ddp
-    except ImportError:
+    except (ImportError, OSError):
         setup_ddp = None
     try:
         from apt.trainops.data import APTDataLoader
-    except ImportError:
+    except (ImportError, OSError):
         APTDataLoader = None
 """
 
@@ -35,11 +35,11 @@ __version__ = '2.0.0-alpha'
 try:
     try:
         from apt.trainops.engine import Trainer, Finetuner, train_model
-    except ImportError:
+    except (ImportError, OSError):
         Trainer = None
         Finetuner = None
         train_model = None
-except ImportError:
+except (ImportError, OSError):
     Trainer = None
     Finetuner = None
     train_model = None
@@ -47,21 +47,21 @@ except ImportError:
 try:
     try:
         from apt.trainops.data import create_dataloader, APTDataLoader
-    except ImportError:
+    except (ImportError, OSError):
         create_dataloader = None
         APTDataLoader = None
-except ImportError:
+except (ImportError, OSError):
     create_dataloader = None
     APTDataLoader = None
 
 try:
     try:
         from apt.trainops.checkpoints import CheckpointManager, save_checkpoint, load_checkpoint
-    except ImportError:
+    except (ImportError, OSError):
         CheckpointManager = None
         save_checkpoint = None
         load_checkpoint = None
-except ImportError:
+except (ImportError, OSError):
     CheckpointManager = None
     save_checkpoint = None
     load_checkpoint = None
@@ -69,10 +69,10 @@ except ImportError:
 try:
     try:
         from apt.trainops.eval import TrainingMonitor, TrainingGuard
-    except ImportError:
+    except (ImportError, OSError):
         TrainingMonitor = None
         TrainingGuard = None
-except ImportError:
+except (ImportError, OSError):
     TrainingMonitor = None
     TrainingGuard = None
 

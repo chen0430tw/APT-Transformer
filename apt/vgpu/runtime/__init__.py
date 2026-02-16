@@ -18,12 +18,12 @@ try:
         VirtualBlackwellAdapter,
         create_virtual_blackwell,
     )
-except ImportError:
+except (ImportError, OSError):
     VirtualBlackwellAdapter = None
     create_virtual_blackwell = None
 try:
     from apt.vgpu.runtime.vb_global import VBGlobalConfig
-except ImportError:
+except (ImportError, OSError):
     VBGlobalConfig = None
 try:
     from apt.vgpu.runtime.vb_integration import (
@@ -31,13 +31,13 @@ try:
         VBModelWrapper,
         enable_vb_optimization,
     )
-except ImportError:
+except (ImportError, OSError):
     VBOptimizedLinear = None
     VBModelWrapper = None
     enable_vb_optimization = None
 try:
     from apt.vgpu.runtime.vb_autopatch import VBAutoPatcher
-except ImportError:
+except (ImportError, OSError):
     VBAutoPatcher = None
 
 # VGPU Stack Technology
@@ -48,7 +48,7 @@ try:
         VGPUStackLinear,
         create_vgpu_stack,
     )
-except ImportError:
+except (ImportError, OSError):
     VGPUStack = None
     VGPULevel = None
     VGPUStackLinear = None
@@ -63,7 +63,7 @@ try:
         compact_act_forward,
         estimate_memory,
     )
-except ImportError:
+except (ImportError, OSError):
     RandomProjectionKernel = None
     ProjectionKernelConfig = None
     CompActLinear = None
@@ -77,7 +77,7 @@ try:
         VBCompActLinear,
         replace_linear_with_vb_compact,
     )
-except ImportError:
+except (ImportError, OSError):
     VBCompActManager = None
     VBCompActConfig = None
     VBCompActLinear = None
@@ -90,7 +90,7 @@ try:
         TieredStorageConfig,
         estimate_tiered_memory,
     )
-except ImportError:
+except (ImportError, OSError):
     TieredProjectionKernel = None
     TieredStorageConfig = None
     estimate_tiered_memory = None

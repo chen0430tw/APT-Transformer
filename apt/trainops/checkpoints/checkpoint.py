@@ -88,8 +88,15 @@ def load_model(path, device=None):
 
     # 检测路径类型
     if os.path.isfile(path) and path.endswith('.pt'):
-        # 单文件格式 (HLBD checkpoint)
-        return _load_single_file_checkpoint(path, device)
+        # 探测 checkpoint 格式
+        checkpoint = torch.load(path, map_location=device)
+        if checkpoint.get("format") == "quickcook" or (
+            "model_config" in checkpoint and "tokenizer_char_to_id" not in checkpoint
+        ):
+            return _load_quickcook_checkpoint(checkpoint, path, device)
+        else:
+            # HLBD 格式
+            return _load_single_file_checkpoint_from_dict(checkpoint, path, device)
     elif os.path.isdir(path):
         # 目录格式
         return _load_directory_checkpoint(path, device)
@@ -236,12 +243,110 @@ def _load_directory_checkpoint(path, device):
     return model, tokenizer, config
 
 
-def _load_single_file_checkpoint(path, device):
-    """加载单文件 checkpoint (HLBD 格式)"""
-    from apt.model.architectures.apt_model import APTModel, APTModelConfiguration
+def _load_quickcook_checkpoint(checkpoint, path, device):
+    """加载 QuickCook 格式的 checkpoint (.pt + tokenizer.json)"""
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # 加载 checkpoint
-    checkpoint = torch.load(path, map_location=device)
+    model_config = checkpoint.get("model_config", {})
+    if not model_config:
+        raise ValueError(
+            f"QuickCook checkpoint 缺少 model_config 字段: {path}\n"
+            "此 checkpoint 可能来自旧版本的 pretrain_quickcook.py。\n"
+            "请使用 --resume 参数在 pretrain_quickcook.py 中恢复训练，"
+            "而不是通过 load_model() 加载。"
+        )
+
+    # 根据 model_config 创建模型
+    arch = model_config["arch"]
+    vocab_size = model_config["vocab_size"]
+    d_model = model_config["d_model"]
+    num_heads = model_config["num_heads"]
+    num_layers = model_config["num_layers"]
+    max_seq_len = model_config["max_seq_len"]
+
+    # 动态导入 create_model (避免循环依赖)
+    from apt.trainops.scripts.pretrain_quickcook import create_model
+    model = create_model(
+        arch=arch,
+        vocab_size=vocab_size,
+        d_model=d_model,
+        num_heads=num_heads,
+        num_layers=num_layers,
+        max_seq_len=max_seq_len,
+    )
+
+    # 加载权重
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model = model.to(device)
+
+    logger.info(
+        f"QuickCook checkpoint 已加载: arch={arch}, "
+        f"d_model={d_model}, layers={num_layers}, step={checkpoint.get('global_step', '?')}"
+    )
+
+    # 加载分词器: tokenizer.json 在同目录下
+    tokenizer = None
+    checkpoint_dir = os.path.dirname(os.path.abspath(path))
+    tok_path = os.path.join(checkpoint_dir, "tokenizer.json")
+
+    if os.path.exists(tok_path):
+        # 使用 tokenizers 库 (HuggingFace) 加载 BPE tokenizer
+        try:
+            from tokenizers import Tokenizer as HFTokenizer
+
+            class SimpleBPETokenizer:
+                """轻量 BPE 分词器包装 (用于推理, 不依赖 pretrain_quickcook)"""
+                def __init__(self, backend: "HFTokenizer"):
+                    self.backend = backend
+                    self.vocab_size = backend.get_vocab_size()
+                    self.pad_token_id = 0
+                    self.eos_token_id = backend.token_to_id("</s>") if backend.token_to_id("</s>") is not None else 0
+                    self.bos_token_id = backend.token_to_id("<s>") if backend.token_to_id("<s>") is not None else 0
+
+                def encode(self, text, return_tensors=None):
+                    ids = self.backend.encode(text).ids
+                    if return_tensors == "pt":
+                        return torch.tensor([ids])
+                    return ids
+
+                def decode(self, ids, skip_special_tokens=False):
+                    if hasattr(ids, 'tolist'):
+                        ids = ids.tolist()
+                    if isinstance(ids, list) and len(ids) > 0 and isinstance(ids[0], list):
+                        ids = ids[0]
+                    return self.backend.decode(ids, skip_special_tokens=skip_special_tokens)
+
+                def __call__(self, text, max_length=64, padding='max_length',
+                             truncation=True, return_tensors='pt'):
+                    ids = self.encode(text)
+                    if truncation and len(ids) > max_length:
+                        ids = ids[:max_length]
+                    if padding == 'max_length':
+                        ids = ids + [self.pad_token_id] * (max_length - len(ids))
+                    if return_tensors == 'pt':
+                        return {'input_ids': torch.tensor([ids])}
+                    return {'input_ids': ids}
+
+            backend = HFTokenizer.from_file(tok_path)
+            tokenizer = SimpleBPETokenizer(backend)
+            logger.info(f"BPE 分词器已加载: vocab_size={tokenizer.vocab_size}")
+
+        except ImportError:
+            logger.warning("tokenizers 库不可用, 无法加载 BPE 分词器")
+
+    if tokenizer is None:
+        raise RuntimeError(
+            f"无法加载 QuickCook 分词器: {tok_path}\n"
+            "请确保 tokenizers 库已安装: pip install tokenizers"
+        )
+
+    return model, tokenizer, model_config
+
+
+def _load_single_file_checkpoint_from_dict(checkpoint, path, device):
+    """加载单文件 checkpoint (HLBD 格式), 从已加载的 dict"""
+    from apt.model.architectures.apt_model import APTModel, APTModelConfiguration
 
     # 重建 tokenizer (SimpleCharTokenizer_BACKUP)
     class SimpleCharTokenizer:

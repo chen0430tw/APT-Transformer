@@ -87,7 +87,7 @@ _VIRTUAL_VRAM_AVAILABLE = False
 try:
     from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
     _VIRTUAL_VRAM_AVAILABLE = True
-except ImportError:
+except Exception:
     VirtualVRAMConfig = None  # type: ignore[assignment,misc]
     virtual_vram = None  # type: ignore[assignment]
 
@@ -100,7 +100,7 @@ try:
         vb_stats_summary,
     )
     _VIRTUAL_BLACKWELL_AVAILABLE = True
-except ImportError:
+except Exception:
     VBConfigV64 = None  # type: ignore[assignment,misc]
     apply_virtual_blackwell_v64 = None  # type: ignore[assignment]
     vb_stats_summary = None  # type: ignore[assignment]
@@ -117,7 +117,7 @@ try:
         VA100SignalCollector,
     )
     _VIRTUAL_A100_AVAILABLE = True
-except ImportError:
+except Exception:
     VirtualVRAMBackend = None  # type: ignore[assignment,misc]
     VA100SignalCollector = None  # type: ignore[assignment,misc]
 
@@ -1234,6 +1234,8 @@ class QuickCookTrainer:
         vb_adapter: Optional[Any] = None,                 # VirtualBlackwellAdapterV64
         va100_tier_manager: Optional[Any] = None,         # VirtualVRAMBackend
         va100_signal_collector: Optional[Any] = None,     # VA100SignalCollector
+        # 模型配置 (保存到 checkpoint 以便恢复)
+        model_config: Optional[Dict[str, Any]] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -1250,6 +1252,7 @@ class QuickCookTrainer:
         self.save_interval = save_interval
         self.max_steps = max_steps
         self.epochs = epochs
+        self.model_config = model_config or {}
 
         # 可选虚拟 GPU 组件
         self._vram_config = virtual_vram_config
@@ -1330,12 +1333,14 @@ class QuickCookTrainer:
         base_model = self.model.module if hasattr(self.model, "module") else self.model
 
         ckpt = {
+            "format": "quickcook",
             "global_step": self.global_step,
             "model_state_dict": base_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "metrics": metrics,
             "tokenizer_vocab_size": self.tokenizer.vocab_size,
+            "model_config": self.model_config,
         }
 
         ckpt_path = os.path.join(
@@ -2140,6 +2145,15 @@ def main():
         vb_adapter=vb_adapter,
         va100_tier_manager=va100_tier,
         va100_signal_collector=va100_signal,
+        # 模型配置 (保存到 checkpoint)
+        model_config={
+            "arch": args.model_arch,
+            "vocab_size": tokenizer.vocab_size,
+            "d_model": args.d_model,
+            "num_heads": args.num_heads,
+            "num_layers": args.num_layers,
+            "max_seq_len": args.max_seq_len,
+        },
     )
 
     try:
