@@ -276,7 +276,8 @@ class SOSATrainingWrapper:
     
     def load_checkpoint(self, checkpoint_path: str):
         """加载检查点"""
-        checkpoint = torch.load(checkpoint_path)
+        # map_location='cpu' 确保 GPU 保存的 checkpoint 在 CPU 环境也能加载
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

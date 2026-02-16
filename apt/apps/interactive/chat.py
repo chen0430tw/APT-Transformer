@@ -109,7 +109,7 @@ def chat_with_model(
                 from apt.model.tokenization.chinese_tokenizer_integration import get_tokenizer
                 # 先加载模型
                 model, _, config = load_model(
-                    model_path, load_tokenizer=False, device=device)
+                    model_path, device=device)
 
                 # 指定分词器类型
                 tokenizer = get_tokenizer(tokenizer_type=tokenizer_type)
@@ -140,7 +140,7 @@ def chat_with_model(
                         # 使用中文分词器
                         tokenizer = load_tokenizer(tokenizer_dir)
                         model, _, model_config = load_model(
-                            model_path, load_tokenizer=False, device=device)
+                            model_path, device=device)
                         print(f"检测到中文分词器，类型: {config.get('mode', 'char')}")
                     else:
                         # 标准加载

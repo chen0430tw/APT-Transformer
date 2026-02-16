@@ -7,8 +7,6 @@
 import os
 from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.core.fake_torch import get_torch
-torch = get_torch()
 F = torch.nn.functional
 import traceback
 from tqdm import tqdm
@@ -332,11 +330,6 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     model = APTLargeModel(config).to(device)
     model.train()
     
-    import inspect
-    #print("===== 模型 forward 方法参数 =====")
-    #print(inspect.signature(model.forward))
-    #print("================================")
-
     # 优化器和学习率调度器设置
     from apt.trainops.engine.optimizer import create_optimizer_and_scheduler
     optimizer, scheduler = create_optimizer_and_scheduler(
@@ -391,9 +384,6 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
     
     info_print(f"\n开始训练，总共 {epochs} 轮...")
     
-    autocast = torch.cuda.amp.autocast
-    GradScaler = torch.cuda.amp.GradScaler
-    
     # 在训练开始前初始化 GradScaler
     try:
         GradScaler = torch.cuda.amp.GradScaler
@@ -434,14 +424,9 @@ def train_model(epochs=20, batch_size=8, learning_rate=3e-5, save_path="apt_mode
                 if i % accumulation_steps == 0:
                     optimizer.zero_grad()
                 
-                # 使用更新后的 autocast 进行混合精度前向计算和损失计算
-                amp_dtype = torch.bfloat16  # 或使用torch.float32
-                with torch.amp.autocast('cuda'):
+                # 使用 bfloat16 混合精度进行前向计算和损失计算
+                with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                     try:
-                        # 在这里添加打印语句
-                        import inspect
-                        #print(f"Model type: {type(model)}")
-                        #print(f"Model forward signature: {inspect.signature(model.forward)}")
                         
                         logits = model(src_tokens=src_ids, tgt_tokens=src_ids, src_key_padding_mask=src_padding_mask, src_mask=None)
                     except Exception as e:
