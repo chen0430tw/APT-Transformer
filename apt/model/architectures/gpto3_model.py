@@ -386,14 +386,15 @@ class StructuredReasoner(nn.Module):
         for k in range(topi.size(-1)):
             idx = topi[..., k]                    # [B,T]
             w = topv[..., k:k+1]                  # [B,T,1]
-            # Process each expert for tokens that selected it
+            # Process each expert for tokens that selected it.
+            # mask.any() guard removed: empty-tensor indexing is safe in PyTorch
+            # and avoids a device synchronisation in the training forward path.
             for e_id, expert in enumerate(self.experts):
                 mask = (idx == e_id)              # [B,T]
-                if mask.any():
-                    z_sel = z[mask]
-                    z_upd = expert(z_sel)
-                    # Accumulate weighted expert outputs
-                    z_new[mask] = z_new[mask] + w[mask] * z_upd
+                z_sel = z[mask]                   # [M, r] (M may be 0)
+                z_upd = expert(z_sel)             # [M, r]
+                # Accumulate weighted expert outputs
+                z_new[mask] = z_new[mask] + w[mask] * z_upd
         # residual blend (keep some of original z)
         blend = topv.sum(dim=-1, keepdim=True).clamp(max=0.9)
         z_final = z_new * blend + z * (1.0 - blend)
@@ -495,6 +496,7 @@ class GPTo3Model(nn.Module):
                  d_ff: int = 8192,
                  num_layers: int = 24,
                  rank: int = 4,
+                 max_seq_len: int = 4096,
                  # optional TriVein enhancements
                  window_size: int = 0,
                  num_kv_heads: Optional[int] = None,
@@ -512,6 +514,9 @@ class GPTo3Model(nn.Module):
         super().__init__()
         # Encoder for text/image/audio with the specified vocabulary size
         self.encoder = OmniInputEncoder(d_model, vocab_size=vocab_size)
+        # Learned positional embeddings (OmniInputEncoder does not add position info)
+        self.pos_emb = nn.Embedding(max_seq_len, d_model)
+        nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
         # Adaptive τ scheduler
         self.tau = DynamicTau()
         # Transformer blocks with TriVein attention and hybrid FFN; pass window_size/gqa/rope params
@@ -551,6 +556,9 @@ class GPTo3Model(nn.Module):
 
     def forward(self, text_ids=None, image_feat=None, audio_feat=None, load_factor: float = 1.0):
         x = self.encoder(text_ids, image_feat, audio_feat)              # [B,T,D]
+        B, T, _ = x.shape
+        pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+        x = x + self.pos_emb(pos_ids)
         for blk in self.blocks:
             x = blk(x, load_factor=load_factor)
         x = self.norm(x)

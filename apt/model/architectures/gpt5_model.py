@@ -539,8 +539,6 @@ class GPT5Block(nn.Module):
         self.norm_moe = nn.LayerNorm(d_model)
         self.router = CodebookRouter(d_model=d_model, d_route=d_route,
                                      num_skills=num_skills, temperature=0.7)
-        experts = nn.ModuleList([MiniExpert(d_model, 4 * d_model, d_model) for _ in range(num_skills)])
-        shared = SharedExpert(d_model, 2 * d_model, d_model, scale=0.25)
         self.moe = MoELayer(d_model=d_model, num_skills=num_skills, d_hidden=4 * d_model, init_method="xavier")
         # Feed‑forward network with its own layer norm
         self.ff = nn.Sequential(
