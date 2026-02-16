@@ -50,6 +50,13 @@ APT 速食预训练脚本 (QuickCook Pretraining)
     python -m apt.trainops.scripts.pretrain_quickcook \\
         --output-dir ./quickcook_output --epochs 1 --no-distributed
 
+    # 启用虚拟 GPU 加速 (可选, 任意组合):
+    torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir $WORK/output --epochs 3 \\
+        --use-virtual-vram \\
+        --use-virtual-blackwell --vb-pulse-interval 20 \\
+        --use-virtual-a100 --va100-vram-budget-gb 7.5
+
 作者: chen0430tw
 """
 
@@ -69,6 +76,50 @@ import torch.nn as nn
 import torch.distributed as dist
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# 可选依赖: 虚拟 GPU 加速 (Virtual VRAM / Virtual Blackwell / Virtual A100)
+# ============================================================================
+
+# --- Virtual VRAM: 激活值 offload ---
+_VIRTUAL_VRAM_AVAILABLE = False
+try:
+    from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
+    _VIRTUAL_VRAM_AVAILABLE = True
+except ImportError:
+    VirtualVRAMConfig = None  # type: ignore[assignment,misc]
+    virtual_vram = None  # type: ignore[assignment]
+
+# --- Virtual Blackwell: 脉冲式量化感知 ---
+_VIRTUAL_BLACKWELL_AVAILABLE = False
+try:
+    from apt.vgpu.runtime.vb_integration import (
+        VBConfigV64,
+        apply_virtual_blackwell_v64,
+        vb_stats_summary,
+    )
+    _VIRTUAL_BLACKWELL_AVAILABLE = True
+except ImportError:
+    VBConfigV64 = None  # type: ignore[assignment,misc]
+    apply_virtual_blackwell_v64 = None  # type: ignore[assignment]
+    vb_stats_summary = None  # type: ignore[assignment]
+
+# --- Virtual A100: 三层虚拟显存 + OPU ---
+_VIRTUAL_A100_AVAILABLE = False
+try:
+    import sys as _sys
+    _va100_path = str(Path(__file__).resolve().parent.parent.parent.parent / "va100")
+    if _va100_path not in _sys.path:
+        _sys.path.insert(0, _va100_path)
+    from virtual_a100 import (
+        VirtualVRAMBackend,
+        VA100SignalCollector,
+    )
+    _VIRTUAL_A100_AVAILABLE = True
+except ImportError:
+    VirtualVRAMBackend = None  # type: ignore[assignment,misc]
+    VA100SignalCollector = None  # type: ignore[assignment,misc]
 
 
 # ============================================================================
@@ -1178,6 +1229,11 @@ class QuickCookTrainer:
         save_interval: int = 1000,
         max_steps: Optional[int] = None,
         epochs: int = 1,
+        # --- 可选: 虚拟 GPU 加速 ---
+        virtual_vram_config: Optional[Any] = None,        # VirtualVRAMConfig
+        vb_adapter: Optional[Any] = None,                 # VirtualBlackwellAdapterV64
+        va100_tier_manager: Optional[Any] = None,         # VirtualVRAMBackend
+        va100_signal_collector: Optional[Any] = None,     # VA100SignalCollector
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -1194,6 +1250,12 @@ class QuickCookTrainer:
         self.save_interval = save_interval
         self.max_steps = max_steps
         self.epochs = epochs
+
+        # 可选虚拟 GPU 组件
+        self._vram_config = virtual_vram_config
+        self._vb_adapter = vb_adapter
+        self._va100_tier = va100_tier_manager
+        self._va100_signal = va100_signal_collector
 
         self.global_step = 0
         self.best_loss = float("inf")
@@ -1327,10 +1389,22 @@ class QuickCookTrainer:
             f"lr={self.learning_rate}, mixed_precision={self.dist_config.use_mixed_precision}"
         )
 
+        # 虚拟 GPU 组件日志
+        if self.rank == 0:
+            if self._vram_config is not None:
+                logger.info("  [vGPU] Virtual VRAM 已启用 (激活值 offload)")
+            if self._vb_adapter is not None:
+                logger.info("  [vGPU] Virtual Blackwell 已启用 (脉冲式量化感知)")
+            if self._va100_tier is not None:
+                logger.info("  [vGPU] Virtual A100 三层显存管理已启用")
+
         # 进度追踪器 (写入 progress.log + tqdm)
         progress = ProgressTracker(
             self.output_dir, total_steps, self.rank, self.log_interval
         )
+
+        # 是否用 virtual_vram 包裹 forward+backward
+        use_vram_ctx = (self._vram_config is not None and virtual_vram is not None)
 
         for epoch in range(self.epochs):
             if self.rank == 0:
@@ -1341,22 +1415,20 @@ class QuickCookTrainer:
                 input_ids = batch["input_ids"].to(self.device)
                 labels = batch["labels"].to(self.device)
 
-                # 前向
-                if autocast_ctx is not None:
-                    with autocast_ctx:
-                        outputs = self._forward(input_ids, labels)
-                        loss = outputs["loss"] / grad_accum
+                # ── forward + backward (可选 virtual_vram 包裹) ──
+                if use_vram_ctx:
+                    # Virtual VRAM: 激活值自动 offload 到 CPU, 降低显存峰值
+                    with virtual_vram(self._vram_config):
+                        loss, running_loss = self._forward_backward_step(
+                            input_ids, labels, autocast_ctx, scaler,
+                            grad_accum, running_loss,
+                        )
                 else:
-                    outputs = self._forward(input_ids, labels)
-                    loss = outputs["loss"] / grad_accum
+                    loss, running_loss = self._forward_backward_step(
+                        input_ids, labels, autocast_ctx, scaler,
+                        grad_accum, running_loss,
+                    )
 
-                # 反向
-                if scaler is not None:
-                    scaler.scale(loss).backward()
-                else:
-                    loss.backward()
-
-                running_loss += loss.item() * grad_accum
                 step_in_accum += 1
 
                 # 累积够了再更新
@@ -1380,6 +1452,10 @@ class QuickCookTrainer:
                     self.global_step += 1
                     step_in_accum = 0
 
+                    # VA100 信号采集 (每步记录 loss 和显存)
+                    if self._va100_signal is not None:
+                        self._va100_signal_tick(loss.item() * grad_accum)
+
                     # 进度追踪 (替代原来的日志)
                     cur_loss = running_loss / min(self.global_step, self.log_interval)
                     cur_lr = scheduler.get_last_lr()[0]
@@ -1391,6 +1467,11 @@ class QuickCookTrainer:
 
                     if self.global_step % self.log_interval == 0:
                         running_loss = 0.0
+
+                    # 定期打印虚拟 GPU 统计 (每 save_interval 步)
+                    if (self.global_step % self.save_interval == 0
+                            and self.rank == 0):
+                        self._log_vgpu_stats()
 
                     # 保存
                     if self.global_step % self.save_interval == 0:
@@ -1415,8 +1496,63 @@ class QuickCookTrainer:
         )
         progress.close()
 
+        # 最终虚拟 GPU 统计
         if self.rank == 0:
+            self._log_vgpu_stats()
             logger.info(f"训练完成! 总步数: {self.global_step}")
+
+    def _forward_backward_step(self, input_ids, labels, autocast_ctx, scaler,
+                               grad_accum, running_loss):
+        """一个 micro-batch 的 forward + backward (抽取以便 virtual_vram 包裹)"""
+        if autocast_ctx is not None:
+            with autocast_ctx:
+                outputs = self._forward(input_ids, labels)
+                loss = outputs["loss"] / grad_accum
+        else:
+            outputs = self._forward(input_ids, labels)
+            loss = outputs["loss"] / grad_accum
+
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+        running_loss += loss.item() * grad_accum
+        return loss, running_loss
+
+    def _va100_signal_tick(self, loss_val: float):
+        """VA100 三层显存: 每步记录统计"""
+        if self._va100_tier is None:
+            return
+        try:
+            # 记录一个训练步骤
+            self._va100_tier.stats.record_step()
+        except Exception:
+            pass  # 信号采集不影响训练主路径
+
+    def _log_vgpu_stats(self):
+        """打印虚拟 GPU 组件的统计摘要"""
+        if self._vb_adapter is not None and vb_stats_summary is not None:
+            try:
+                summary = vb_stats_summary(self._vb_adapter)
+                logger.info(f"[Virtual Blackwell 统计]\n{summary}")
+            except Exception as e:
+                logger.debug(f"VB 统计输出失败: {e}")
+
+        if self._va100_tier is not None:
+            try:
+                vram_stats = self._va100_tier.stats
+                logger.info(
+                    f"[Virtual A100 三层显存] "
+                    f"hot: {vram_stats.hot.count} tiles ({vram_stats.hot.bytes_total/1e6:.1f}MB), "
+                    f"warm: {vram_stats.warm.count} tiles ({vram_stats.warm.bytes_total/1e6:.1f}MB), "
+                    f"cold: {vram_stats.cold.count} tiles ({vram_stats.cold.bytes_total/1e6:.1f}MB), "
+                    f"搬运时间={vram_stats.total_transfer_time_s:.3f}s, "
+                    f"μ(摩擦)={vram_stats.friction_mu:.4f}, "
+                    f"τ(重建税)={vram_stats.rebuild_tax_tau:.4f}"
+                )
+            except Exception as e:
+                logger.debug(f"VA100 统计输出失败: {e}")
 
     def _train_deepspeed(self, dataloader, total_steps: int):
         """DeepSpeed 训练路径"""
@@ -1734,6 +1870,37 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
 
+    # --- 虚拟 GPU 加速 (可选) ---
+    vgpu_group = parser.add_argument_group("虚拟 GPU 加速 (可选)")
+
+    # Virtual VRAM: 激活值 offload 到 CPU, 降低显存峰值
+    vgpu_group.add_argument("--use-virtual-vram", action="store_true",
+                            help="启用 Virtual VRAM (激活值自动 offload 到 CPU, 降低显存峰值)")
+    vgpu_group.add_argument("--vram-min-tensor-bytes", type=int, default=1 << 20,
+                            help="Virtual VRAM: 仅 offload >= 此大小的张量 (默认 1MB)")
+    vgpu_group.add_argument("--vram-verbose", action="store_true",
+                            help="Virtual VRAM: 打印每次 offload/restore 的详细日志")
+
+    # Virtual Blackwell: 对 nn.Linear 做脉冲式量化感知优化
+    vgpu_group.add_argument("--use-virtual-blackwell", action="store_true",
+                            help="启用 Virtual Blackwell (脉冲式 INT8 量化感知 + scale cache)")
+    vgpu_group.add_argument("--vb-pulse-interval", type=int, default=20,
+                            help="Virtual Blackwell: 脉冲间隔 (默认 20 步)")
+    vgpu_group.add_argument("--vb-use-fake-int8", action="store_true",
+                            help="Virtual Blackwell: 启用 fake INT8 量化 (默认关闭, 影响速度)")
+    vgpu_group.add_argument("--vb-gate-projected-mode", action="store_true",
+                            help="Virtual Blackwell: 门投影模式, 非脉冲步零开销")
+
+    # Virtual A100: 三层虚拟显存 + OPU 冷热分层管理
+    vgpu_group.add_argument("--use-virtual-a100", action="store_true",
+                            help="启用 Virtual A100 (三层虚拟显存 + OPU 自适应冷热分层)")
+    vgpu_group.add_argument("--va100-vram-budget-gb", type=float, default=7.5,
+                            help="Virtual A100: GPU 热层预算 (GB, 默认 7.5)")
+    vgpu_group.add_argument("--va100-cpu-budget-gb", type=float, default=16.0,
+                            help="Virtual A100: CPU 温层预算 (GB, 默认 16.0)")
+    vgpu_group.add_argument("--va100-prefetch-window", type=int, default=2,
+                            help="Virtual A100: 预取窗口 (提前搬运几层, 默认 2)")
+
     # DeepSpeed 会注入自己的 argparse 参数
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="(DeepSpeed 自动注入)")
@@ -1851,7 +2018,82 @@ def main():
         elif rank == 0:
             logger.warning("模型不支持 gradient_checkpointing_enable()")
 
-    # 分布式包装
+    # ================================================================
+    # 可选: 虚拟 GPU 加速组件初始化 (在分布式包装之前)
+    # ================================================================
+    vram_cfg = None
+    vb_adapter = None
+    va100_tier = None
+    va100_signal = None
+
+    # --- Virtual Blackwell: 替换 nn.Linear 为脉冲式量化感知版本 ---
+    # 必须在 DDP/FSDP wrap 之前, 因为它修改模型结构
+    if args.use_virtual_blackwell:
+        if not _VIRTUAL_BLACKWELL_AVAILABLE:
+            if rank == 0:
+                logger.warning(
+                    "已指定 --use-virtual-blackwell 但 vb_integration 不可用, "
+                    "请确认 apt.vgpu.runtime.vb_integration 可导入。跳过。"
+                )
+        else:
+            vb_config = VBConfigV64(
+                pulse_interval=args.vb_pulse_interval,
+                use_fake_int8=args.vb_use_fake_int8,
+                gate_projected_mode=args.vb_gate_projected_mode,
+            )
+            model, vb_adapter = apply_virtual_blackwell_v64(model, vb_config)
+            if rank == 0:
+                replaced = getattr(model, "_vb_replaced_linears", "?")
+                logger.info(
+                    f"[Virtual Blackwell] 已替换 {replaced} 个 nn.Linear, "
+                    f"pulse_interval={args.vb_pulse_interval}, "
+                    f"fake_int8={args.vb_use_fake_int8}"
+                )
+
+    # --- Virtual VRAM: 激活值 offload 配置 (不修改模型, 训练时用 context) ---
+    if args.use_virtual_vram:
+        if not _VIRTUAL_VRAM_AVAILABLE:
+            if rank == 0:
+                logger.warning(
+                    "已指定 --use-virtual-vram 但 virtual_vram 不可用, "
+                    "请确认 apt.vgpu.runtime.virtual_vram 可导入。跳过。"
+                )
+        else:
+            vram_cfg = VirtualVRAMConfig(
+                enabled=True,
+                min_tensor_bytes=args.vram_min_tensor_bytes,
+                verbose=args.vram_verbose,
+            )
+            if rank == 0:
+                min_mb = args.vram_min_tensor_bytes / (1 << 20)
+                logger.info(
+                    f"[Virtual VRAM] 已配置: min_tensor={min_mb:.0f}MB, "
+                    f"verbose={args.vram_verbose}"
+                )
+
+    # --- Virtual A100: 三层虚拟显存 + 信号采集 ---
+    if args.use_virtual_a100:
+        if not _VIRTUAL_A100_AVAILABLE:
+            if rank == 0:
+                logger.warning(
+                    "已指定 --use-virtual-a100 但 virtual_a100 不可用, "
+                    "请确认 va100/virtual_a100.py 可导入。跳过。"
+                )
+        else:
+            hot_bytes = int(args.va100_vram_budget_gb * 1e9 * 0.6)
+            warm_bytes = int(args.va100_cpu_budget_gb * 1e9 * 0.3)
+            cold_bytes = int(100e9)
+            va100_tier = VirtualVRAMBackend(hot_bytes, warm_bytes, cold_bytes)
+            va100_signal = VA100SignalCollector()
+            if rank == 0:
+                logger.info(
+                    f"[Virtual A100] 三层显存: "
+                    f"hot={args.va100_vram_budget_gb*0.6:.1f}GB, "
+                    f"warm={args.va100_cpu_budget_gb*0.3:.1f}GB, "
+                    f"prefetch_window={args.va100_prefetch_window}"
+                )
+
+    # 分布式包装 (在 VB 替换之后)
     model = wrap_model_distributed(model, device, dist_config, rank, world_size)
 
     # --- 数据集 ---
@@ -1893,6 +2135,11 @@ def main():
         save_interval=args.save_interval,
         max_steps=args.max_steps,
         epochs=args.epochs,
+        # 可选: 虚拟 GPU 加速
+        virtual_vram_config=vram_cfg,
+        vb_adapter=vb_adapter,
+        va100_tier_manager=va100_tier,
+        va100_signal_collector=va100_signal,
     )
 
     try:
