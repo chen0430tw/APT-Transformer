@@ -54,6 +54,47 @@ except ImportError:
     VGPUStackLinear = None
     create_vgpu_stack = None
 
+# Random Projection Kernel (CompAct Optimization)
+try:
+    from apt.vgpu.runtime.random_projection_kernel import (
+        RandomProjectionKernel,
+        ProjectionKernelConfig,
+        CompActLinear,
+        compact_act_forward,
+        estimate_memory,
+    )
+except ImportError:
+    RandomProjectionKernel = None
+    ProjectionKernelConfig = None
+    CompActLinear = None
+    compact_act_forward = None
+    estimate_memory = None
+
+try:
+    from apt.vgpu.runtime.vb_compact_integration import (
+        VBCompActManager,
+        VBCompActConfig,
+        VBCompActLinear,
+        replace_linear_with_vb_compact,
+    )
+except ImportError:
+    VBCompActManager = None
+    VBCompActConfig = None
+    VBCompActLinear = None
+    replace_linear_with_vb_compact = None
+
+# Random Projection Kernel - Tiered Storage
+try:
+    from apt.vgpu.runtime.compact_tiered_storage import (
+        TieredProjectionKernel,
+        TieredStorageConfig,
+        estimate_tiered_memory,
+    )
+except ImportError:
+    TieredProjectionKernel = None
+    TieredStorageConfig = None
+    estimate_tiered_memory = None
+
 __all__ = [
     # Virtual Blackwell
     'VirtualBlackwellAdapter',
@@ -68,4 +109,18 @@ __all__ = [
     'VGPULevel',
     'VGPUStackLinear',
     'create_vgpu_stack',
+    # Random Projection Kernel (CompAct)
+    'RandomProjectionKernel',
+    'ProjectionKernelConfig',
+    'CompActLinear',
+    'compact_act_forward',
+    'estimate_memory',
+    'VBCompActManager',
+    'VBCompActConfig',
+    'VBCompActLinear',
+    'replace_linear_with_vb_compact',
+    # Tiered Storage
+    'TieredProjectionKernel',
+    'TieredStorageConfig',
+    'estimate_tiered_memory',
 ]

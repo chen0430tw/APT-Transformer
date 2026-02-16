@@ -18,11 +18,18 @@
 # - This is a compact reference implementation intended for research prototyping.
 
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
-from apt.core.fake_torch import get_torch
-torch = get_torch()
-from apt.core.fake_torch import get_torch
+# Try to import the fake_torch from the external apt package.  If that
+# fails (for example, when the apt package is not available), fall
+# back to the real torch.  The get_torch function returns either
+# the fake torch or the actual torch module as appropriate.
+try:
+    from apt.core.fake_torch import get_torch  # type: ignore
+except Exception:
+    import torch as _torch  # type: ignore
+    def get_torch():
+        return _torch
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
@@ -89,41 +96,128 @@ class VeinSubspaceShared(nn.Module):
 # ----------------------------------------------------------
 
 class TriVeinAttention(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, rank: int, tau_module: DynamicTau):
+    """
+    Tri‑Vein attention layer operating in a low‑rank subspace.
+    This version supports optional rotary positional encodings (RoPE),
+    sliding window attention (SWA) and grouped‑query attention (GQA).
+
+    Args:
+        d_model: hidden dimension of the model
+        n_heads: number of attention heads
+        rank: low‑rank dimension for vein subspace
+        window_size: if > 0, restrict attention to a causal window of this size
+        num_kv_heads: if set and < n_heads, groups KV heads and repeats to Q heads (GQA)
+        use_rope: whether to apply rotary positional embeddings to Q and K
+    """
+    def __init__(self, d_model: int, n_heads: int, rank: int,
+                 window_size: int = 0,
+                 num_kv_heads: Optional[int] = None,
+                 use_rope: bool = False):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.rank = rank
-        self.head_dim = d_model // n_heads
-        self.tau_module = tau_module
+        self.d_model = int(d_model)
+        self.n_heads = int(n_heads)
+        self.rank = int(rank)
+        self.head_dim = self.d_model // self.n_heads
+        self.window_size = int(window_size)
+        self.num_kv_heads = int(num_kv_heads) if num_kv_heads is not None else self.n_heads
+        # Ensure heads divisible when GQA is used
+        assert self.n_heads % self.num_kv_heads == 0, "n_heads must be divisible by num_kv_heads"
+        self.use_rope = bool(use_rope)
 
-        self.W_q = nn.Linear(d_model, d_model)
-        self.W_k = nn.Linear(d_model, d_model)
-        self.W_v = nn.Linear(d_model, d_model)
-        self.W_o = nn.Linear(d_model, d_model)
-
+        # Linear projections
+        self.W_q = nn.Linear(self.d_model, self.d_model)
+        self.W_k = nn.Linear(self.d_model, self.d_model)
+        self.W_v = nn.Linear(self.d_model, self.d_model)
+        self.W_o = nn.Linear(self.d_model, self.d_model)
         for m in [self.W_q, self.W_k, self.W_v, self.W_o]:
             _init_linear(m)
 
-        self.subspace = VeinSubspaceShared(self.head_dim, rank)
+        # Shared vein subspace for low‑rank projections
+        self.subspace = VeinSubspaceShared(self.head_dim, self.rank)
 
-    def forward(self, x: torch.Tensor, load_factor: float = 1.0):
+    def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply rotary positional embeddings to x [B,H,T,D], trimming any padding."""
+        B, H, T, D = x.size()
+        orig_D = D
+        # Pad one dimension for odd head_dim
+        if orig_D % 2 != 0:
+            pad = x.new_zeros(B, H, T, 1)
+            x = torch.cat([x, pad], dim=-1)
+            D = orig_D + 1
+        else:
+            D = orig_D
+        half = D // 2
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        freqs = torch.arange(0, half, device=x.device, dtype=x.dtype)
+        inv_freq = 1.0 / (10000 ** (freqs / float(half)))
+        sinusoid = pos.unsqueeze(1) * inv_freq.unsqueeze(0)  # [T,half]
+        sin = sinusoid.sin().unsqueeze(0).unsqueeze(0)       # [1,1,T,half]
+        cos = sinusoid.cos().unsqueeze(0).unsqueeze(0)       # [1,1,T,half]
+        x1 = x[..., :half]
+        x2 = x[..., half:half*2]
+        x_rot_first = x1 * cos - x2 * sin
+        x_rot_second = x1 * sin + x2 * cos
+        x_rot = torch.cat([x_rot_first, x_rot_second], dim=-1)
+        # Trim to original dimension if padded
+        if D != orig_D:
+            x_rot = x_rot[..., :orig_D]
+        return x_rot
+
+    def forward(self, x: torch.Tensor, load_factor: float = 1.0, *, is_causal: bool = True) -> torch.Tensor:
         B, T, D = x.size()
         H = self.n_heads
-
+        # Linear projections and reshape to [B,H,T,D]
         q = self.W_q(x).view(B, T, H, self.head_dim).transpose(1, 2)
         k = self.W_k(x).view(B, T, H, self.head_dim).transpose(1, 2)
         v = self.W_v(x).view(B, T, H, self.head_dim).transpose(1, 2)
 
+        # Apply RoPE if enabled
+        if self.use_rope:
+            q = self._apply_rope(q)
+            k = self._apply_rope(k)
+
+        # GQA: group KV heads and replicate
+        if self.num_kv_heads < self.n_heads:
+            group_size = self.n_heads // self.num_kv_heads
+            # Reshape to [B, num_kv_heads, group_size, T, head_dim]
+            k_reshaped = k.reshape(B, self.num_kv_heads, group_size, T, self.head_dim)
+            v_reshaped = v.reshape(B, self.num_kv_heads, group_size, T, self.head_dim)
+            # Take first head in each group
+            k_small = k_reshaped[:, :, 0, :, :]
+            v_small = v_reshaped[:, :, 0, :, :]
+            # Repeat to full head count
+            k = k_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
+            v = v_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
+
+        # Project into low‑rank subspace
         zq = self.subspace.project(q)
         zk = self.subspace.project(k)
         zv = self.subspace.project(v)
 
+        # Compute attention in subspace
         att = (zq @ zk.transpose(-2, -1)) / math.sqrt(max(self.rank, 1))
+
+        # Compose masks: causal + sliding window
+        mask = None
+        if is_causal:
+            causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
+            mask = causal
+        if self.window_size and self.window_size > 0:
+            i = torch.arange(T, device=att.device).view(T, 1)
+            j = torch.arange(T, device=att.device).view(1, T)
+            local = j < (i - (self.window_size - 1))
+            mask = local if mask is None else (mask | local)
+        if mask is not None:
+            att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+        # Softmax
         att = F.softmax(att, dim=-1)
-        y_r = att @ zv
-        y = self.subspace.reconstruct(y_r)
+
+        # Low‑rank output
+        y_sub = att @ zv
+        # Reconstruct to full dimension
+        y = self.subspace.reconstruct(y_sub)
         y = y.transpose(1, 2).contiguous().view(B, T, D)
         return self.W_o(y)
 
@@ -165,7 +259,7 @@ class HybridFFN(nn.Module):
 # ----------------------------------------------------------
 
 class OmniInputEncoder(nn.Module):
-    def __init__(self, d_model: int, vocab_size: int = 32000, image_dim: int = 1024, audio_dim: int = 512):
+    def __init__(self, d_model: int, vocab_size: int = 200000, image_dim: int = 1024, audio_dim: int = 512):
         super().__init__()
         self.text_emb = nn.Embedding(vocab_size, d_model)
         nn.init.normal_(self.text_emb.weight, mean=0.0, std=0.02)
@@ -190,10 +284,28 @@ class OmniInputEncoder(nn.Module):
 # ----------------------------------------------------------
 
 class GPT4oBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, rank: int, tau_module: DynamicTau, dropout: float = 0.0):
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, rank: int,
+                 *, window_size: int = 0, num_kv_heads: Optional[int] = None, use_rope: bool = False,
+                 dropout: float = 0.0):
+        """
+        A GPT‑4o block consisting of a single TriVeinAttention followed by a HybridFFN.
+
+        Args:
+            d_model: hidden dimension
+            n_heads: number of attention heads
+            d_ff: feedforward width
+            rank: low‑rank dimension for vein subspace
+            window_size: sliding window size for attention (0 = global)
+            num_kv_heads: number of KV heads for GQA (None = same as Q heads)
+            use_rope: whether to apply RoPE to Q/K
+            dropout: feedforward dropout
+        """
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
-        self.attn = TriVeinAttention(d_model, n_heads, rank, tau_module)
+        self.attn = TriVeinAttention(d_model, n_heads, rank,
+                                     window_size=window_size,
+                                     num_kv_heads=num_kv_heads,
+                                     use_rope=use_rope)
         self.norm2 = nn.LayerNorm(d_model)
         self.ffn = HybridFFN(d_model, d_ff, dropout=dropout)
 
@@ -328,28 +440,38 @@ class ReasoningController(nn.Module):
         stall = torch.zeros(B, T, dtype=torch.long, device=h.device)
         steps = 0
 
+        # Iterate up to ``max_steps`` reasoning steps.  We deliberately avoid
+        # converting tensors to Python scalars inside the loop to prevent
+        # device synchronisation.  Early termination based on the patience
+        # threshold has been removed; instead, the loop always executes
+        # ``max_steps`` iterations (unless a break condition is triggered
+        # before the loop, such as an empty selection of tokens).  This
+        # simplifies the control flow and avoids `.item()` calls.
         for t in range(self.max_steps):
             steps = t + 1
             h, meta = self.reasoner.step(h)
             logits = lm_head(h)
             p = F.softmax(logits, dim=-1)
 
+            # Compute per‑token metrics
             kl = self._kl(p, p_prev)                             # [B,T]
             ent = -(p * p.clamp_min(1e-8).log()).sum(dim=-1)     # [B,T]
             z_new = meta["z_new"]
             vein_rel = (z_new - z_prev).norm(dim=-1) / (z_prev.norm(dim=-1) + 1e-6)
             halt = meta["p_halt"]
 
+            # Determine which tokens have converged or should halt.  We keep
+            # these computations in tensor form and update ``stall`` to
+            # accumulate the count of consecutive non‑converged steps.
             done = ((kl < self.eps_kl) &
                     (vein_rel < self.eps_vein) &
                     (((ent_prev - ent) / (ent_prev + 1e-6)) < self.eps_entropy)) | (halt > self.halt_thresh)
-
             stall = stall + (~done).long()
-            if (stall >= self.patience).sum() == 0:
-                break
-
-            # update prev state
+            # Update previous state for the next iteration
             logits_prev, p_prev, ent_prev, z_prev = logits, p, ent, z_new
+            # We intentionally do not break early based on patience; the
+            # loop will continue for the full ``max_steps`` so that the
+            # reasoning is deterministic and free of Python scalar conversions.
 
         if reshape_back:
             h = h.squeeze(0)   # [N,D] again
@@ -367,12 +489,16 @@ class GPTo3Model(nn.Module):
     - Controller: only high‑entropy tokens enter reasoning loop
     """
     def __init__(self,
-                 vocab_size: int = 32000,
+                 vocab_size: int = 200000,
                  d_model: int = 2048,
                  n_heads: int = 16,
                  d_ff: int = 8192,
                  num_layers: int = 24,
                  rank: int = 4,
+                 # optional TriVein enhancements
+                 window_size: int = 0,
+                 num_kv_heads: Optional[int] = None,
+                 use_rope: bool = False,
                  # controller params
                  entropy_trig: float = 2.0,
                  global_budget: float = 0.15,
@@ -384,17 +510,32 @@ class GPTo3Model(nn.Module):
                  halt_thresh: float = 0.8,
                  topk_experts: int = 2):
         super().__init__()
+        # Encoder for text/image/audio with the specified vocabulary size
         self.encoder = OmniInputEncoder(d_model, vocab_size=vocab_size)
+        # Adaptive τ scheduler
         self.tau = DynamicTau()
+        # Transformer blocks with TriVein attention and hybrid FFN; pass window_size/gqa/rope params
         self.blocks = nn.ModuleList([
-            GPT4oBlock(d_model, n_heads, d_ff, rank, self.tau) for _ in range(num_layers)
+            GPT4oBlock(d_model, n_heads, d_ff, rank,
+                       window_size=window_size,
+                       num_kv_heads=num_kv_heads,
+                       use_rope=use_rope)
+            for _ in range(num_layers)
         ])
+        # Final normalisation and language head
         self.norm = nn.LayerNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         _init_linear(self.lm_head, std=0.02)
 
-        # Use the first block's subspace as the shared vein (all blocks share head_dim)
-        self.vein = self.blocks[0].attn.subspace
+        # Initialise a separate vein subspace for structured reasoning.
+        # We use the full model dimension ``d_model`` rather than the head
+        # dimension from the first block.  Sharing the attention subspace
+        # (of size head_dim) with the reasoning components leads to a
+        # mismatch when projecting the hidden state ``h`` of shape
+        # [N,D] into a space of shape [*, head_dim].  Using a new
+        # ``VeinSubspaceShared(d_model, rank)`` ensures the projection
+        # and reconstruction operations match the full hidden size.
+        self.vein = VeinSubspaceShared(d_model, rank)
         self.controller = ReasoningController(
             self.vein, max_steps=max_reason_steps, patience=patience,
             eps_kl=eps_kl, eps_vein=eps_vein, eps_entropy=eps_entropy,
@@ -418,20 +559,33 @@ class GPTo3Model(nn.Module):
         # ---- Structured reasoning only for high‑entropy tokens ----
         ent = self._token_entropy(logits)                               # [B,T]
         B, T = ent.shape
-        k = max(1, int(self.global_budget * B * T))                     # global budget
+        # Determine the entropy threshold to trigger structured reasoning.
+        k = max(1, int(self.global_budget * B * T))
         flat = ent.flatten()
         if k < flat.numel():
             thresh = flat.topk(k).values.min()
         else:
             thresh = flat.min()
-        trig = max(self.entropy_trig, float(thresh))
-        mask = (ent >= trig)                                            # [B,T]
+        # Use tensor operations to compute the maximum between the fixed
+        # entropy trigger and the observed threshold.  Avoid casting to
+        # Python floats, which would cause device synchronisation.
+        trig_tensor = torch.tensor(self.entropy_trig, dtype=ent.dtype, device=ent.device)
+        trig = torch.maximum(trig_tensor, thresh)
+        mask = ent >= trig
 
-        if mask.any():
-            idx = mask.nonzero(as_tuple=False)                          # [N,2]
-            h_sel = x[idx[:,0], idx[:,1], :]                            # [N,D]
-            h_upd, info = self.controller(h_sel, self.lm_head)          # [N,D]
-            x[idx[:,0], idx[:,1], :] = h_upd                            # scatter back
+        # Select the indices of tokens exceeding the entropy trigger.  Use
+        # ``nonzero`` to obtain a 2‑D index tensor.  We avoid ``mask.any()``
+        # to sidestep the truth‑value ambiguity of tensors; instead, we
+        # inspect the size of the resulting index tensor.
+        idx = mask.nonzero(as_tuple=False)  # [N,2] (or empty if no tokens)
+        if idx.numel() > 0:
+            # Gather the hidden states for the selected tokens, run the
+            # reasoning controller, and scatter the updated representations
+            # back into the sequence.  The logits are recomputed only
+            # when reasoning has been applied.
+            h_sel = x[idx[:, 0], idx[:, 1], :]
+            h_upd, info = self.controller(h_sel, self.lm_head)
+            x[idx[:, 0], idx[:, 1], :] = h_upd
             logits = self.lm_head(x)
 
         return logits
@@ -443,8 +597,16 @@ class GPTo3Model(nn.Module):
 
 if __name__ == "__main__":
     torch.manual_seed(0)
+    # Instantiate a small GPTo3Model for a smoke test.  Use the
+    # configured vocabulary size rather than assuming a hard-coded
+    # 32k vocabulary.  This ensures the embedding and output head
+    # dimensions align when the default configuration uses a 200k vocab.
     model = GPTo3Model(d_model=512, n_heads=8, d_ff=2048, num_layers=4, rank=4)
-    inp = torch.randint(0, 32000, (1, 64))
+    vocab_sz = model.lm_head.weight.size(0)
+    # Randomly sample a short sequence of token IDs from the model's
+    # vocabulary.  Keeping the sequence short makes the test fast while
+    # validating the forward pass across the embedding and transformer.
+    inp = torch.randint(0, vocab_sz, (1, 64))
     with torch.no_grad():
         out = model(text_ids=inp)
     print("Logits:", tuple(out.shape))

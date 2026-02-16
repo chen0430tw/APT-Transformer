@@ -6,14 +6,25 @@
 # HybridFFN, OmniInputEncoder, GPT4oBlock, GPT4oModel.
 # ----------------------------------------------------------
 
-from apt.core.fake_torch import get_torch
-torch = get_torch()
-from apt.core.fake_torch import get_torch
+# Try to import the fake_torch from the external apt package.  If that
+# fails (for example, when the apt package is not available), fall
+# back to the real torch.  The get_torch function returns either
+# the fake torch or the actual torch module as appropriate.
+try:
+    from apt.core.fake_torch import get_torch  # type: ignore
+except Exception:
+    import torch as _torch  # type: ignore
+    def get_torch():
+        return _torch
+
+# Initialise torch only once.  Removing duplicate initialisation avoids
+# confusion and redundant work.  Assign nn and F aliases for
+# convenience.
 torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 # ----------------------------------------------------------
 # Dynamic τ Gating
@@ -54,21 +65,36 @@ class VeinSubspaceShared(nn.Module):
 # ----------------------------------------------------------
 
 class FastPathScheduler:
-    def __init__(self, patience=3):
-        self.patience = patience
+    """
+    Legacy fast/slow path scheduler.
+
+    This class is retained for API compatibility but is no longer used to
+    control the attention path.  Historically the scheduler kept a
+    per‑layer counter and toggled between a low‑rank fast path and a
+    corrective slow path when the reconstruction error exceeded a
+    threshold for several consecutive batches.  That implementation
+    relied on scalar `.item()` conversions, which cause device
+    synchronisation and degrade performance on accelerators.
+
+    In the updated attention implementation, the decision to apply a
+    correction is computed per‑batch and per‑head using purely tensor
+    operations (see ``TriVeinAttention.forward``).  The scheduler
+    therefore always reports that the fast path is active.  It remains
+    in the codebase for backwards compatibility and to allow future
+    extensions.
+    """
+    def __init__(self, patience: int = 3) -> None:
+        self.patience = int(patience)
+        # dummy state retained for backwards compatibility
         self.counter = 0
         self.active = True
 
-    def update(self, eps, tau):
-        below = (eps < tau).all().item()
-        if below:
-            self.counter += 1
-            if self.counter >= self.patience:
-                self.active = False
-        else:
-            self.counter = 0
-            self.active = True
-        return self.active
+    def update(self, eps: torch.Tensor, tau: torch.Tensor) -> bool:
+        # Always return True to indicate the fast path is enabled.
+        # The new attention implementation computes the correction
+        # deterministically in ``TriVeinAttention.forward`` without
+        # relying on this scheduler.
+        return True
 
 # ----------------------------------------------------------
 # Hybrid FeedForward (Mini-MoE)
@@ -103,86 +129,266 @@ class HybridFFN(nn.Module):
 # ----------------------------------------------------------
 
 class TriVeinAttention(nn.Module):
-    def __init__(self, d_model, n_heads, rank, tau_module):
+    """
+    Tri‑Vein attention layer operating in a low‑rank subspace.  This
+    enhanced version supports:
+      • Causal masking (autoregressive LM)
+      • Sliding Window Attention (SWA) via `window_size`
+      • Grouped‑Query Attention (GQA) via `num_kv_heads`
+      • Rotary Positional Embeddings (RoPE) via `use_rope`
+
+    Args:
+        d_model: model hidden size
+        n_heads: number of attention heads
+        rank: low‑rank dimension for the shared subspace
+        tau_module: DynamicTau module controlling adaptive threshold
+        window_size: if > 0, restricts attention to a local causal window of this size
+        num_kv_heads: if set and < n_heads, groups KV heads and repeats them for Q heads (GQA)
+        use_rope: whether to apply rotary positional embeddings to Q/K
+    """
+    def __init__(self, d_model: int, n_heads: int, rank: int, tau_module: DynamicTau,
+                 window_size: int = 0, num_kv_heads: Optional[int] = None, use_rope: bool = False):
         super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
         self.d_model = d_model
         self.n_heads = n_heads
         self.rank = rank
         self.head_dim = d_model // n_heads
         self.tau_module = tau_module
+        self.window_size = int(window_size)
+        self.num_kv_heads = int(num_kv_heads) if num_kv_heads is not None else n_heads
+        # Ensure heads divisible when GQA is used
+        assert self.n_heads % self.num_kv_heads == 0, "n_heads must be divisible by num_kv_heads"
+        self.use_rope = bool(use_rope)
 
+        # Linear projections for query, key, value and output
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, d_model)
         self.W_v = nn.Linear(d_model, d_model)
         self.W_o = nn.Linear(d_model, d_model)
 
+        # Shared vein subspace used for low‑rank projections
         self.subspace = VeinSubspaceShared(self.head_dim, rank)
         self.fast_scheduler = FastPathScheduler()
 
-    def forward(self, x, load_factor=1.0):
+    def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply rotary positional embeddings to x [B,H,T,D].  Correctly trims any padding."""
+        B, H, T, D = x.size()
+        orig_D = D
+        # If head_dim is odd, pad one dimension to apply RoPE
+        if orig_D % 2 != 0:
+            pad = x.new_zeros(B, H, T, 1)
+            x = torch.cat([x, pad], dim=-1)
+            D = orig_D + 1
+        else:
+            D = orig_D
+        half = D // 2
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        freqs = torch.arange(0, half, device=x.device, dtype=x.dtype)
+        inv_freq = 1.0 / (10000 ** (freqs / float(half)))
+        sinusoid = pos.unsqueeze(1) * inv_freq.unsqueeze(0)  # [T,half]
+        sin = sinusoid.sin().unsqueeze(0).unsqueeze(0)       # [1,1,T,half]
+        cos = sinusoid.cos().unsqueeze(0).unsqueeze(0)       # [1,1,T,half]
+        x1 = x[..., :half]
+        x2 = x[..., half:half*2]
+        x_rot_first = x1 * cos - x2 * sin
+        x_rot_second = x1 * sin + x2 * cos
+        x_rot = torch.cat([x_rot_first, x_rot_second], dim=-1)
+        # Remove padding if we added one
+        if D != orig_D:
+            x_rot = x_rot[..., :orig_D]
+        return x_rot
+
+    def forward(self, x: torch.Tensor, load_factor: float = 1.0, *, is_causal: bool = True) -> torch.Tensor:
         B, T, D = x.size()
         H = self.n_heads
+        # Adaptive threshold τ (keep as tensor; avoid premature Python conversion)
         tau = self.tau_module(load_factor)
-
+        # Do not coerce τ to a Python float here; let FastPathScheduler use the tensor directly.
+        tau_val = tau  # leave as a tensor to minimise synchronisation
+        # Linear projections and reshape to [B, H, T, head_dim]
         q = self.W_q(x).view(B, T, H, self.head_dim).transpose(1, 2)
         k = self.W_k(x).view(B, T, H, self.head_dim).transpose(1, 2)
         v = self.W_v(x).view(B, T, H, self.head_dim).transpose(1, 2)
 
+        # Apply RoPE if requested
+        if self.use_rope:
+            q = self._apply_rope(q)
+            k = self._apply_rope(k)
+
+        # GQA: group KV heads and replicate if fewer than Q heads
+        if self.num_kv_heads < self.n_heads:
+            group_size = self.n_heads // self.num_kv_heads
+            # Reshape to [B, num_kv_heads, group_size, T, head_dim]
+            k_reshaped = k.reshape(B, self.num_kv_heads, group_size, T, self.head_dim)
+            v_reshaped = v.reshape(B, self.num_kv_heads, group_size, T, self.head_dim)
+            # Select the first head in each group as the shared KV head
+            k_small = k_reshaped[:, :, 0, :, :]
+            v_small = v_reshaped[:, :, 0, :, :]
+            # Broadcast back to full head count
+            k = k_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
+            v = v_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
+
+        # Project into low‑rank subspace
         zq = self.subspace.project(q)
         zk = self.subspace.project(k)
         zv = self.subspace.project(v)
 
-        att = (zq @ zk.transpose(-2, -1)) / math.sqrt(self.rank)
+        # Attention scores in subspace
+        att = (zq @ zk.transpose(-2, -1)) / math.sqrt(max(self.rank, 1))
+
+        # Compose masks: causal + sliding window
+        mask = None
+        # causal mask
+        if is_causal:
+            causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
+            mask = causal
+        # sliding window mask
+        if self.window_size and self.window_size > 0:
+            # mask out keys beyond window_size from each query position
+            i = torch.arange(T, device=att.device).view(T, 1)
+            j = torch.arange(T, device=att.device).view(1, T)
+            local = j < (i - (self.window_size - 1))
+            mask = local if mask is None else (mask | local)
+        # Apply mask if present
+        if mask is not None:
+            att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+        # Softmax normalisation
         att = F.softmax(att, dim=-1)
+
+        # Low‑rank output
         y_base = att @ zv
 
-        eps = torch.norm(q - self.subspace.reconstruct(zq), dim=-1)
-        if self.fast_scheduler.update(eps, tau.item()):
-            y = y_base
-        else:
-            delta = torch.mean(eps, dim=(-1, -2), keepdim=True) / D
-            y = y_base + delta.unsqueeze(-1) * (q - k)
-
-        y = self.subspace.reconstruct(y)
-        y = y.transpose(1, 2).contiguous().view(B, T, D)
-        return self.W_o(y)
+        # === Low‑rank correction based on reconstruction error ===
+        # Compute the reconstruction error of the queries in the low‑rank subspace
+        # (using the original q and the reconstructed zq).  We keep the
+        # computation in tensor space to avoid Python scalar conversions.
+        eps = torch.norm(q - self.subspace.reconstruct(zq), dim=-1)  # [B,H,T]
+        # Determine which heads are below the adaptive threshold.  A head
+        # operates in the ``fast path`` if **all** tokens in that head
+        # have an error below τ.  We reduce only over the sequence
+        # dimension (last dim) so that the resulting mask has shape
+        # [B,H].  Reducing over both head and sequence dimensions would
+        # collapse the head axis, which leads to a mismatch when
+        # broadcasting the correction.
+        below = (eps < tau_val).all(dim=-1)  # [B,H]
+        # Compute a scalar correction magnitude per head.  We average the
+        # reconstruction error over the sequence length and normalise by
+        # ``head_dim`` (not the full model dimension) to produce a small
+        # correction.  Using a Python integer for the division is safe
+        # because it does not cause a device synchronisation.
+        delta = eps.mean(dim=(-1, -2), keepdim=True) / self.head_dim  # [B,H,1]
+        # The correction is applied in the low‑rank subspace, so we
+        # subtract the key from the query in the subspace (zq - zk).
+        # This yields a correction tensor of shape [B,H,T,r].
+        correction = delta.unsqueeze(-1) * (zq - zk)
+        # Compute the corrected low‑rank output.  Where ``below`` is True,
+        # we keep the base output; otherwise we add the correction.
+        # ``below`` is expanded to match [B,H,T,1].
+        y_low = torch.where(below.unsqueeze(-1).unsqueeze(-1), y_base, y_base + correction)
+        # Reconstruct to the full model dimension and return through the
+        # output projection.  Reshape back to [B,T,D].
+        y_full = self.subspace.reconstruct(y_low)
+        y_full = y_full.transpose(1, 2).contiguous().view(B, T, D)
+        return self.W_o(y_full)
 
 # ----------------------------------------------------------
 # Omni Input Encoder
 # ----------------------------------------------------------
 
 class OmniInputEncoder(nn.Module):
-    def __init__(self, d_model, vocab_size=32000, image_dim=1024, audio_dim=512):
+    def __init__(self, d_model, vocab_size=200000, image_dim=1024, audio_dim=512):
         super().__init__()
         self.text_emb = nn.Embedding(vocab_size, d_model)
         self.image_proj = nn.Linear(image_dim, d_model)
         self.audio_proj = nn.Linear(audio_dim, d_model)
 
-    def forward(self, text_ids=None, image_feat=None, audio_feat=None):
-        parts = []
+    def forward(self, text_ids: Optional[torch.Tensor] = None,
+                image_feat: Optional[torch.Tensor] = None,
+                audio_feat: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Encode the available modalities into a common latent tensor of shape
+        ``[B, T, D]``.
+
+        Text embeddings produce a sequence of length ``T``.  If image or
+        audio features are provided, they are projected to the same hidden
+        dimension and broadcast along the sequence dimension so that
+        averaging across modalities does not silently broadcast along
+        mismatched axes.  If no text is given, image/audio will each
+        produce a sequence length of 1.
+        """
+        parts: List[torch.Tensor] = []
+        seq_len: int = 1
         if text_ids is not None:
-            parts.append(self.text_emb(text_ids))
+            # text_ids: [B, T]
+            text_emb = self.text_emb(text_ids)  # [B, T, D]
+            parts.append(text_emb)
+            seq_len = text_ids.size(1)
         if image_feat is not None:
-            parts.append(self.image_proj(image_feat))
+            # image_feat: [B, D_img] or [B, N_img, D_img]
+            img_emb = self.image_proj(image_feat)
+            # ensure sequence dimension present
+            if img_emb.dim() == 2:
+                # [B, D] -> [B, 1, D]
+                img_emb = img_emb.unsqueeze(1)
+            # broadcast to match text sequence length if necessary
+            if seq_len > 1 and img_emb.size(1) == 1:
+                img_emb = img_emb.expand(-1, seq_len, -1)
+            parts.append(img_emb)
         if audio_feat is not None:
-            parts.append(self.audio_proj(audio_feat))
-        return sum(parts) / len(parts)
+            aud_emb = self.audio_proj(audio_feat)
+            if aud_emb.dim() == 2:
+                aud_emb = aud_emb.unsqueeze(1)
+            if seq_len > 1 and aud_emb.size(1) == 1:
+                aud_emb = aud_emb.expand(-1, seq_len, -1)
+            parts.append(aud_emb)
+        if not parts:
+            raise ValueError("At least one of text_ids, image_feat or audio_feat must be provided")
+        # If multiple modalities were provided, average them.  They now
+        # share a common [B,T,D] shape.
+        if len(parts) == 1:
+            return parts[0]
+        # Sum then divide to average while preserving dtype
+        stacked = sum(parts)
+        return stacked / float(len(parts))
 
 # ----------------------------------------------------------
 # GPT4o Block
 # ----------------------------------------------------------
 
 class GPT4oBlock(nn.Module):
-    def __init__(self, d_model, n_heads, d_ff, rank, tau_module):
-        super().__init__()
-        self.attn = TriVeinAttention(d_model, n_heads, rank, tau_module)
-        self.ffn = HybridFFN(d_model, d_ff)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, rank: int, tau_module: DynamicTau,
+                 window_size: int = 0, num_kv_heads: Optional[int] = None, use_rope: bool = False):
+        """
+        A GPT‑4o block consisting of a single TriVeinAttention followed by a HybridFFN.
 
-    def forward(self, x, load_factor=1.0):
-        attn_out = self.attn(self.norm1(x), load_factor=load_factor)
+        Args:
+            d_model: hidden dimension
+            n_heads: number of attention heads
+            d_ff: feedforward width
+            rank: low‑rank dimension for vein subspace
+            tau_module: DynamicTau module controlling adaptive threshold
+            window_size: sliding window size for attention (0 = global)
+            num_kv_heads: number of KV heads for GQA (None = same as Q heads)
+            use_rope: whether to apply RoPE to Q/K
+        """
+        super().__init__()
+        # Layer normalisation before attention/FFN
+        self.norm1 = nn.LayerNorm(d_model)
+        # Pass window_size, num_kv_heads and use_rope into TriVeinAttention
+        self.attn = TriVeinAttention(d_model, n_heads, rank, tau_module,
+                                     window_size=window_size,
+                                     num_kv_heads=num_kv_heads,
+                                     use_rope=use_rope)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = HybridFFN(d_model, d_ff)
+
+    def forward(self, x: torch.Tensor, load_factor: float = 1.0) -> torch.Tensor:
+        # Apply layer normalisation before attention
+        attn_out = self.attn(self.norm1(x), load_factor=load_factor, is_causal=True)
         x = x + attn_out
+        # Feedforward on normalised state
         ffn_out = self.ffn(self.norm2(x))
         return x + ffn_out
 
@@ -191,21 +397,60 @@ class GPT4oBlock(nn.Module):
 # ----------------------------------------------------------
 
 class GPT4oModel(nn.Module):
-    def __init__(self, vocab_size=32000, d_model=2048, n_heads=16, d_ff=8192, num_layers=24, rank=4):
+    def __init__(self, vocab_size: int = 200000, d_model: int = 2048,
+                 n_heads: int = 16, d_ff: int = 8192, num_layers: int = 24,
+                 rank: int = 4, max_seq_len: int = 4096,
+                 window_size: int = 0, num_kv_heads: Optional[int] = None, use_rope: bool = False):
+        """
+        GPT‑4o model with causal TriVein attention and optional enhancements.
+
+        Args:
+            vocab_size: vocabulary size for text tokens (default 200k for Harmony/o200k)
+            d_model: model hidden size
+            n_heads: number of attention heads
+            d_ff: feedforward width
+            num_layers: number of transformer blocks
+            rank: rank of the shared vein subspace
+            max_seq_len: maximum sequence length for learned position embeddings
+            window_size: sliding window length for SWA (0 = global)
+            num_kv_heads: number of KV heads for GQA (None = same as Q heads)
+            use_rope: whether to enable rotary positional embeddings for Q/K
+        """
         super().__init__()
+        # Token/text encoder
         self.encoder = OmniInputEncoder(d_model, vocab_size=vocab_size)
+        # Adaptive τ scheduler
         self.tau_module = DynamicTau()
+        # Learned positional embeddings
+        self.pos_emb = nn.Embedding(max_seq_len, d_model)
+        nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
+        # Transformer blocks with TriVein attention and HybridFFN
         self.blocks = nn.ModuleList([
-            GPT4oBlock(d_model, n_heads, d_ff, rank, self.tau_module)
+            GPT4oBlock(d_model, n_heads, d_ff, rank, self.tau_module,
+                       window_size=window_size,
+                       num_kv_heads=num_kv_heads,
+                       use_rope=use_rope)
             for _ in range(num_layers)
         ])
         self.norm = nn.LayerNorm(d_model)
+        # Output projection to vocabulary
         self.output_head = nn.Linear(d_model, vocab_size, bias=False)
 
-    def forward(self, text_ids=None, image_feat=None, audio_feat=None, load_factor=1.0):
+    def forward(self, text_ids: Optional[torch.Tensor] = None,
+                image_feat: Optional[torch.Tensor] = None,
+                audio_feat: Optional[torch.Tensor] = None,
+                load_factor: float = 1.0) -> torch.Tensor:
+        # Encode modalities to a [B,T,D] tensor.
         x = self.encoder(text_ids, image_feat, audio_feat)
+        # Add learned positional embeddings.  Sequence length is derived
+        # from the encoded representation.
+        B, T, _ = x.shape
+        pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+        x = x + self.pos_emb(pos_ids)
+        # Pass through transformer blocks
         for blk in self.blocks:
             x = blk(x, load_factor=load_factor)
+        # Final normalisation and LM projection
         x = self.norm(x)
         logits = self.output_head(x)
         return logits
@@ -239,8 +484,19 @@ class GPT4oModel(nn.Module):
 # ----------------------------------------------------------
 
 if __name__ == "__main__":
+    # When running a quick smoke test, respect the model's configured
+    # vocabulary size rather than assuming a small 32k vocabulary.  This
+    # avoids dimension mismatches when the default config uses a
+    # 200k tokeniser.  We query the output head's size for the
+    # vocabulary dimension.
     model = GPT4oModel()
-    inp = torch.randint(0, 32000, (1, 8))
+    # Sample a small batch of random token IDs from the configured
+    # vocabulary.  Restricting sequence length keeps the test fast.
+    vocab_sz = model.output_head.weight.size(0)
+    inp = torch.randint(0, vocab_sz, (1, 8))
     out = model(inp)
     print("Output logits:", out.shape)
+    # Access τ via .item() for readability; this is outside the
+    # training loop so a CPU synchronisation here has no impact on
+    # throughput.
     print("τ current:", model.tau_module.tau.item())
