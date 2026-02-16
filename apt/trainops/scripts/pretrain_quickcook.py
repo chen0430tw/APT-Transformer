@@ -16,20 +16,35 @@ APT 速食预训练脚本 (QuickCook Pretraining)
   - PyTorch FSDP
   - SLURM 集群兼容
 
-用法:
-    # 单机 4 卡 DDP
-    torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
-        --output-dir ./quickcook_output --epochs 3
+持续课程学习 (Curriculum Hot-Swap):
+  训练中途可通过修改 datasets/ 目录下的 curriculum.json 热切换数据集,
+  无需停机重启。训练器每 N 步自动检查该文件。
 
-    # 多机 (SLURM)
+用法:
+    # 单机 4 卡 DDP (指定模型架构)
+    torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir $WORK/quickcook_output --model-arch apt --epochs 3
+
+    # 使用 Claude4 架构 + 指定缓存到 work 目录
+    torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir $WORK/output --model-arch claude4 --cache-dir $WORK/.cache
+
+    # 多机 (SLURM) — 进度实时写到 progress.log
     srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \\
         -m apt.trainops.scripts.pretrain_quickcook \\
-        --output-dir ./quickcook_output --epochs 3
+        --output-dir $WORK/output --epochs 3
+    # 另一个终端看进度:
+    #   tail -f $WORK/output/progress.log
 
     # DeepSpeed ZeRO-3
     deepspeed --num_gpus=8 -m apt.trainops.scripts.pretrain_quickcook \\
-        --output-dir ./quickcook_output --epochs 3 \\
+        --output-dir $WORK/output --epochs 3 \\
         --distributed-backend deepspeed --zero-stage 3
+
+    # 持续课程学习: 训练中途切换数据
+    # 创建 curriculum.json 放到 --datasets-dir:
+    #   {"weights": {"c4_en": 0.2, "mc4_zh": 0.5, "fineweb": 0.2, "hlbd": 0.1}}
+    # 训练器会在下一个检查间隔自动加载新权重。
 
     # 单机调试 (不启动分布式)
     python -m apt.trainops.scripts.pretrain_quickcook \\
@@ -45,6 +60,7 @@ import json
 import time
 import logging
 import argparse
+import signal as _signal
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Iterator, Tuple
 
@@ -53,6 +69,292 @@ import torch.nn as nn
 import torch.distributed as dist
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# 工具: HF / datasets 缓存路径设置
+# ============================================================================
+
+def setup_cache_dir(cache_dir: Optional[str] = None):
+    """
+    将 HuggingFace Hub / datasets 的缓存目录设置到指定路径。
+
+    训练集群上计算节点和存储节点分离, home 目录通常是 NFS
+    且配额小, 不适合放数据缓存。应当存放在 $WORK 下。
+
+    优先级: --cache-dir > $WORK/.cache > $HF_HOME (不改)
+    """
+    if cache_dir:
+        target = cache_dir
+    elif "WORK" in os.environ:
+        target = os.path.join(os.environ["WORK"], ".cache", "huggingface")
+    else:
+        # 不修改, 使用 HF 默认
+        return
+
+    os.makedirs(target, exist_ok=True)
+    os.environ.setdefault("HF_HOME", target)
+    os.environ.setdefault("HF_DATASETS_CACHE", os.path.join(target, "datasets"))
+    os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(target, "transformers"))
+    logger.info(f"HF 缓存目录设置为: {target}")
+
+
+# ============================================================================
+# 工具: 模型架构注册表
+# ============================================================================
+
+# 支持的模型架构: 名称 -> (模块路径, 类名)
+MODEL_REGISTRY: Dict[str, Tuple[str, str]] = {
+    "apt":     ("apt.model.architectures.apt_model",      "APTModel"),
+    "apt-lite":("apt.model.architectures.apt_model_lite",  "APTModel"),
+    "gpt4o":   ("apt.model.architectures.gpt4o_model",    "GPT4oModel"),
+    "gpt5":    ("apt.model.architectures.gpt5_model",     "GPT5Model"),
+    "claude4": ("apt.model.architectures.claude4_model",   "Claude4Model"),
+    "gpto3":   ("apt.model.architectures.gpto3_model",    "GPTo3Model"),
+}
+
+
+def create_model(arch: str, vocab_size: int, d_model: int, num_heads: int,
+                 num_layers: int, max_seq_len: int) -> nn.Module:
+    """
+    根据架构名称创建模型。
+
+    APT/APT-Lite 使用 APTModelConfiguration (config 对象);
+    其他模型直接用关键字参数。
+    """
+    if arch not in MODEL_REGISTRY:
+        raise ValueError(
+            f"未知模型架构: {arch}, 可选: {list(MODEL_REGISTRY.keys())}"
+        )
+
+    module_path, class_name = MODEL_REGISTRY[arch]
+    import importlib
+    mod = importlib.import_module(module_path)
+    model_cls = getattr(mod, class_name)
+
+    if arch in ("apt", "apt-lite"):
+        # APTModel 需要 config 对象
+        config_cls = getattr(mod, "APTModelConfiguration")
+        config = config_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            num_heads=num_heads,
+            num_encoder_layers=num_layers,
+            num_decoder_layers=num_layers,
+            max_seq_len=max_seq_len,
+        )
+        model = model_cls(config)
+    elif arch == "gpt5":
+        model = model_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_heads=num_heads,
+            n_layers=num_layers,
+        )
+    elif arch == "gpt4o":
+        model = model_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_heads=num_heads,
+            d_ff=d_model * 4,
+            num_layers=num_layers,
+            max_seq_len=max_seq_len,
+        )
+    elif arch == "claude4":
+        model = model_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_heads=num_heads,
+            d_ff=d_model * 4,
+            num_layers=num_layers,
+            max_seq_len=max_seq_len,
+        )
+    elif arch == "gpto3":
+        model = model_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_heads=num_heads,
+            d_ff=d_model * 4,
+            num_layers=num_layers,
+            max_seq_len=max_seq_len,
+        )
+    else:
+        raise ValueError(f"未知架构: {arch}")
+
+    logger.info(f"创建模型: {arch} ({class_name}), "
+                 f"d_model={d_model}, layers={num_layers}, heads={num_heads}")
+    return model
+
+
+# ============================================================================
+# 工具: 持续课程学习 (Curriculum Hot-Swap)
+# ============================================================================
+
+class CurriculumManager:
+    """
+    持续课程学习管理器。
+
+    监视 datasets_dir/curriculum.json, 训练中途可以:
+    1. 修改数据源权重 (如: 降低 C4 比例, 提高 mC4 比例)
+    2. 指定新的本地数据目录
+    3. 关闭/开启某个数据源
+
+    curriculum.json 格式:
+    {
+        "weights": {"c4_en": 0.2, "mc4_zh": 0.5, "fineweb": 0.2, "hlbd": 0.1},
+        "hlbd_path": "/data/new_hlbd/",  // 可选
+        "use_c4": true,                  // 可选
+        "use_mc4_zh": true,              // 可选
+        "use_fineweb": true              // 可选
+    }
+    """
+
+    def __init__(self, datasets_dir: Optional[str] = None):
+        self._config_path = None
+        self._last_mtime = 0.0
+        self._current_config: Optional[Dict] = None
+
+        if datasets_dir:
+            self._config_path = os.path.join(datasets_dir, "curriculum.json")
+
+    def check_for_update(self) -> Optional[Dict]:
+        """
+        检查 curriculum.json 是否有更新。
+
+        Returns:
+            更新后的配置 dict, 如果没有更新则返回 None。
+        """
+        if not self._config_path or not os.path.exists(self._config_path):
+            return None
+
+        try:
+            mtime = os.path.getmtime(self._config_path)
+        except OSError:
+            return None
+
+        if mtime <= self._last_mtime:
+            return None
+
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                new_config = json.load(f)
+            self._last_mtime = mtime
+            self._current_config = new_config
+            logger.info(f"检测到课程更新: {self._config_path}")
+            logger.info(f"  新配置: {json.dumps(new_config, ensure_ascii=False)}")
+            return new_config
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"读取 curriculum.json 失败: {e}")
+            return None
+
+
+# ============================================================================
+# 工具: 进度追踪 (SLURM 友好)
+# ============================================================================
+
+class ProgressTracker:
+    """
+    进度追踪器, 在 SLURM 环境下也能看到训练进度。
+
+    策略:
+    1. 进度写入 output_dir/progress.log (可用 tail -f 实时查看)
+    2. 如果 stderr 连接到 tty, 也用 tqdm 显示进度条
+    3. 定期刷新, 包含 step/loss/lr/tokens_per_sec 等关键指标
+    """
+
+    def __init__(self, output_dir: str, total_steps: int, rank: int = 0,
+                 log_interval: int = 10):
+        self.rank = rank
+        self.total_steps = total_steps
+        self.log_interval = log_interval
+        self._progress_file = None
+        self._tqdm_bar = None
+        self._start_time = time.time()
+        self._tokens_processed = 0
+
+        if rank == 0:
+            # 进度日志文件 (可 tail -f)
+            os.makedirs(output_dir, exist_ok=True)
+            self._progress_file = open(
+                os.path.join(output_dir, "progress.log"), "a", encoding="utf-8"
+            )
+            self._write_header()
+
+            # 如果有 tqdm 且连接到终端/srun
+            try:
+                from tqdm import tqdm
+                # SLURM 下 stderr 也是有效的
+                self._tqdm_bar = tqdm(
+                    total=total_steps,
+                    desc="QuickCook",
+                    unit="step",
+                    dynamic_ncols=True,
+                    file=sys.stderr,
+                )
+            except ImportError:
+                pass
+
+    def _write_header(self):
+        if self._progress_file:
+            header = (
+                f"\n{'='*70}\n"
+                f"QuickCook 训练开始: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"总步数: {self.total_steps}\n"
+                f"{'='*70}\n"
+            )
+            self._progress_file.write(header)
+            self._progress_file.flush()
+
+    def update(self, step: int, loss: float, lr: float,
+               tokens_in_batch: int = 0):
+        """更新进度"""
+        if self.rank != 0:
+            return
+
+        self._tokens_processed += tokens_in_batch
+        elapsed = time.time() - self._start_time
+        tokens_per_sec = self._tokens_processed / elapsed if elapsed > 0 else 0
+        pct = step / self.total_steps * 100 if self.total_steps > 0 else 0
+
+        # ETA
+        if step > 0:
+            eta_sec = elapsed / step * (self.total_steps - step)
+            eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_sec))
+        else:
+            eta_str = "N/A"
+
+        if step % self.log_interval == 0:
+            line = (
+                f"[Step {step:>8d}/{self.total_steps} ({pct:5.1f}%)] "
+                f"Loss: {loss:.4f} | LR: {lr:.2e} | "
+                f"Tok/s: {tokens_per_sec:,.0f} | ETA: {eta_str}"
+            )
+
+            # 写入文件
+            if self._progress_file:
+                self._progress_file.write(line + "\n")
+                self._progress_file.flush()
+
+            # 写入 logger
+            logger.info(line)
+
+        # tqdm
+        if self._tqdm_bar is not None:
+            self._tqdm_bar.update(1)
+            self._tqdm_bar.set_postfix(
+                loss=f"{loss:.4f}", lr=f"{lr:.2e}",
+                tok_s=f"{tokens_per_sec:,.0f}",
+            )
+
+    def close(self):
+        if self._tqdm_bar is not None:
+            self._tqdm_bar.close()
+        if self._progress_file:
+            self._progress_file.write(
+                f"\n训练结束: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"总 token: {self._tokens_processed:,}\n"
+            )
+            self._progress_file.close()
 
 
 # ============================================================================
@@ -82,6 +384,8 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         weights: Optional[Dict[str, float]] = None,
         # 本地数据路径
         hlbd_path: Optional[str] = None,
+        # 本地数据集目录 (用于持续课程学习)
+        datasets_dir: Optional[str] = None,
         # HuggingFace 数据集开关
         use_c4: bool = True,
         use_mc4_zh: bool = True,
@@ -114,6 +418,10 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         self.use_mc4_zh = use_mc4_zh
         self.use_fineweb = use_fineweb
         self.hlbd_path = hlbd_path
+        self.datasets_dir = datasets_dir
+
+        # 持续课程学习管理器
+        self._curriculum = CurriculumManager(datasets_dir)
 
         # HLBD 本地数据缓存 (小数据集, 直接全量加载)
         self._hlbd_texts: Optional[List[str]] = None
@@ -255,8 +563,29 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         source_weights = [w / total_w for w in source_weights]
 
         exhausted = set()
+        sample_count = 0
 
         while len(exhausted) < len(source_names):
+            # === 持续课程学习: 每 1000 个样本检查 curriculum.json ===
+            sample_count += 1
+            if sample_count % 1000 == 0:
+                update = self._curriculum.check_for_update()
+                if update:
+                    new_weights = update.get("weights")
+                    if new_weights:
+                        for i, name in enumerate(source_names):
+                            if name in new_weights:
+                                source_weights[i] = new_weights[name]
+                        w_sum = sum(source_weights)
+                        source_weights = [w / w_sum for w in source_weights]
+                        logger.info(f"课程权重已更新: {dict(zip(source_names, source_weights))}")
+                    # 可选: 切换 HLBD 数据路径
+                    new_hlbd = update.get("hlbd_path")
+                    if new_hlbd and new_hlbd != self.hlbd_path:
+                        self.hlbd_path = new_hlbd
+                        self._hlbd_texts = None  # 强制重新加载
+                        hlbd_texts = self._load_hlbd()
+                        logger.info(f"HLBD 数据路径已切换: {new_hlbd}")
             # 加权随机选择数据源
             chosen = rng.choices(source_names, weights=source_weights, k=1)[0]
 
@@ -998,6 +1327,11 @@ class QuickCookTrainer:
             f"lr={self.learning_rate}, mixed_precision={self.dist_config.use_mixed_precision}"
         )
 
+        # 进度追踪器 (写入 progress.log + tqdm)
+        progress = ProgressTracker(
+            self.output_dir, total_steps, self.rank, self.log_interval
+        )
+
         for epoch in range(self.epochs):
             if self.rank == 0:
                 logger.info(f"===== Epoch {epoch + 1}/{self.epochs} =====")
@@ -1046,14 +1380,16 @@ class QuickCookTrainer:
                     self.global_step += 1
                     step_in_accum = 0
 
-                    # 日志
-                    if self.global_step % self.log_interval == 0 and self.rank == 0:
-                        avg_loss = running_loss / self.log_interval
-                        lr = scheduler.get_last_lr()[0]
-                        logger.info(
-                            f"  Step {self.global_step} | "
-                            f"Loss: {avg_loss:.4f} | LR: {lr:.2e}"
-                        )
+                    # 进度追踪 (替代原来的日志)
+                    cur_loss = running_loss / min(self.global_step, self.log_interval)
+                    cur_lr = scheduler.get_last_lr()[0]
+                    tokens_in_batch = input_ids.numel()
+                    progress.update(
+                        self.global_step, cur_loss, cur_lr,
+                        tokens_in_batch=tokens_in_batch,
+                    )
+
+                    if self.global_step % self.log_interval == 0:
                         running_loss = 0.0
 
                     # 保存
@@ -1077,6 +1413,7 @@ class QuickCookTrainer:
             optimizer, scheduler,
             {"loss": running_loss, "step": self.global_step, "final": True}
         )
+        progress.close()
 
         if self.rank == 0:
             logger.info(f"训练完成! 总步数: {self.global_step}")
@@ -1147,32 +1484,66 @@ class QuickCookTrainer:
             logger.info(f"DeepSpeed 训练完成! 总步数: {self.global_step}")
 
     def _forward(self, input_ids, labels):
-        """标准前向传播 (适配 APTModel 接口)"""
+        """
+        标准前向传播 (适配不同模型接口)。
+
+        各模型 forward 签名不同:
+          - APTModel:   (src_tokens, tgt_tokens) -> logits
+          - GPT5Model:  (input_ids) -> logits
+          - GPT4oModel: (text_ids) -> logits
+          - Claude4Model: (input_ids) -> logits
+          - GPTo3Model: (text_ids) -> logits
+
+        所有模型均返回 logits, 需要在此处统一计算交叉熵损失。
+        """
         base_model = self.model.module if hasattr(self.model, "module") else self.model
+        model_class = type(base_model).__name__
 
-        # APTModel 的 forward 签名: (src_ids, tgt_ids) -> dict with 'loss'
-        # 对于自回归预训练: src = input_ids, tgt = labels
-        try:
-            outputs = base_model(input_ids, labels)
-        except TypeError:
-            # 兼容接受 (input_ids, labels=labels) 的模型
-            outputs = base_model(input_ids, labels=labels)
+        if model_class in ("GPT4oModel", "GPTo3Model"):
+            logits = base_model(text_ids=input_ids)
+        elif model_class == "GPT5Model":
+            logits = base_model(input_ids=input_ids)
+        elif model_class == "Claude4Model":
+            logits = base_model(input_ids=input_ids)
+        else:
+            # APTModel / APTModel-Lite: (src_tokens, tgt_tokens)
+            output = base_model(src_tokens=input_ids, tgt_tokens=labels)
+            if isinstance(output, dict) and "loss" in output:
+                return output
+            logits = output
 
-        if isinstance(outputs, dict):
-            return outputs
-        # 如果返回的不是 dict, 假设是 loss tensor
-        return {"loss": outputs}
+        # 如果是 tuple (有些模型返回 (logits, info_dict))
+        if isinstance(logits, tuple):
+            logits = logits[0]
+
+        # 从 logits 计算交叉熵损失
+        # logits: [B, T, V], labels: [B, T]
+        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        loss = loss_fn(logits.view(-1, logits.size(-1)), labels.view(-1))
+        return {"loss": loss, "logits": logits}
 
     def _forward_engine(self, engine, input_ids, labels):
-        """DeepSpeed engine 前向传播"""
-        try:
-            outputs = engine(input_ids, labels)
-        except TypeError:
-            outputs = engine(input_ids, labels=labels)
+        """DeepSpeed engine 前向传播 (适配不同模型接口)"""
+        # DeepSpeed engine 内部包装了模型, 用 engine.module 获取原始模型类名
+        inner = engine.module if hasattr(engine, "module") else engine
+        model_class = type(inner).__name__
 
-        if isinstance(outputs, dict):
-            return outputs
-        return {"loss": outputs}
+        if model_class in ("GPT4oModel", "GPTo3Model"):
+            logits = engine(text_ids=input_ids)
+        elif model_class in ("GPT5Model", "Claude4Model"):
+            logits = engine(input_ids=input_ids)
+        else:
+            output = engine(src_tokens=input_ids, tgt_tokens=labels)
+            if isinstance(output, dict) and "loss" in output:
+                return output
+            logits = output
+
+        if isinstance(logits, tuple):
+            logits = logits[0]
+
+        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        loss = loss_fn(logits.view(-1, logits.size(-1)), labels.view(-1))
+        return {"loss": loss, "logits": logits}
 
 
 # ============================================================================
@@ -1295,6 +1666,8 @@ def parse_args():
     # --- 数据 ---
     parser.add_argument("--hlbd-path", type=str, default=None,
                         help="HLBD 数据集路径 (可选)")
+    parser.add_argument("--datasets-dir", type=str, default=None,
+                        help="数据集总目录 (放 curriculum.json 用于持续课程学习)")
     parser.add_argument("--no-c4", action="store_true", help="不使用 C4 (en)")
     parser.add_argument("--no-mc4", action="store_true", help="不使用 mC4 (zh)")
     parser.add_argument("--no-fineweb", action="store_true", help="不使用 FineWeb")
@@ -1316,6 +1689,10 @@ def parse_args():
                         help="分词器训练时采样文档数 (默认 100000)")
 
     # --- 模型 ---
+    parser.add_argument("--model-arch", type=str, default="apt",
+                        choices=list(MODEL_REGISTRY.keys()),
+                        help="模型架构 (默认 apt). "
+                             "可选: apt, apt-lite, gpt4o, gpt5, claude4, gpto3")
     parser.add_argument("--d-model", type=int, default=768, help="模型维度")
     parser.add_argument("--num-heads", type=int, default=12, help="注意力头数")
     parser.add_argument("--num-layers", type=int, default=12, help="层数")
@@ -1350,7 +1727,10 @@ def parse_args():
     parser.add_argument("--gradient-checkpointing", action="store_true",
                         help="启用梯度检查点 (省显存)")
 
-    # --- 杂项 ---
+    # --- 缓存 & 杂项 ---
+    parser.add_argument("--cache-dir", type=str, default=None,
+                        help="HF 缓存目录 (默认: $WORK/.cache/huggingface). "
+                             "训练集群上应指向 work 目录而非 home。")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
 
@@ -1363,6 +1743,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # --- 缓存目录 (在任何 HF import 之前设置) ---
+    setup_cache_dir(args.cache_dir)
 
     # --- 日志 ---
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -1392,10 +1775,12 @@ def main():
         logger.info("=" * 60)
         logger.info("APT 速食预训练 (QuickCook)")
         logger.info("=" * 60)
+        logger.info(f"模型架构: {args.model_arch}")
         logger.info(f"分布式: backend={dist_config.backend}, "
                      f"world_size={world_size}, rank={rank}")
         logger.info(f"设备: {device}")
         logger.info(f"输出目录: {args.output_dir}")
+        logger.info(f"HF 缓存: {os.environ.get('HF_HOME', '(默认)')}")
 
     # --- 随机种子 ---
     torch.manual_seed(args.seed + rank)
@@ -1440,19 +1825,14 @@ def main():
         logger.info(f"分词器词表大小: {tokenizer.vocab_size}")
 
     # --- 模型 ---
-    from apt.core.config.apt_config import APTConfig
-    from apt.model.architectures.apt_model import APTModel
-
-    config = APTConfig(
+    model = create_model(
+        arch=args.model_arch,
         vocab_size=tokenizer.vocab_size,
         d_model=args.d_model,
         num_heads=args.num_heads,
-        num_encoder_layers=args.num_layers,
-        num_decoder_layers=args.num_layers,
+        num_layers=args.num_layers,
         max_seq_len=args.max_seq_len,
     )
-
-    model = APTModel(config)
 
     if args.resume:
         if rank == 0:
@@ -1487,6 +1867,7 @@ def main():
         max_seq_len=args.max_seq_len,
         weights=weights,
         hlbd_path=args.hlbd_path,
+        datasets_dir=args.datasets_dir,
         use_c4=not args.no_c4,
         use_mc4_zh=not args.no_mc4,
         use_fineweb=not args.no_fineweb,
