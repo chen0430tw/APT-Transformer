@@ -1,0 +1,1528 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+APT 速食预训练脚本 (QuickCook Pretraining)
+
+将 C4(en) + mC4(zh) + FineWeb + HLBD 四套数据集混合进行预训练。
+通过数据稀释 (data dilution) 的方式让模型同时学习英文、中文和结构化课程数据。
+
+分词器采用参考 DeepSeek/Qwen 的 Byte-Level BPE 方案:
+  - 使用 HuggingFace tokenizers 库从混合语料自动训练
+  - 支持自动扩词: 先加载基础分词器, 再用新语料增量训练合并新词
+
+分布式训练支持:
+  - torchrun DDP (默认)
+  - DeepSpeed ZeRO-2/3
+  - PyTorch FSDP
+  - SLURM 集群兼容
+
+用法:
+    # 单机 4 卡 DDP
+    torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir ./quickcook_output --epochs 3
+
+    # 多机 (SLURM)
+    srun torchrun --nnodes=$SLURM_NNODES --nproc_per_node=8 \\
+        -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir ./quickcook_output --epochs 3
+
+    # DeepSpeed ZeRO-3
+    deepspeed --num_gpus=8 -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir ./quickcook_output --epochs 3 \\
+        --distributed-backend deepspeed --zero-stage 3
+
+    # 单机调试 (不启动分布式)
+    python -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir ./quickcook_output --epochs 1 --no-distributed
+
+作者: chen0430tw
+"""
+
+import os
+import sys
+import math
+import json
+import time
+import logging
+import argparse
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Iterator, Tuple
+
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# 第一部分: 混合流式数据集 (C4 + mC4 + FineWeb + HLBD)
+# ============================================================================
+
+class InterleavedStreamDataset(torch.utils.data.IterableDataset):
+    """
+    交替采样的流式数据集。
+
+    从多个 HuggingFace 流式数据集 + 本地 HLBD 数据中,
+    按指定权重随机抽取样本, 实现数据稀释混合学习。
+
+    设计参考:
+      - FineWeb: HuggingFaceFW/fineweb (英文, ~15T tokens)
+      - FineWeb2: HuggingFaceFW/fineweb-2 (多语言, ~3T words)
+      - C4: allenai/c4 (英文, 365GB)
+      - mC4: mc4 (多语言, zh 子集)
+      - HLBD: 本地分层语言启蒙数据集 (结构化课程数据)
+    """
+
+    def __init__(
+        self,
+        tokenizer,
+        max_seq_len: int = 2048,
+        # 数据集权重: 控制各数据源的采样比例
+        weights: Optional[Dict[str, float]] = None,
+        # 本地数据路径
+        hlbd_path: Optional[str] = None,
+        # HuggingFace 数据集开关
+        use_c4: bool = True,
+        use_mc4_zh: bool = True,
+        use_fineweb: bool = True,
+        # 随机种子
+        seed: int = 42,
+        # 每次从流中预取的文档数
+        buffer_size: int = 1000,
+        # 分布式: 在多进程中按 rank 跳过
+        rank: int = 0,
+        world_size: int = 1,
+    ):
+        super().__init__()
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        self.seed = seed
+        self.buffer_size = buffer_size
+        self.rank = rank
+        self.world_size = world_size
+
+        # 默认权重: C4_en 40%, mC4_zh 25%, FineWeb 25%, HLBD 10%
+        self.weights = weights or {
+            "c4_en": 0.40,
+            "mc4_zh": 0.25,
+            "fineweb": 0.25,
+            "hlbd": 0.10,
+        }
+
+        self.use_c4 = use_c4
+        self.use_mc4_zh = use_mc4_zh
+        self.use_fineweb = use_fineweb
+        self.hlbd_path = hlbd_path
+
+        # HLBD 本地数据缓存 (小数据集, 直接全量加载)
+        self._hlbd_texts: Optional[List[str]] = None
+
+    def _load_hlbd(self) -> List[str]:
+        """加载本地 HLBD 数据集"""
+        if self._hlbd_texts is not None:
+            return self._hlbd_texts
+
+        if not self.hlbd_path or not os.path.exists(self.hlbd_path):
+            logger.warning(f"HLBD 数据路径不存在: {self.hlbd_path}, 跳过 HLBD")
+            self._hlbd_texts = []
+            return self._hlbd_texts
+
+        try:
+            from apt.core.data.hlbd.hlbd_adapter import HLBDDataProcessor
+            processor = HLBDDataProcessor(data_path=self.hlbd_path)
+            processor.process_data(include_multilingual=True, include_separate_levels=True)
+            self._hlbd_texts = processor.get_training_texts()
+            logger.info(f"HLBD 加载完成: {len(self._hlbd_texts)} 个样本")
+        except Exception as e:
+            logger.error(f"HLBD 加载失败: {e}")
+            self._hlbd_texts = []
+
+        return self._hlbd_texts
+
+    def _create_hf_stream(self, dataset_name: str, subset: Optional[str] = None):
+        """创建 HuggingFace 流式数据集迭代器"""
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError(
+                "需要安装 datasets 库: pip install datasets\n"
+                "流式加载不需要下载完整数据集, 会按需从 HuggingFace Hub 拉取。"
+            )
+
+        kwargs = {"streaming": True, "split": "train", "trust_remote_code": True}
+        if subset:
+            ds = load_dataset(dataset_name, subset, **kwargs)
+        else:
+            ds = load_dataset(dataset_name, **kwargs)
+
+        # 按 rank 做分片, 避免各进程读到相同数据
+        if self.world_size > 1:
+            ds = ds.shard(num_shards=self.world_size, index=self.rank)
+
+        return iter(ds)
+
+    def _extract_text(self, example: Dict[str, Any], source: str) -> Optional[str]:
+        """从不同数据源的样本中提取文本"""
+        # C4 和 FineWeb 都用 "text" 字段
+        if "text" in example:
+            return example["text"]
+        # mC4 也用 "text"
+        if "content" in example:
+            return example["content"]
+        return None
+
+    def _tokenize_and_chunk(self, text: str) -> List[torch.Tensor]:
+        """
+        将文本分词并切分为固定长度的训练块。
+
+        对长文档: 切成多个 max_seq_len 的 chunk (无重叠)。
+        对短文档: 保留为一个较短的 chunk, 后续由 collate_fn padding。
+        """
+        ids = self.tokenizer.encode(text)
+
+        # tokenizer.encode 可能返回 Tensor 或 list
+        if isinstance(ids, torch.Tensor):
+            ids = ids.squeeze(0) if ids.dim() > 1 else ids
+        else:
+            ids = torch.tensor(ids, dtype=torch.long)
+
+        if len(ids) == 0:
+            return []
+
+        chunks = []
+        for start in range(0, len(ids), self.max_seq_len):
+            chunk = ids[start : start + self.max_seq_len]
+            if len(chunk) >= 32:  # 太短的 chunk 丢弃
+                chunks.append(chunk)
+
+        return chunks
+
+    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
+        """
+        交替采样迭代器。
+
+        使用加权随机选择从各数据源采样, 实现数据稀释混合。
+        """
+        import random
+        rng = random.Random(self.seed + self.rank)
+
+        # === 初始化各数据源 ===
+        sources = {}
+        source_weights = []
+        source_names = []
+
+        if self.use_c4 and self.weights.get("c4_en", 0) > 0:
+            try:
+                sources["c4_en"] = self._create_hf_stream("allenai/c4", "en")
+                source_names.append("c4_en")
+                source_weights.append(self.weights["c4_en"])
+                logger.info("C4 (en) 流式数据集已连接")
+            except Exception as e:
+                logger.warning(f"C4 (en) 连接失败, 跳过: {e}")
+
+        if self.use_mc4_zh and self.weights.get("mc4_zh", 0) > 0:
+            try:
+                sources["mc4_zh"] = self._create_hf_stream("mc4", "zh")
+                source_names.append("mc4_zh")
+                source_weights.append(self.weights["mc4_zh"])
+                logger.info("mC4 (zh) 流式数据集已连接")
+            except Exception as e:
+                logger.warning(f"mC4 (zh) 连接失败, 跳过: {e}")
+
+        if self.use_fineweb and self.weights.get("fineweb", 0) > 0:
+            try:
+                sources["fineweb"] = self._create_hf_stream("HuggingFaceFW/fineweb")
+                source_names.append("fineweb")
+                source_weights.append(self.weights["fineweb"])
+                logger.info("FineWeb 流式数据集已连接")
+            except Exception as e:
+                logger.warning(f"FineWeb 连接失败, 跳过: {e}")
+
+        # HLBD (本地, 循环采样)
+        hlbd_texts = self._load_hlbd()
+        if hlbd_texts and self.weights.get("hlbd", 0) > 0:
+            source_names.append("hlbd")
+            source_weights.append(self.weights["hlbd"])
+            hlbd_idx = 0
+            logger.info(f"HLBD 本地数据已加载: {len(hlbd_texts)} 样本")
+
+        if not source_names:
+            raise RuntimeError("没有可用的数据源! 请检查网络连接或 HLBD 数据路径。")
+
+        # 归一化权重
+        total_w = sum(source_weights)
+        source_weights = [w / total_w for w in source_weights]
+
+        exhausted = set()
+
+        while len(exhausted) < len(source_names):
+            # 加权随机选择数据源
+            chosen = rng.choices(source_names, weights=source_weights, k=1)[0]
+
+            if chosen in exhausted:
+                continue
+
+            text = None
+
+            if chosen == "hlbd":
+                if not hlbd_texts:
+                    exhausted.add("hlbd")
+                    continue
+                text = hlbd_texts[hlbd_idx % len(hlbd_texts)]
+                hlbd_idx += 1
+            else:
+                stream = sources.get(chosen)
+                if stream is None:
+                    exhausted.add(chosen)
+                    continue
+                try:
+                    example = next(stream)
+                    text = self._extract_text(example, chosen)
+                except StopIteration:
+                    logger.info(f"数据源 {chosen} 已耗尽")
+                    exhausted.add(chosen)
+                    continue
+
+            if text is None or len(text.strip()) < 10:
+                continue
+
+            # 分词 + 切块
+            chunks = self._tokenize_and_chunk(text)
+            for chunk in chunks:
+                # 自回归 LM: input = chunk[:-1], target = chunk[1:]
+                yield {
+                    "input_ids": chunk[:-1],
+                    "labels": chunk[1:],
+                }
+
+
+def quickcook_collate_fn(
+    batch: List[Dict[str, torch.Tensor]],
+    pad_token_id: int = 0,
+) -> Dict[str, torch.Tensor]:
+    """
+    动态 padding 的 collate 函数。
+
+    将一个 batch 中长度不等的 input_ids/labels pad 到同一长度。
+    """
+    input_ids_list = [item["input_ids"] for item in batch]
+    labels_list = [item["labels"] for item in batch]
+
+    max_len = max(t.size(0) for t in input_ids_list)
+
+    padded_input_ids = []
+    padded_labels = []
+    attention_masks = []
+
+    for inp, lab in zip(input_ids_list, labels_list):
+        pad_len = max_len - inp.size(0)
+        if pad_len > 0:
+            padded_input_ids.append(
+                torch.cat([inp, torch.full((pad_len,), pad_token_id, dtype=torch.long)])
+            )
+            # label 的 padding 位置用 -100 (PyTorch CE loss 忽略)
+            padded_labels.append(
+                torch.cat([lab, torch.full((pad_len,), -100, dtype=torch.long)])
+            )
+            attention_masks.append(
+                torch.cat([torch.ones(inp.size(0), dtype=torch.long),
+                           torch.zeros(pad_len, dtype=torch.long)])
+            )
+        else:
+            padded_input_ids.append(inp)
+            padded_labels.append(lab)
+            attention_masks.append(torch.ones(inp.size(0), dtype=torch.long))
+
+    return {
+        "input_ids": torch.stack(padded_input_ids),
+        "labels": torch.stack(padded_labels),
+        "attention_mask": torch.stack(attention_masks),
+    }
+
+
+# ============================================================================
+# 第二部分: 自适应 Byte-Level BPE 分词器
+# ============================================================================
+
+class AdaptiveBPETokenizer:
+    """
+    自适应 Byte-Level BPE 分词器。
+
+    设计参考:
+      - DeepSeek BBPE: 以 UTF-8 byte 为基础单元, 仅 256 个 base token,
+        天然支持任何语言, 不会产生 UNK。
+      - Qwen tiktoken: 15万+ 大词表, 对中文/代码效率高。
+      - LLaMA3 byte-level BPE: 非 SentencePiece, 直接操作字节序列。
+
+    本实现:
+      1. 基础: 使用 HuggingFace tokenizers 库训练 Byte-Level BPE
+      2. 扩词: 支持从新语料增量学习新 merge rule, 自动扩展词表
+      3. 特殊 token: <pad>, <eos>, <bos>, <unk>, <sep> 等
+      4. 序列化: 保存/加载为 JSON 格式, 兼容 transformers
+
+    用法:
+        # 从语料训练新分词器
+        tokenizer = AdaptiveBPETokenizer.train_from_corpus(
+            corpus_files=["en_corpus.txt", "zh_corpus.txt"],
+            vocab_size=65536,
+        )
+
+        # 从已保存的分词器加载, 并用新语料扩词
+        tokenizer = AdaptiveBPETokenizer.load("tokenizer.json")
+        tokenizer.expand_vocab(new_corpus_files=["new_data.txt"], target_vocab_size=70000)
+    """
+
+    # 特殊 token 定义 (固定 ID)
+    SPECIAL_TOKENS = {
+        "<pad>": 0,
+        "<unk>": 1,
+        "<bos>": 2,
+        "<eos>": 3,
+        "<sep>": 4,
+        "<mask>": 5,
+    }
+
+    def __init__(self, backend_tokenizer=None, vocab_size: int = 65536):
+        """
+        Args:
+            backend_tokenizer: HuggingFace tokenizers.Tokenizer 实例
+            vocab_size: 目标词表大小
+        """
+        self._tokenizer = backend_tokenizer
+        self._vocab_size = vocab_size
+
+        # 如果没有后端分词器, 创建一个空的
+        if self._tokenizer is None:
+            self._build_empty_tokenizer()
+
+    def _build_empty_tokenizer(self):
+        """创建空的 Byte-Level BPE 分词器 (仅有 256 byte tokens + special tokens)"""
+        try:
+            from tokenizers import Tokenizer, models, pre_tokenizers, decoders, processors
+        except ImportError:
+            raise ImportError(
+                "需要安装 tokenizers 库: pip install tokenizers\n"
+                "这是 HuggingFace 的高性能 Rust 分词器。"
+            )
+
+        self._tokenizer = Tokenizer(models.BPE())
+        self._tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        self._tokenizer.decoder = decoders.ByteLevel()
+        self._tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+
+        # 添加特殊 token
+        from tokenizers import AddedToken
+        special_list = [
+            AddedToken(tok, special=True) for tok in self.SPECIAL_TOKENS.keys()
+        ]
+        self._tokenizer.add_special_tokens(special_list)
+
+    @classmethod
+    def train_from_corpus(
+        cls,
+        corpus_files: List[str],
+        vocab_size: int = 65536,
+        min_frequency: int = 2,
+        show_progress: bool = True,
+    ) -> "AdaptiveBPETokenizer":
+        """
+        从语料文件训练 Byte-Level BPE 分词器。
+
+        Args:
+            corpus_files: 语料文件路径列表 (每行一句文本)
+            vocab_size: 目标词表大小
+            min_frequency: 最低 merge 频次阈值
+            show_progress: 是否显示训练进度
+
+        Returns:
+            训练好的 AdaptiveBPETokenizer 实例
+        """
+        try:
+            from tokenizers import Tokenizer, models, pre_tokenizers, decoders
+            from tokenizers import processors, trainers
+        except ImportError:
+            raise ImportError("需要安装 tokenizers: pip install tokenizers")
+
+        tokenizer = Tokenizer(models.BPE())
+        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = decoders.ByteLevel()
+        tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+
+        # 使用 ByteLevel 的 256 个字节作为初始字母表
+        trainer = trainers.BpeTrainer(
+            vocab_size=vocab_size,
+            min_frequency=min_frequency,
+            show_progress=show_progress,
+            special_tokens=list(cls.SPECIAL_TOKENS.keys()),
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+        )
+
+        # 验证语料文件存在
+        valid_files = [f for f in corpus_files if os.path.exists(f)]
+        if not valid_files:
+            raise FileNotFoundError(f"没有找到有效的语料文件: {corpus_files}")
+
+        logger.info(f"开始训练 Byte-Level BPE 分词器, 目标词表: {vocab_size}")
+        logger.info(f"使用语料文件: {valid_files}")
+
+        tokenizer.train(valid_files, trainer)
+
+        actual_vocab_size = tokenizer.get_vocab_size()
+        logger.info(f"分词器训练完成, 实际词表大小: {actual_vocab_size}")
+
+        return cls(backend_tokenizer=tokenizer, vocab_size=actual_vocab_size)
+
+    @classmethod
+    def train_from_iterator(
+        cls,
+        text_iterator,
+        vocab_size: int = 65536,
+        min_frequency: int = 2,
+    ) -> "AdaptiveBPETokenizer":
+        """
+        从文本迭代器训练 (适用于流式数据或内存中的数据)。
+
+        Args:
+            text_iterator: 产生文本字符串的迭代器
+            vocab_size: 目标词表大小
+            min_frequency: 最低频次
+
+        Returns:
+            训练好的分词器
+        """
+        try:
+            from tokenizers import Tokenizer, models, pre_tokenizers, decoders
+            from tokenizers import processors, trainers
+        except ImportError:
+            raise ImportError("需要安装 tokenizers: pip install tokenizers")
+
+        tokenizer = Tokenizer(models.BPE())
+        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = decoders.ByteLevel()
+        tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+
+        trainer = trainers.BpeTrainer(
+            vocab_size=vocab_size,
+            min_frequency=min_frequency,
+            special_tokens=list(cls.SPECIAL_TOKENS.keys()),
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+        )
+
+        tokenizer.train_from_iterator(text_iterator, trainer)
+
+        actual_vocab_size = tokenizer.get_vocab_size()
+        logger.info(f"分词器训练完成 (从迭代器), 词表大小: {actual_vocab_size}")
+
+        return cls(backend_tokenizer=tokenizer, vocab_size=actual_vocab_size)
+
+    def expand_vocab(
+        self,
+        new_corpus_files: Optional[List[str]] = None,
+        new_texts: Optional[List[str]] = None,
+        target_vocab_size: Optional[int] = None,
+    ):
+        """
+        自动扩词: 用新语料增量扩展词表。
+
+        原理: 在现有 merge table 基础上, 对新语料中的 token
+        再跑一轮 BPE 训练, 把新发现的高频 merge 追加到词表中。
+
+        Args:
+            new_corpus_files: 新语料文件列表
+            new_texts: 新语料文本列表 (与 new_corpus_files 二选一)
+            target_vocab_size: 扩词后的目标词表大小
+        """
+        try:
+            from tokenizers import trainers, pre_tokenizers
+        except ImportError:
+            raise ImportError("需要安装 tokenizers: pip install tokenizers")
+
+        if target_vocab_size is None:
+            target_vocab_size = self._vocab_size + 10000
+
+        current_size = self.vocab_size
+
+        if target_vocab_size <= current_size:
+            logger.info(
+                f"目标词表 ({target_vocab_size}) <= 当前词表 ({current_size}), 无需扩词"
+            )
+            return
+
+        logger.info(
+            f"开始扩词: {current_size} -> {target_vocab_size} "
+            f"(+{target_vocab_size - current_size} tokens)"
+        )
+
+        trainer = trainers.BpeTrainer(
+            vocab_size=target_vocab_size,
+            min_frequency=2,
+            special_tokens=list(self.SPECIAL_TOKENS.keys()),
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+            continuing_subword_prefix="",
+        )
+
+        if new_corpus_files:
+            valid_files = [f for f in new_corpus_files if os.path.exists(f)]
+            if valid_files:
+                self._tokenizer.train(valid_files, trainer)
+        elif new_texts:
+            self._tokenizer.train_from_iterator(iter(new_texts), trainer)
+        else:
+            logger.warning("未提供新语料, 扩词跳过")
+            return
+
+        new_size = self._tokenizer.get_vocab_size()
+        self._vocab_size = new_size
+        logger.info(f"扩词完成, 新词表大小: {new_size} (+{new_size - current_size})")
+
+    # ---- 编码/解码 API ----
+
+    def encode(self, text: str, return_tensors: Optional[str] = None,
+               max_length: Optional[int] = None, truncation: bool = False) -> Any:
+        """编码文本为 token ID 序列"""
+        encoding = self._tokenizer.encode(text)
+        ids = encoding.ids
+
+        if max_length and truncation and len(ids) > max_length:
+            ids = ids[:max_length]
+
+        if return_tensors == "pt":
+            return torch.tensor([ids], dtype=torch.long)
+        return ids
+
+    def decode(self, ids, skip_special_tokens: bool = True) -> str:
+        """解码 token ID 序列为文本"""
+        if isinstance(ids, torch.Tensor):
+            ids = ids.tolist()
+        if isinstance(ids, list) and ids and isinstance(ids[0], list):
+            ids = ids[0]
+        return self._tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
+
+    def batch_encode(self, texts: List[str], max_length: Optional[int] = None,
+                     truncation: bool = False) -> List[List[int]]:
+        """批量编码"""
+        encodings = self._tokenizer.encode_batch(texts)
+        result = []
+        for enc in encodings:
+            ids = enc.ids
+            if max_length and truncation and len(ids) > max_length:
+                ids = ids[:max_length]
+            result.append(ids)
+        return result
+
+    @property
+    def vocab_size(self) -> int:
+        return self._tokenizer.get_vocab_size()
+
+    @property
+    def pad_token_id(self) -> int:
+        return self.SPECIAL_TOKENS["<pad>"]
+
+    @property
+    def eos_token_id(self) -> int:
+        return self.SPECIAL_TOKENS["<eos>"]
+
+    @property
+    def bos_token_id(self) -> int:
+        return self.SPECIAL_TOKENS["<bos>"]
+
+    def save(self, path: str):
+        """保存分词器到文件"""
+        self._tokenizer.save(path)
+        logger.info(f"分词器已保存到: {path}")
+
+    @classmethod
+    def load(cls, path: str) -> "AdaptiveBPETokenizer":
+        """从文件加载分词器"""
+        try:
+            from tokenizers import Tokenizer
+        except ImportError:
+            raise ImportError("需要安装 tokenizers: pip install tokenizers")
+
+        tokenizer = Tokenizer.from_file(path)
+        vocab_size = tokenizer.get_vocab_size()
+        logger.info(f"分词器已加载: {path}, 词表大小: {vocab_size}")
+        return cls(backend_tokenizer=tokenizer, vocab_size=vocab_size)
+
+
+# ============================================================================
+# 第三部分: 分布式训练引擎
+# ============================================================================
+
+class DistributedConfig:
+    """分布式训练配置"""
+
+    def __init__(
+        self,
+        backend: str = "ddp",         # ddp / deepspeed / fsdp
+        zero_stage: int = 2,           # DeepSpeed ZeRO stage (1/2/3)
+        gradient_accumulation_steps: int = 1,
+        use_gradient_checkpointing: bool = False,
+        use_mixed_precision: bool = True,
+        mixed_precision_dtype: str = "bf16",  # bf16 / fp16
+        find_unused_parameters: bool = False,
+    ):
+        self.backend = backend
+        self.zero_stage = zero_stage
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.use_mixed_precision = use_mixed_precision
+        self.mixed_precision_dtype = mixed_precision_dtype
+        self.find_unused_parameters = find_unused_parameters
+
+
+def setup_distributed(dist_config: DistributedConfig):
+    """
+    初始化分布式训练环境。
+
+    兼容 torchrun (RANK/WORLD_SIZE/LOCAL_RANK) 和 SLURM。
+
+    Returns:
+        (rank, world_size, local_rank, device)
+    """
+    if dist_config.backend == "deepspeed":
+        try:
+            import deepspeed
+            deepspeed.init_distributed()
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        except ImportError:
+            raise ImportError("需要安装 deepspeed: pip install deepspeed")
+    else:
+        # torchrun / SLURM
+        if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+            rank = int(os.environ["RANK"])
+            world_size = int(os.environ["WORLD_SIZE"])
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        elif "SLURM_PROCID" in os.environ:
+            rank = int(os.environ["SLURM_PROCID"])
+            world_size = int(os.environ["SLURM_NTASKS"])
+            local_rank = rank % torch.cuda.device_count()
+        else:
+            # 单机单卡 fallback
+            rank, world_size, local_rank = 0, 1, 0
+
+        if world_size > 1 and not dist.is_initialized():
+            nccl_available = torch.cuda.is_available()
+            dist.init_process_group(
+                backend="nccl" if nccl_available else "gloo",
+                init_method="env://",
+            )
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+    else:
+        device = torch.device("cpu")
+
+    return rank, world_size, local_rank, device
+
+
+def cleanup_distributed():
+    """清理分布式环境"""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def wrap_model_distributed(model, device, dist_config: DistributedConfig,
+                           rank: int = 0, world_size: int = 1):
+    """
+    按分布式策略包装模型。
+
+    Args:
+        model: nn.Module
+        device: torch.device
+        dist_config: 分布式配置
+        rank: 当前进程 rank
+        world_size: 总进程数
+
+    Returns:
+        包装后的模型 (DDP / FSDP / DeepSpeed engine)
+    """
+    model = model.to(device)
+
+    if world_size <= 1:
+        return model
+
+    if dist_config.backend == "ddp":
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        model = DDP(
+            model,
+            device_ids=[device.index] if device.type == "cuda" else None,
+            find_unused_parameters=dist_config.find_unused_parameters,
+        )
+        logger.info(f"[Rank {rank}] 模型已包装为 DDP")
+
+    elif dist_config.backend == "fsdp":
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        from torch.distributed.fsdp import MixedPrecision
+
+        mp_policy = None
+        if dist_config.use_mixed_precision:
+            dtype = torch.bfloat16 if dist_config.mixed_precision_dtype == "bf16" else torch.float16
+            mp_policy = MixedPrecision(
+                param_dtype=dtype,
+                reduce_dtype=dtype,
+                buffer_dtype=dtype,
+            )
+
+        model = FSDP(model, mixed_precision=mp_policy)
+        logger.info(f"[Rank {rank}] 模型已包装为 FSDP")
+
+    elif dist_config.backend == "deepspeed":
+        # DeepSpeed 在训练循环中通过 deepspeed.initialize() 处理
+        logger.info(f"[Rank {rank}] DeepSpeed 模式, 模型将在 initialize() 时包装")
+
+    return model
+
+
+def get_deepspeed_config(dist_config: DistributedConfig, lr: float,
+                         train_batch_size: int, grad_accum: int) -> Dict:
+    """生成 DeepSpeed JSON 配置"""
+    dtype_key = "bf16" if dist_config.mixed_precision_dtype == "bf16" else "fp16"
+
+    config = {
+        "train_batch_size": train_batch_size,
+        "gradient_accumulation_steps": grad_accum,
+        "optimizer": {
+            "type": "AdamW",
+            "params": {
+                "lr": lr,
+                "betas": [0.9, 0.95],
+                "eps": 1e-8,
+                "weight_decay": 0.01,
+            },
+        },
+        "scheduler": {
+            "type": "WarmupDecayLR",
+            "params": {
+                "warmup_min_lr": 0,
+                "warmup_max_lr": lr,
+                "warmup_num_steps": 1000,
+                "total_num_steps": 100000,
+            },
+        },
+        dtype_key: {"enabled": True},
+        "zero_optimization": {
+            "stage": dist_config.zero_stage,
+            "offload_optimizer": {"device": "none"},
+            "offload_param": {"device": "none"},
+            "overlap_comm": True,
+            "contiguous_gradients": True,
+            "reduce_scatter": True,
+        },
+        "gradient_clipping": 1.0,
+        "wall_clock_breakdown": False,
+    }
+
+    return config
+
+
+# ============================================================================
+# 第四部分: 训练循环
+# ============================================================================
+
+class QuickCookTrainer:
+    """
+    速食预训练器。
+
+    整合数据、模型、分词器、分布式策略, 执行预训练循环。
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: AdaptiveBPETokenizer,
+        train_dataset: InterleavedStreamDataset,
+        output_dir: str,
+        dist_config: DistributedConfig,
+        rank: int = 0,
+        world_size: int = 1,
+        device: torch.device = torch.device("cpu"),
+        # 训练超参
+        learning_rate: float = 3e-4,
+        batch_size: int = 8,
+        gradient_clip: float = 1.0,
+        log_interval: int = 10,
+        save_interval: int = 1000,
+        max_steps: Optional[int] = None,
+        epochs: int = 1,
+    ):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.train_dataset = train_dataset
+        self.output_dir = output_dir
+        self.dist_config = dist_config
+        self.rank = rank
+        self.world_size = world_size
+        self.device = device
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.gradient_clip = gradient_clip
+        self.log_interval = log_interval
+        self.save_interval = save_interval
+        self.max_steps = max_steps
+        self.epochs = epochs
+
+        self.global_step = 0
+        self.best_loss = float("inf")
+
+        os.makedirs(output_dir, exist_ok=True)
+
+    def _create_dataloader(self):
+        """创建 DataLoader (流式数据集不需要 Sampler)"""
+        return torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            collate_fn=lambda batch: quickcook_collate_fn(
+                batch, pad_token_id=self.tokenizer.pad_token_id
+            ),
+            num_workers=2,
+            pin_memory=torch.cuda.is_available(),
+            prefetch_factor=4,
+        )
+
+    def _create_optimizer_and_scheduler(self, total_steps: int):
+        """创建优化器和学习率调度器"""
+        # 分组: bias 和 LayerNorm 不做 weight decay
+        no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight"]
+        base_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        param_groups = [
+            {
+                "params": [
+                    p for n, p in base_model.named_parameters()
+                    if not any(nd in n for nd in no_decay) and p.requires_grad
+                ],
+                "weight_decay": 0.01,
+            },
+            {
+                "params": [
+                    p for n, p in base_model.named_parameters()
+                    if any(nd in n for nd in no_decay) and p.requires_grad
+                ],
+                "weight_decay": 0.0,
+            },
+        ]
+
+        optimizer = torch.optim.AdamW(
+            param_groups, lr=self.learning_rate, betas=(0.9, 0.95), eps=1e-8
+        )
+
+        # Cosine schedule with warmup (10% warmup)
+        warmup_steps = max(int(total_steps * 0.1), 100)
+        try:
+            from transformers import get_cosine_schedule_with_warmup
+            scheduler = get_cosine_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=warmup_steps,
+                num_training_steps=total_steps,
+            )
+        except ImportError:
+            # 没有 transformers 时用 PyTorch 内置的线性 scheduler
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=self.learning_rate,
+                total_steps=total_steps,
+                pct_start=0.1,
+            )
+
+        return optimizer, scheduler
+
+    def _save_checkpoint(self, optimizer, scheduler, metrics: Dict):
+        """保存检查点 (仅 rank 0)"""
+        if self.rank != 0:
+            return
+
+        base_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        ckpt = {
+            "global_step": self.global_step,
+            "model_state_dict": base_model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "metrics": metrics,
+            "tokenizer_vocab_size": self.tokenizer.vocab_size,
+        }
+
+        ckpt_path = os.path.join(
+            self.output_dir, f"checkpoint_step_{self.global_step}.pt"
+        )
+        torch.save(ckpt, ckpt_path)
+        logger.info(f"检查点已保存: {ckpt_path}")
+
+        # 同时保存分词器
+        tok_path = os.path.join(self.output_dir, "tokenizer.json")
+        self.tokenizer.save(tok_path)
+
+    def train(self):
+        """主训练循环"""
+        dataloader = self._create_dataloader()
+
+        # 估算总步数 (流式数据集无法精确知道总量, 按 max_steps 或 epoch 近似)
+        if self.max_steps:
+            total_steps = self.max_steps
+        else:
+            # 粗估: 每 epoch 约 100k 步 (可调)
+            total_steps = 100000 * self.epochs
+
+        # DeepSpeed 特殊处理
+        if self.dist_config.backend == "deepspeed":
+            return self._train_deepspeed(dataloader, total_steps)
+
+        # 标准训练路径 (DDP / FSDP / 单机)
+        optimizer, scheduler = self._create_optimizer_and_scheduler(total_steps)
+
+        # 混合精度
+        scaler = None
+        autocast_ctx = None
+        if self.dist_config.use_mixed_precision and torch.cuda.is_available():
+            dtype = (
+                torch.bfloat16
+                if self.dist_config.mixed_precision_dtype == "bf16"
+                else torch.float16
+            )
+            autocast_ctx = torch.amp.autocast("cuda", dtype=dtype)
+            if dtype == torch.float16:
+                scaler = torch.amp.GradScaler("cuda")
+
+        grad_accum = self.dist_config.gradient_accumulation_steps
+        running_loss = 0.0
+        step_in_accum = 0
+
+        logger.info(f"[Rank {self.rank}] 开始训练, 总步数估计: {total_steps}")
+        logger.info(
+            f"  batch_size={self.batch_size}, grad_accum={grad_accum}, "
+            f"lr={self.learning_rate}, mixed_precision={self.dist_config.use_mixed_precision}"
+        )
+
+        for epoch in range(self.epochs):
+            if self.rank == 0:
+                logger.info(f"===== Epoch {epoch + 1}/{self.epochs} =====")
+
+            for batch in dataloader:
+                # 移到设备
+                input_ids = batch["input_ids"].to(self.device)
+                labels = batch["labels"].to(self.device)
+
+                # 前向
+                if autocast_ctx is not None:
+                    with autocast_ctx:
+                        outputs = self._forward(input_ids, labels)
+                        loss = outputs["loss"] / grad_accum
+                else:
+                    outputs = self._forward(input_ids, labels)
+                    loss = outputs["loss"] / grad_accum
+
+                # 反向
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+
+                running_loss += loss.item() * grad_accum
+                step_in_accum += 1
+
+                # 累积够了再更新
+                if step_in_accum >= grad_accum:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.gradient_clip
+                        )
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.gradient_clip
+                        )
+                        optimizer.step()
+
+                    scheduler.step()
+                    optimizer.zero_grad()
+
+                    self.global_step += 1
+                    step_in_accum = 0
+
+                    # 日志
+                    if self.global_step % self.log_interval == 0 and self.rank == 0:
+                        avg_loss = running_loss / self.log_interval
+                        lr = scheduler.get_last_lr()[0]
+                        logger.info(
+                            f"  Step {self.global_step} | "
+                            f"Loss: {avg_loss:.4f} | LR: {lr:.2e}"
+                        )
+                        running_loss = 0.0
+
+                    # 保存
+                    if self.global_step % self.save_interval == 0:
+                        self._save_checkpoint(
+                            optimizer, scheduler,
+                            {"loss": running_loss, "step": self.global_step}
+                        )
+                        if self.world_size > 1:
+                            dist.barrier()
+
+                    # 到达最大步数
+                    if self.max_steps and self.global_step >= self.max_steps:
+                        break
+
+            if self.max_steps and self.global_step >= self.max_steps:
+                break
+
+        # 最终保存
+        self._save_checkpoint(
+            optimizer, scheduler,
+            {"loss": running_loss, "step": self.global_step, "final": True}
+        )
+
+        if self.rank == 0:
+            logger.info(f"训练完成! 总步数: {self.global_step}")
+
+    def _train_deepspeed(self, dataloader, total_steps: int):
+        """DeepSpeed 训练路径"""
+        try:
+            import deepspeed
+        except ImportError:
+            raise ImportError("DeepSpeed 后端需要安装: pip install deepspeed")
+
+        ds_config = get_deepspeed_config(
+            self.dist_config,
+            lr=self.learning_rate,
+            train_batch_size=self.batch_size * self.world_size,
+            grad_accum=self.dist_config.gradient_accumulation_steps,
+        )
+
+        # 更新 scheduler 的总步数
+        ds_config["scheduler"]["params"]["total_num_steps"] = total_steps
+
+        model_engine, optimizer, _, scheduler = deepspeed.initialize(
+            model=self.model,
+            config=ds_config,
+        )
+
+        running_loss = 0.0
+
+        for epoch in range(self.epochs):
+            if self.rank == 0:
+                logger.info(f"===== Epoch {epoch + 1}/{self.epochs} (DeepSpeed) =====")
+
+            for batch in dataloader:
+                input_ids = batch["input_ids"].to(self.device)
+                labels = batch["labels"].to(self.device)
+
+                outputs = self._forward_engine(model_engine, input_ids, labels)
+                loss = outputs["loss"]
+
+                model_engine.backward(loss)
+                model_engine.step()
+
+                self.global_step += 1
+                running_loss += loss.item()
+
+                if self.global_step % self.log_interval == 0 and self.rank == 0:
+                    avg_loss = running_loss / self.log_interval
+                    logger.info(f"  Step {self.global_step} | Loss: {avg_loss:.4f}")
+                    running_loss = 0.0
+
+                if self.global_step % self.save_interval == 0:
+                    if self.rank == 0:
+                        ckpt_dir = os.path.join(
+                            self.output_dir, f"ds_checkpoint_{self.global_step}"
+                        )
+                        model_engine.save_checkpoint(ckpt_dir)
+                        self.tokenizer.save(
+                            os.path.join(self.output_dir, "tokenizer.json")
+                        )
+
+                if self.max_steps and self.global_step >= self.max_steps:
+                    break
+
+            if self.max_steps and self.global_step >= self.max_steps:
+                break
+
+        if self.rank == 0:
+            logger.info(f"DeepSpeed 训练完成! 总步数: {self.global_step}")
+
+    def _forward(self, input_ids, labels):
+        """标准前向传播 (适配 APTModel 接口)"""
+        base_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        # APTModel 的 forward 签名: (src_ids, tgt_ids) -> dict with 'loss'
+        # 对于自回归预训练: src = input_ids, tgt = labels
+        try:
+            outputs = base_model(input_ids, labels)
+        except TypeError:
+            # 兼容接受 (input_ids, labels=labels) 的模型
+            outputs = base_model(input_ids, labels=labels)
+
+        if isinstance(outputs, dict):
+            return outputs
+        # 如果返回的不是 dict, 假设是 loss tensor
+        return {"loss": outputs}
+
+    def _forward_engine(self, engine, input_ids, labels):
+        """DeepSpeed engine 前向传播"""
+        try:
+            outputs = engine(input_ids, labels)
+        except TypeError:
+            outputs = engine(input_ids, labels=labels)
+
+        if isinstance(outputs, dict):
+            return outputs
+        return {"loss": outputs}
+
+
+# ============================================================================
+# 第五部分: 分词器预训练采样器
+# ============================================================================
+
+def collect_tokenizer_corpus(
+    hlbd_path: Optional[str] = None,
+    sample_size: int = 100000,
+    output_path: Optional[str] = None,
+) -> List[str]:
+    """
+    从各数据源收集用于训练分词器的语料样本。
+
+    分词器训练不需要全量数据, 只需要有代表性的子集。
+    这里从 C4/mC4/FineWeb 各采 sample_size/3 条,
+    加上 HLBD 全量, 作为分词器的训练语料。
+
+    Args:
+        hlbd_path: HLBD 文件路径
+        sample_size: 总采样数
+        output_path: (可选) 保存采样结果到文件
+
+    Returns:
+        采样文本列表
+    """
+    texts = []
+    per_source = sample_size // 3
+
+    # C4 en
+    try:
+        from datasets import load_dataset
+        logger.info(f"从 C4 (en) 采样 {per_source} 条...")
+        ds = load_dataset("allenai/c4", "en", streaming=True, split="train",
+                          trust_remote_code=True)
+        count = 0
+        for example in ds:
+            if "text" in example and len(example["text"].strip()) > 50:
+                texts.append(example["text"][:2000])  # 截断长文档
+                count += 1
+                if count >= per_source:
+                    break
+        logger.info(f"  C4 采样完成: {count} 条")
+    except Exception as e:
+        logger.warning(f"C4 采样失败: {e}")
+
+    # mC4 zh
+    try:
+        from datasets import load_dataset
+        logger.info(f"从 mC4 (zh) 采样 {per_source} 条...")
+        ds = load_dataset("mc4", "zh", streaming=True, split="train",
+                          trust_remote_code=True)
+        count = 0
+        for example in ds:
+            if "text" in example and len(example["text"].strip()) > 50:
+                texts.append(example["text"][:2000])
+                count += 1
+                if count >= per_source:
+                    break
+        logger.info(f"  mC4 (zh) 采样完成: {count} 条")
+    except Exception as e:
+        logger.warning(f"mC4 采样失败: {e}")
+
+    # FineWeb
+    try:
+        from datasets import load_dataset
+        logger.info(f"从 FineWeb 采样 {per_source} 条...")
+        ds = load_dataset("HuggingFaceFW/fineweb", streaming=True, split="train",
+                          trust_remote_code=True)
+        count = 0
+        for example in ds:
+            if "text" in example and len(example["text"].strip()) > 50:
+                texts.append(example["text"][:2000])
+                count += 1
+                if count >= per_source:
+                    break
+        logger.info(f"  FineWeb 采样完成: {count} 条")
+    except Exception as e:
+        logger.warning(f"FineWeb 采样失败: {e}")
+
+    # HLBD (全量)
+    if hlbd_path and os.path.exists(hlbd_path):
+        try:
+            from apt.core.data.hlbd.hlbd_adapter import HLBDDataProcessor
+            processor = HLBDDataProcessor(data_path=hlbd_path)
+            processor.process_data(include_multilingual=True, include_separate_levels=True)
+            hlbd_texts = processor.get_training_texts()
+            texts.extend(hlbd_texts)
+            logger.info(f"  HLBD 加载完成: {len(hlbd_texts)} 条")
+        except Exception as e:
+            logger.warning(f"HLBD 加载失败: {e}")
+
+    logger.info(f"分词器语料总计: {len(texts)} 条")
+
+    # 可选: 保存到文件
+    if output_path:
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            for text in texts:
+                # 一行一条, 去掉换行符
+                f.write(text.replace("\n", " ").strip() + "\n")
+        logger.info(f"分词器语料已保存到: {output_path}")
+
+    return texts
+
+
+# ============================================================================
+# 第六部分: CLI 入口
+# ============================================================================
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="APT 速食预训练 (QuickCook): C4 + mC4 + FineWeb + HLBD 混合预训练",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # --- 输出 ---
+    parser.add_argument("--output-dir", type=str, required=True, help="输出目录")
+
+    # --- 数据 ---
+    parser.add_argument("--hlbd-path", type=str, default=None,
+                        help="HLBD 数据集路径 (可选)")
+    parser.add_argument("--no-c4", action="store_true", help="不使用 C4 (en)")
+    parser.add_argument("--no-mc4", action="store_true", help="不使用 mC4 (zh)")
+    parser.add_argument("--no-fineweb", action="store_true", help="不使用 FineWeb")
+    parser.add_argument("--weight-c4", type=float, default=0.40,
+                        help="C4 (en) 采样权重 (默认 0.40)")
+    parser.add_argument("--weight-mc4", type=float, default=0.25,
+                        help="mC4 (zh) 采样权重 (默认 0.25)")
+    parser.add_argument("--weight-fineweb", type=float, default=0.25,
+                        help="FineWeb 采样权重 (默认 0.25)")
+    parser.add_argument("--weight-hlbd", type=float, default=0.10,
+                        help="HLBD 采样权重 (默认 0.10)")
+
+    # --- 分词器 ---
+    parser.add_argument("--tokenizer-path", type=str, default=None,
+                        help="已有分词器路径 (JSON). 不指定则从语料训练新的。")
+    parser.add_argument("--vocab-size", type=int, default=65536,
+                        help="分词器词表大小 (默认 65536)")
+    parser.add_argument("--tokenizer-sample-size", type=int, default=100000,
+                        help="分词器训练时采样文档数 (默认 100000)")
+
+    # --- 模型 ---
+    parser.add_argument("--d-model", type=int, default=768, help="模型维度")
+    parser.add_argument("--num-heads", type=int, default=12, help="注意力头数")
+    parser.add_argument("--num-layers", type=int, default=12, help="层数")
+    parser.add_argument("--max-seq-len", type=int, default=2048, help="最大序列长度")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="从检查点恢复 (检查点 .pt 文件路径)")
+
+    # --- 训练超参 ---
+    parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
+    parser.add_argument("--max-steps", type=int, default=None, help="最大训练步数")
+    parser.add_argument("--batch-size", type=int, default=8, help="每 GPU 批次大小")
+    parser.add_argument("--lr", type=float, default=3e-4, help="学习率")
+    parser.add_argument("--gradient-clip", type=float, default=1.0, help="梯度裁剪")
+    parser.add_argument("--gradient-accumulation", type=int, default=1,
+                        help="梯度累积步数")
+    parser.add_argument("--log-interval", type=int, default=10, help="日志间隔 (步)")
+    parser.add_argument("--save-interval", type=int, default=1000,
+                        help="保存间隔 (步)")
+
+    # --- 分布式 ---
+    parser.add_argument("--distributed-backend", type=str, default="ddp",
+                        choices=["ddp", "deepspeed", "fsdp"],
+                        help="分布式后端 (默认 ddp)")
+    parser.add_argument("--zero-stage", type=int, default=2, choices=[1, 2, 3],
+                        help="DeepSpeed ZeRO 阶段 (默认 2)")
+    parser.add_argument("--no-distributed", action="store_true",
+                        help="禁用分布式 (单机调试)")
+    parser.add_argument("--no-mixed-precision", action="store_true",
+                        help="禁用混合精度")
+    parser.add_argument("--mixed-precision-dtype", type=str, default="bf16",
+                        choices=["bf16", "fp16"], help="混合精度类型")
+    parser.add_argument("--gradient-checkpointing", action="store_true",
+                        help="启用梯度检查点 (省显存)")
+
+    # --- 杂项 ---
+    parser.add_argument("--seed", type=int, default=42, help="随机种子")
+    parser.add_argument("--verbose", action="store_true", help="详细日志")
+
+    # DeepSpeed 会注入自己的 argparse 参数
+    parser.add_argument("--local_rank", type=int, default=-1,
+                        help="(DeepSpeed 自动注入)")
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # --- 日志 ---
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # --- 分布式初始化 ---
+    dist_config = DistributedConfig(
+        backend=args.distributed_backend if not args.no_distributed else "ddp",
+        zero_stage=args.zero_stage,
+        gradient_accumulation_steps=args.gradient_accumulation,
+        use_gradient_checkpointing=args.gradient_checkpointing,
+        use_mixed_precision=not args.no_mixed_precision,
+        mixed_precision_dtype=args.mixed_precision_dtype,
+    )
+
+    if args.no_distributed:
+        rank, world_size, local_rank = 0, 1, 0
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        rank, world_size, local_rank, device = setup_distributed(dist_config)
+
+    if rank == 0:
+        logger.info("=" * 60)
+        logger.info("APT 速食预训练 (QuickCook)")
+        logger.info("=" * 60)
+        logger.info(f"分布式: backend={dist_config.backend}, "
+                     f"world_size={world_size}, rank={rank}")
+        logger.info(f"设备: {device}")
+        logger.info(f"输出目录: {args.output_dir}")
+
+    # --- 随机种子 ---
+    torch.manual_seed(args.seed + rank)
+
+    # --- 分词器 ---
+    if args.tokenizer_path and os.path.exists(args.tokenizer_path):
+        if rank == 0:
+            logger.info(f"加载已有分词器: {args.tokenizer_path}")
+        tokenizer = AdaptiveBPETokenizer.load(args.tokenizer_path)
+    else:
+        if rank == 0:
+            logger.info("未找到分词器, 从混合语料训练新分词器...")
+            corpus_path = os.path.join(args.output_dir, "tokenizer_corpus.txt")
+            texts = collect_tokenizer_corpus(
+                hlbd_path=args.hlbd_path,
+                sample_size=args.tokenizer_sample_size,
+                output_path=corpus_path,
+            )
+
+            tokenizer = AdaptiveBPETokenizer.train_from_iterator(
+                iter(texts),
+                vocab_size=args.vocab_size,
+            )
+            tokenizer.save(os.path.join(args.output_dir, "tokenizer.json"))
+            logger.info(f"分词器训练完成, 词表: {tokenizer.vocab_size}")
+        else:
+            # 非 rank 0 进程等待分词器就绪
+            if world_size > 1:
+                dist.barrier()
+
+        # 所有进程加载分词器
+        tok_path = os.path.join(args.output_dir, "tokenizer.json")
+        if rank == 0 and world_size > 1:
+            dist.barrier()  # rank 0 写完后放行
+
+        if rank != 0 or (rank == 0 and args.tokenizer_path is None):
+            if os.path.exists(tok_path):
+                tokenizer = AdaptiveBPETokenizer.load(tok_path)
+            # 如果上面已经训练好了 tokenizer, rank 0 不需要再加载
+
+    if rank == 0:
+        logger.info(f"分词器词表大小: {tokenizer.vocab_size}")
+
+    # --- 模型 ---
+    from apt.core.config.apt_config import APTConfig
+    from apt.model.architectures.apt_model import APTModel
+
+    config = APTConfig(
+        vocab_size=tokenizer.vocab_size,
+        d_model=args.d_model,
+        num_heads=args.num_heads,
+        num_encoder_layers=args.num_layers,
+        num_decoder_layers=args.num_layers,
+        max_seq_len=args.max_seq_len,
+    )
+
+    model = APTModel(config)
+
+    if args.resume:
+        if rank == 0:
+            logger.info(f"从检查点恢复: {args.resume}")
+        ckpt = torch.load(args.resume, map_location="cpu")
+        model.load_state_dict(ckpt["model_state_dict"])
+
+    total_params = sum(p.numel() for p in model.parameters())
+    if rank == 0:
+        logger.info(f"模型参数量: {total_params:,}")
+
+    # 梯度检查点
+    if dist_config.use_gradient_checkpointing:
+        if hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+        elif rank == 0:
+            logger.warning("模型不支持 gradient_checkpointing_enable()")
+
+    # 分布式包装
+    model = wrap_model_distributed(model, device, dist_config, rank, world_size)
+
+    # --- 数据集 ---
+    weights = {
+        "c4_en": args.weight_c4,
+        "mc4_zh": args.weight_mc4,
+        "fineweb": args.weight_fineweb,
+        "hlbd": args.weight_hlbd,
+    }
+
+    train_dataset = InterleavedStreamDataset(
+        tokenizer=tokenizer,
+        max_seq_len=args.max_seq_len,
+        weights=weights,
+        hlbd_path=args.hlbd_path,
+        use_c4=not args.no_c4,
+        use_mc4_zh=not args.no_mc4,
+        use_fineweb=not args.no_fineweb,
+        seed=args.seed,
+        rank=rank,
+        world_size=world_size,
+    )
+
+    # --- 训练 ---
+    trainer = QuickCookTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        output_dir=args.output_dir,
+        dist_config=dist_config,
+        rank=rank,
+        world_size=world_size,
+        device=device,
+        learning_rate=args.lr,
+        batch_size=args.batch_size,
+        gradient_clip=args.gradient_clip,
+        log_interval=args.log_interval,
+        save_interval=args.save_interval,
+        max_steps=args.max_steps,
+        epochs=args.epochs,
+    )
+
+    try:
+        trainer.train()
+    except KeyboardInterrupt:
+        if rank == 0:
+            logger.warning("训练被用户中断")
+    finally:
+        if not args.no_distributed:
+            cleanup_distributed()
+
+
+if __name__ == "__main__":
+    main()
