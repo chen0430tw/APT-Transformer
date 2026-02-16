@@ -198,6 +198,3 @@ help_output.txt
 
 # Conversation logs
 ai_conversations/
-
-# VA100 experiments
-va100/
