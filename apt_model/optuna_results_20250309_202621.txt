@@ -1,0 +1,632 @@
+APT模型超参数优化结果
+============================================================
+优化完成时间: 2025-03-09 20:26:21
+完成试验数: 50
+最佳质量分数: 73.87/100
+
+最佳超参数:
+  epsilon: 0.072882
+  alpha: 0.001950
+  beta: 0.003254
+  base_lr: 0.000048
+  dropout: 0.167017
+  attention_dropout: 0.100297
+  sr_ratio: 4
+  init_tau: 1.729068
+  weight_decay: 0.019530
+  gradient_clip: 0.910055
+
+参数重要性:
+  attention_dropout: 0.4165
+  weight_decay: 0.1566
+  epsilon: 0.0839
+  sr_ratio: 0.0748
+  init_tau: 0.0601
+  alpha: 0.0573
+  dropout: 0.0545
+  base_lr: 0.0343
+  gradient_clip: 0.0341
+  beta: 0.0278
+
+所有试验结果:
+------------------------------------------------------------
+Trial 34, 得分: 73.87
+  epsilon: 0.072882
+  alpha: 0.001950
+  beta: 0.003254
+  base_lr: 0.000048
+  dropout: 0.167017
+  attention_dropout: 0.100297
+  sr_ratio: 4
+  init_tau: 1.729068
+  weight_decay: 0.019530
+  gradient_clip: 0.910055
+----------------------------------------
+Trial 24, 得分: 73.07
+  epsilon: 0.068585
+  alpha: 0.000970
+  beta: 0.003555
+  base_lr: 0.000039
+  dropout: 0.120118
+  attention_dropout: 0.114253
+  sr_ratio: 5
+  init_tau: 1.348337
+  weight_decay: 0.018916
+  gradient_clip: 0.739781
+----------------------------------------
+Trial 25, 得分: 73.07
+  epsilon: 0.067927
+  alpha: 0.001076
+  beta: 0.003559
+  base_lr: 0.000040
+  dropout: 0.142931
+  attention_dropout: 0.117679
+  sr_ratio: 5
+  init_tau: 1.351369
+  weight_decay: 0.019109
+  gradient_clip: 0.747378
+----------------------------------------
+Trial 26, 得分: 73.07
+  epsilon: 0.065514
+  alpha: 0.001255
+  beta: 0.003276
+  base_lr: 0.000047
+  dropout: 0.141430
+  attention_dropout: 0.142334
+  sr_ratio: 5
+  init_tau: 1.484368
+  weight_decay: 0.019822
+  gradient_clip: 0.760458
+----------------------------------------
+Trial 27, 得分: 73.07
+  epsilon: 0.065888
+  alpha: 0.001561
+  beta: 0.003547
+  base_lr: 0.000049
+  dropout: 0.134251
+  attention_dropout: 0.117733
+  sr_ratio: 5
+  init_tau: 1.618743
+  weight_decay: 0.019430
+  gradient_clip: 0.766689
+----------------------------------------
+Trial 28, 得分: 73.07
+  epsilon: 0.067444
+  alpha: 0.001060
+  beta: 0.003205
+  base_lr: 0.000041
+  dropout: 0.159831
+  attention_dropout: 0.109422
+  sr_ratio: 5
+  init_tau: 1.350078
+  weight_decay: 0.022806
+  gradient_clip: 0.739136
+----------------------------------------
+Trial 29, 得分: 73.07
+  epsilon: 0.073368
+  alpha: 0.001708
+  beta: 0.004350
+  base_lr: 0.000048
+  dropout: 0.127438
+  attention_dropout: 0.125859
+  sr_ratio: 5
+  init_tau: 1.465744
+  weight_decay: 0.020320
+  gradient_clip: 0.693855
+----------------------------------------
+Trial 30, 得分: 73.07
+  epsilon: 0.060702
+  alpha: 0.001280
+  beta: 0.003129
+  base_lr: 0.000045
+  dropout: 0.150446
+  attention_dropout: 0.165566
+  sr_ratio: 4
+  init_tau: 1.610093
+  weight_decay: 0.021557
+  gradient_clip: 0.865455
+----------------------------------------
+Trial 31, 得分: 73.07
+  epsilon: 0.066917
+  alpha: 0.001466
+  beta: 0.003598
+  base_lr: 0.000050
+  dropout: 0.136527
+  attention_dropout: 0.119357
+  sr_ratio: 5
+  init_tau: 1.727609
+  weight_decay: 0.018865
+  gradient_clip: 0.771162
+----------------------------------------
+Trial 32, 得分: 73.07
+  epsilon: 0.062398
+  alpha: 0.001712
+  beta: 0.004774
+  base_lr: 0.000041
+  dropout: 0.130778
+  attention_dropout: 0.125674
+  sr_ratio: 5
+  init_tau: 1.626856
+  weight_decay: 0.018009
+  gradient_clip: 0.781275
+----------------------------------------
+Trial 35, 得分: 73.07
+  epsilon: 0.073939
+  alpha: 0.001017
+  beta: 0.002579
+  base_lr: 0.000044
+  dropout: 0.173724
+  attention_dropout: 0.103934
+  sr_ratio: 4
+  init_tau: 1.766000
+  weight_decay: 0.023023
+  gradient_clip: 1.012372
+----------------------------------------
+Trial 37, 得分: 73.07
+  epsilon: 0.087869
+  alpha: 0.001810
+  beta: 0.007460
+  base_lr: 0.000040
+  dropout: 0.146489
+  attention_dropout: 0.112525
+  sr_ratio: 4
+  init_tau: 1.375902
+  weight_decay: 0.018545
+  gradient_clip: 1.004867
+----------------------------------------
+Trial 41, 得分: 73.07
+  epsilon: 0.062644
+  alpha: 0.001535
+  beta: 0.003542
+  base_lr: 0.000048
+  dropout: 0.137303
+  attention_dropout: 0.114365
+  sr_ratio: 5
+  init_tau: 1.600061
+  weight_decay: 0.019280
+  gradient_clip: 0.710919
+----------------------------------------
+Trial 42, 得分: 73.07
+  epsilon: 0.069671
+  alpha: 0.001824
+  beta: 0.003383
+  base_lr: 0.000051
+  dropout: 0.131355
+  attention_dropout: 0.130696
+  sr_ratio: 5
+  init_tau: 1.575843
+  weight_decay: 0.017610
+  gradient_clip: 0.817989
+----------------------------------------
+Trial 44, 得分: 73.07
+  epsilon: 0.065404
+  alpha: 0.001693
+  beta: 0.002914
+  base_lr: 0.000037
+  dropout: 0.142731
+  attention_dropout: 0.106992
+  sr_ratio: 5
+  init_tau: 1.720714
+  weight_decay: 0.020873
+  gradient_clip: 0.893741
+----------------------------------------
+Trial 45, 得分: 73.07
+  epsilon: 0.070697
+  alpha: 0.001038
+  beta: 0.005143
+  base_lr: 0.000042
+  dropout: 0.124513
+  attention_dropout: 0.182831
+  sr_ratio: 4
+  init_tau: 1.745750
+  weight_decay: 0.021864
+  gradient_clip: 0.694095
+----------------------------------------
+Trial 43, 得分: 72.80
+  epsilon: 0.059626
+  alpha: 0.001356
+  beta: 0.003960
+  base_lr: 0.000046
+  dropout: 0.113783
+  attention_dropout: 0.120188
+  sr_ratio: 4
+  init_tau: 1.671649
+  weight_decay: 0.019689
+  gradient_clip: 0.748786
+----------------------------------------
+Trial 33, 得分: 72.27
+  epsilon: 0.051868
+  alpha: 0.001400
+  beta: 0.004171
+  base_lr: 0.000053
+  dropout: 0.118051
+  attention_dropout: 0.141775
+  sr_ratio: 5
+  init_tau: 1.466936
+  weight_decay: 0.020469
+  gradient_clip: 0.732788
+----------------------------------------
+Trial 47, 得分: 72.27
+  epsilon: 0.053791
+  alpha: 0.001994
+  beta: 0.002606
+  base_lr: 0.000053
+  dropout: 0.166013
+  attention_dropout: 0.125970
+  sr_ratio: 4
+  init_tau: 1.379913
+  weight_decay: 0.023720
+  gradient_clip: 0.831664
+----------------------------------------
+Trial 48, 得分: 72.27
+  epsilon: 0.058478
+  alpha: 0.001226
+  beta: 0.003833
+  base_lr: 0.000057
+  dropout: 0.145076
+  attention_dropout: 0.108722
+  sr_ratio: 5
+  init_tau: 1.650082
+  weight_decay: 0.019734
+  gradient_clip: 0.626857
+----------------------------------------
+Trial 8, 得分: 72.00
+  epsilon: 0.129055
+  alpha: 0.001186
+  beta: 0.001990
+  base_lr: 0.000022
+  dropout: 0.146647
+  attention_dropout: 0.148777
+  sr_ratio: 7
+  init_tau: 1.510046
+  weight_decay: 0.027744
+  gradient_clip: 0.830550
+----------------------------------------
+Trial 38, 得分: 72.00
+  epsilon: 0.072272
+  alpha: 0.000716
+  beta: 0.006173
+  base_lr: 0.000033
+  dropout: 0.171103
+  attention_dropout: 0.122145
+  sr_ratio: 5
+  init_tau: 1.698304
+  weight_decay: 0.020083
+  gradient_clip: 0.667077
+----------------------------------------
+Trial 46, 得分: 71.47
+  epsilon: 0.076703
+  alpha: 0.001586
+  beta: 0.004394
+  base_lr: 0.000066
+  dropout: 0.134633
+  attention_dropout: 0.117131
+  sr_ratio: 5
+  init_tau: 1.513872
+  weight_decay: 0.015455
+  gradient_clip: 0.971172
+----------------------------------------
+Trial 49, 得分: 71.47
+  epsilon: 0.064045
+  alpha: 0.001083
+  beta: 0.006029
+  base_lr: 0.000035
+  dropout: 0.151915
+  attention_dropout: 0.160691
+  sr_ratio: 6
+  init_tau: 1.235653
+  weight_decay: 0.021133
+  gradient_clip: 0.855620
+----------------------------------------
+Trial 22, 得分: 71.31
+  epsilon: 0.088465
+  alpha: 0.000883
+  beta: 0.003680
+  base_lr: 0.000038
+  dropout: 0.113293
+  attention_dropout: 0.116817
+  sr_ratio: 6
+  init_tau: 1.331189
+  weight_decay: 0.014829
+  gradient_clip: 0.568238
+----------------------------------------
+Trial 23, 得分: 71.31
+  epsilon: 0.067076
+  alpha: 0.000948
+  beta: 0.003937
+  base_lr: 0.000036
+  dropout: 0.119392
+  attention_dropout: 0.112145
+  sr_ratio: 6
+  init_tau: 1.335373
+  weight_decay: 0.017026
+  gradient_clip: 0.591000
+----------------------------------------
+Trial 15, 得分: 71.20
+  epsilon: 0.132194
+  alpha: 0.000800
+  beta: 0.001342
+  base_lr: 0.000026
+  dropout: 0.237659
+  attention_dropout: 0.154522
+  sr_ratio: 6
+  init_tau: 1.283874
+  weight_decay: 0.016560
+  gradient_clip: 0.515782
+----------------------------------------
+Trial 19, 得分: 71.20
+  epsilon: 0.101436
+  alpha: 0.000823
+  beta: 0.001358
+  base_lr: 0.000029
+  dropout: 0.102253
+  attention_dropout: 0.136012
+  sr_ratio: 7
+  init_tau: 1.182476
+  weight_decay: 0.014004
+  gradient_clip: 0.500455
+----------------------------------------
+Trial 20, 得分: 71.20
+  epsilon: 0.131270
+  alpha: 0.001144
+  beta: 0.001289
+  base_lr: 0.000025
+  dropout: 0.183950
+  attention_dropout: 0.102833
+  sr_ratio: 6
+  init_tau: 1.467625
+  weight_decay: 0.024696
+  gradient_clip: 0.639860
+----------------------------------------
+Trial 21, 得分: 71.20
+  epsilon: 0.105790
+  alpha: 0.000776
+  beta: 0.001398
+  base_lr: 0.000030
+  dropout: 0.102961
+  attention_dropout: 0.139226
+  sr_ratio: 7
+  init_tau: 1.146996
+  weight_decay: 0.013287
+  gradient_clip: 0.506864
+----------------------------------------
+Trial 39, 得分: 70.67
+  epsilon: 0.055236
+  alpha: 0.001210
+  beta: 0.003200
+  base_lr: 0.000064
+  dropout: 0.194120
+  attention_dropout: 0.144355
+  sr_ratio: 4
+  init_tau: 1.406575
+  weight_decay: 0.018051
+  gradient_clip: 0.801463
+----------------------------------------
+Trial 16, 得分: 70.40
+  epsilon: 0.133791
+  alpha: 0.000857
+  beta: 0.001480
+  base_lr: 0.000026
+  dropout: 0.230594
+  attention_dropout: 0.153392
+  sr_ratio: 6
+  init_tau: 1.268249
+  weight_decay: 0.013840
+  gradient_clip: 1.069796
+----------------------------------------
+Trial 17, 得分: 70.40
+  epsilon: 0.132812
+  alpha: 0.001132
+  beta: 0.002331
+  base_lr: 0.000027
+  dropout: 0.156549
+  attention_dropout: 0.134038
+  sr_ratio: 6
+  init_tau: 1.524835
+  weight_decay: 0.026375
+  gradient_clip: 0.774004
+----------------------------------------
+Trial 36, 得分: 69.87
+  epsilon: 0.079409
+  alpha: 0.001963
+  beta: 0.005421
+  base_lr: 0.000060
+  dropout: 0.164508
+  attention_dropout: 0.129635
+  sr_ratio: 4
+  init_tau: 1.436959
+  weight_decay: 0.021567
+  gradient_clip: 0.901028
+----------------------------------------
+Trial 7, 得分: 69.54
+  epsilon: 0.116795
+  alpha: 0.000659
+  beta: 0.001012
+  base_lr: 0.000062
+  dropout: 0.206029
+  attention_dropout: 0.209351
+  sr_ratio: 7
+  init_tau: 1.059236
+  weight_decay: 0.017169
+  gradient_clip: 0.581108
+----------------------------------------
+Trial 40, 得分: 69.11
+  epsilon: 0.080419
+  alpha: 0.000929
+  beta: 0.002274
+  base_lr: 0.000079
+  dropout: 0.152804
+  attention_dropout: 0.100704
+  sr_ratio: 5
+  init_tau: 1.671746
+  weight_decay: 0.022665
+  gradient_clip: 0.940575
+----------------------------------------
+Trial 14, 得分: 55.88
+  epsilon: 0.103904
+  alpha: 0.001110
+  beta: 0.002654
+  base_lr: 0.000035
+  dropout: 0.205739
+  attention_dropout: 0.246779
+  sr_ratio: 7
+  init_tau: 1.544275
+  weight_decay: 0.015663
+  gradient_clip: 0.670615
+----------------------------------------
+Trial 0, 得分: 49.94
+  epsilon: 0.075452
+  alpha: 0.001868
+  beta: 0.004582
+  base_lr: 0.000046
+  dropout: 0.123403
+  attention_dropout: 0.123399
+  sr_ratio: 4
+  init_tau: 1.692941
+  weight_decay: 0.022022
+  gradient_clip: 0.995651
+----------------------------------------
+Trial 3, 得分: 48.74
+  epsilon: 0.097464
+  alpha: 0.000633
+  beta: 0.001145
+  base_lr: 0.000075
+  dropout: 0.244845
+  attention_dropout: 0.221260
+  sr_ratio: 5
+  init_tau: 1.078138
+  weight_decay: 0.023685
+  gradient_clip: 0.808107
+----------------------------------------
+Trial 12, 得分: 46.41
+  epsilon: 0.119288
+  alpha: 0.000831
+  beta: 0.001646
+  base_lr: 0.000023
+  dropout: 0.210456
+  attention_dropout: 0.105038
+  sr_ratio: 7
+  init_tau: 1.796813
+  weight_decay: 0.029652
+  gradient_clip: 1.123410
+----------------------------------------
+Trial 11, 得分: 43.56
+  epsilon: 0.115988
+  alpha: 0.000507
+  beta: 0.001812
+  base_lr: 0.000057
+  dropout: 0.181383
+  attention_dropout: 0.156033
+  sr_ratio: 8
+  init_tau: 1.230711
+  weight_decay: 0.016221
+  gradient_clip: 0.926639
+----------------------------------------
+Trial 6, 得分: 42.98
+  epsilon: 0.076633
+  alpha: 0.000728
+  beta: 0.005603
+  base_lr: 0.000033
+  dropout: 0.142140
+  attention_dropout: 0.181404
+  sr_ratio: 4
+  init_tau: 1.641758
+  weight_decay: 0.011491
+  gradient_clip: 1.190821
+----------------------------------------
+Trial 4, 得分: 36.47
+  epsilon: 0.057174
+  alpha: 0.000993
+  beta: 0.001074
+  base_lr: 0.000071
+  dropout: 0.138817
+  attention_dropout: 0.199378
+  sr_ratio: 5
+  init_tau: 1.416054
+  weight_decay: 0.020934
+  gradient_clip: 0.629398
+----------------------------------------
+Trial 9, 得分: 35.29
+  epsilon: 0.057020
+  alpha: 0.001344
+  beta: 0.004865
+  base_lr: 0.000044
+  dropout: 0.215645
+  attention_dropout: 0.174069
+  sr_ratio: 6
+  init_tau: 1.342033
+  weight_decay: 0.010508
+  gradient_clip: 0.575524
+----------------------------------------
+Trial 5, 得分: 32.00
+  epsilon: 0.145071
+  alpha: 0.001464
+  beta: 0.007054
+  base_lr: 0.000069
+  dropout: 0.189685
+  attention_dropout: 0.238281
+  sr_ratio: 4
+  init_tau: 1.156786
+  weight_decay: 0.010905
+  gradient_clip: 0.727731
+----------------------------------------
+Trial 18, 得分: 32.00
+  epsilon: 0.083611
+  alpha: 0.001589
+  beta: 0.002201
+  base_lr: 0.000020
+  dropout: 0.248692
+  attention_dropout: 0.171151
+  sr_ratio: 8
+  init_tau: 1.276066
+  weight_decay: 0.019013
+  gradient_clip: 0.879041
+----------------------------------------
+Trial 1, 得分: 10.00
+  epsilon: 0.051144
+  alpha: 0.001918
+  beta: 0.005646
+  base_lr: 0.000027
+  dropout: 0.127274
+  attention_dropout: 0.127511
+  sr_ratio: 5
+  init_tau: 1.419805
+  weight_decay: 0.018639
+  gradient_clip: 0.703860
+----------------------------------------
+Trial 2, 得分: 10.00
+  epsilon: 0.097926
+  alpha: 0.000607
+  beta: 0.001836
+  base_lr: 0.000033
+  dropout: 0.168410
+  attention_dropout: 0.217776
+  sr_ratio: 4
+  init_tau: 1.411388
+  weight_decay: 0.021848
+  gradient_clip: 0.532515
+----------------------------------------
+Trial 10, 得分: 10.00
+  epsilon: 0.146545
+  alpha: 0.000942
+  beta: 0.002813
+  base_lr: 0.000021
+  dropout: 0.103667
+  attention_dropout: 0.151580
+  sr_ratio: 8
+  init_tau: 1.551980
+  weight_decay: 0.029396
+  gradient_clip: 0.950599
+----------------------------------------
+Trial 13, 得分: 10.00
+  epsilon: 0.120401
+  alpha: 0.001264
+  beta: 0.002869
+  base_lr: 0.000055
+  dropout: 0.160238
+  attention_dropout: 0.196701
+  sr_ratio: 7
+  init_tau: 1.039180
+  weight_decay: 0.025923
+  gradient_clip: 0.834395
+----------------------------------------
