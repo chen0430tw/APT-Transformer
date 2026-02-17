@@ -1044,6 +1044,12 @@ class AdaptiveBPETokenizer:
         tokenizer.decoder = decoders.ByteLevel()
         tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
 
+        # 自动检测: 非TTY环境 (Slurm/重定向) 下禁用进度条
+        import sys as _sys
+        if show_progress and not _sys.stdout.isatty():
+            logger.info("检测到非 TTY 环境 (Slurm/重定向), 禁用分词器训练进度条")
+            show_progress = False
+
         # 使用 ByteLevel 的 256 个字节作为初始字母表
         trainer = trainers.BpeTrainer(
             vocab_size=vocab_size,
@@ -1074,6 +1080,7 @@ class AdaptiveBPETokenizer:
         text_iterator,
         vocab_size: int = 65536,
         min_frequency: int = 2,
+        show_progress: bool = True,
     ) -> "AdaptiveBPETokenizer":
         """
         从文本迭代器训练 (适用于流式数据或内存中的数据)。
@@ -1082,6 +1089,7 @@ class AdaptiveBPETokenizer:
             text_iterator: 产生文本字符串的迭代器
             vocab_size: 目标词表大小
             min_frequency: 最低频次
+            show_progress: 是否显示训练进度 (Slurm等非TTY环境需设为False)
 
         Returns:
             训练好的分词器
@@ -1092,6 +1100,13 @@ class AdaptiveBPETokenizer:
         except ImportError:
             raise ImportError("需要安装 tokenizers: pip install tokenizers")
 
+        # 自动检测: 非TTY环境 (Slurm/重定向) 下禁用进度条,
+        # 否则 Rust pyo3 写 stdout 时 panic (PanicException: failed printing to stdout)
+        import sys as _sys
+        if show_progress and not _sys.stdout.isatty():
+            logger.info("检测到非 TTY 环境 (Slurm/重定向), 禁用分词器训练进度条")
+            show_progress = False
+
         tokenizer = Tokenizer(models.BPE())
         tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
         tokenizer.decoder = decoders.ByteLevel()
@@ -1100,6 +1115,7 @@ class AdaptiveBPETokenizer:
         trainer = trainers.BpeTrainer(
             vocab_size=vocab_size,
             min_frequency=min_frequency,
+            show_progress=show_progress,
             special_tokens=list(cls.SPECIAL_TOKENS.keys()),
             initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
         )
@@ -1149,9 +1165,14 @@ class AdaptiveBPETokenizer:
             f"(+{target_vocab_size - current_size} tokens)"
         )
 
+        # 非TTY环境禁用进度条 (防止 pyo3 PanicException)
+        import sys as _sys
+        _show = _sys.stdout.isatty()
+
         trainer = trainers.BpeTrainer(
             vocab_size=target_vocab_size,
             min_frequency=2,
+            show_progress=_show,
             special_tokens=list(self.SPECIAL_TOKENS.keys()),
             initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
             continuing_subword_prefix="",
