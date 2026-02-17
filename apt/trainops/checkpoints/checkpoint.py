@@ -207,6 +207,14 @@ def _load_directory_checkpoint(path, device):
                             self.pad_token_id = vocab_dict.get('<|pad|>', vocab_dict.get('[PAD]', 0))
                             self.eos_token_id = vocab_dict.get('<|endoftext|>', vocab_dict.get('[SEP]', 1))
                             self.bos_token_id = vocab_dict.get('<|startoftext|>', vocab_dict.get('[CLS]', 2))
+                            self.unk_token_id = vocab_dict.get('<|unk|>', vocab_dict.get('[UNK]', 3))
+
+                        @property
+                        def all_special_ids(self):
+                            return {self.pad_token_id, self.eos_token_id, self.bos_token_id, self.unk_token_id}
+
+                        def convert_ids_to_tokens(self, token_id):
+                            return self.id_to_token.get(token_id, "[?]")
 
                         def encode(self, text, **kwargs):
                             # 简单的字符级编码
@@ -303,6 +311,17 @@ def _load_quickcook_checkpoint(checkpoint, path, device):
                     self.pad_token_id = 0
                     self.eos_token_id = backend.token_to_id("</s>") if backend.token_to_id("</s>") is not None else 0
                     self.bos_token_id = backend.token_to_id("<s>") if backend.token_to_id("<s>") is not None else 0
+                    self.unk_token_id = backend.token_to_id("<unk>") if backend.token_to_id("<unk>") is not None else 0
+
+                @property
+                def all_special_ids(self):
+                    """返回所有特殊 token 的 ID 集合 (供 generator.py safe_decode 使用)"""
+                    return {self.pad_token_id, self.eos_token_id, self.bos_token_id, self.unk_token_id}
+
+                def convert_ids_to_tokens(self, token_id):
+                    """将单个 token ID 转换为 token 字符串 (供 generator.py safe_decode 使用)"""
+                    token = self.backend.id_to_token(token_id)
+                    return token if token is not None else "[?]"
 
                 def encode(self, text, return_tensors=None):
                     ids = self.backend.encode(text).ids
@@ -360,6 +379,13 @@ def _load_single_file_checkpoint_from_dict(checkpoint, path, device):
             self.unk_token_id = 1
             self.bos_token_id = 2
             self.eos_token_id = 3
+
+        @property
+        def all_special_ids(self):
+            return {self.pad_token_id, self.unk_token_id, self.bos_token_id, self.eos_token_id}
+
+        def convert_ids_to_tokens(self, token_id):
+            return self.id_to_char.get(token_id, "[?]")
 
         def encode(self, text, return_tensors=None):
             """编码文本"""

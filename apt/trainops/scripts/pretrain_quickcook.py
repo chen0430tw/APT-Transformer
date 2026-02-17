@@ -255,16 +255,16 @@ class CurriculumManager:
     持续课程学习管理器。
 
     监视 datasets_dir/curriculum.json, 训练中途可以:
-    1. 修改数据源权重 (如: 降低 C4 比例, 提高 mC4 比例)
+    1. 修改数据源权重 (如: 降低 C4 比例, 提高 chinese_c4 比例)
     2. 指定新的本地数据目录
     3. 关闭/开启某个数据源
 
     curriculum.json 格式:
     {
-        "weights": {"c4_en": 0.2, "mc4_zh": 0.5, "fineweb": 0.2, "hlbd": 0.1},
+        "weights": {"c4_en": 0.2, "chinese_c4": 0.5, "fineweb": 0.2, "hlbd": 0.1},
         "hlbd_path": "/data/new_hlbd/",  // 可选
         "use_c4": true,                  // 可选
-        "use_mc4_zh": true,              // 可选
+        "use_mc4_zh": true,              // 可选 (兼容旧名, 控制 chinese_c4)
         "use_fineweb": true              // 可选
     }
     """
