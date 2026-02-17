@@ -287,7 +287,7 @@ torch.onnx.export(
 
 ## 参考
 
-- [test_hlbd_quick_learning.py](test_hlbd_quick_learning.py) - 训练脚本
+- [test_hlbd_quick_learning.py](l0_kernel/test_hlbd_quick_learning.py) - 训练脚本
 - [load_hlbd_model.py](load_hlbd_model.py) - 加载脚本
 - [emoji_handling_analysis.md](../emoji_handling_analysis.md) - Emoji 处理分析
 

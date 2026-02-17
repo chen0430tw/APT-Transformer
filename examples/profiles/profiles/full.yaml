@@ -1,0 +1,287 @@
+# APT-Transformer Full Profile
+# 完整版 (L0 + L1 + L2 + L3) - 全功能版本
+
+name: apt-full
+version: 2.0.0
+description: "完整版 - 核心算法 + 性能优化 + 记忆系统 + 应用层 (L0 + L1 + L2 + L3)"
+
+# ═══════════════════════════════════════════════════════════
+# 启用层级
+# ═══════════════════════════════════════════════════════════
+layers:
+  - L0  # Kernel: Autopoietic Transform, DBC-DAC, Left-Spin Smooth
+  - L1  # Performance: Virtual Blackwell, GPU Flash, VGPU Stack
+  - L2  # Memory: AIM-Memory, AIM-NC, GraphRAG
+  - L3  # Product: WebUI, API, Plugins, Observability
+
+# ═══════════════════════════════════════════════════════════
+# 核心模型配置
+# ═══════════════════════════════════════════════════════════
+model:
+  type: APTModel
+
+  # 模型结构
+  vocab_size: 50000
+  d_model: 1024              # 更大模型
+  num_heads: 16
+  num_encoder_layers: 24
+  num_decoder_layers: 24
+  max_seq_len: 4096          # 超长序列
+
+  # 核心特性（APT 三大创新）
+  use_autopoietic: true
+  use_dbc_dac: true
+  use_left_spin: true
+
+  # Autopoietic 参数
+  autopoietic:
+    adaptive_rank_ratio: 0.3
+    energy_threshold: 0.95
+
+  # DBC-DAC 参数
+  dbc_dac:
+    compression_ratio: 0.7
+    compensation: true
+
+  # Left-Spin 参数
+  left_spin:
+    smooth_factor: 0.1
+    epsilon: 1.0e-6
+    grad_threshold: 1000.0
+
+# ═══════════════════════════════════════════════════════════
+# 训练配置
+# ═══════════════════════════════════════════════════════════
+training:
+  optimizer: AdamW
+  learning_rate: 2.0e-4      # 更保守的学习率
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  batch_size: 128            # 超大批次
+  max_steps: 500000          # 更长训练
+  gradient_accumulation_steps: 4
+
+  lr_scheduler: cosine_with_restarts
+  warmup_steps: 2000
+  max_grad_norm: 1.0
+
+  eval_steps: 500
+  save_steps: 2000
+  logging_steps: 50
+
+# ═══════════════════════════════════════════════════════════
+# 数据配置
+# ═══════════════════════════════════════════════════════════
+data:
+  train_file: data/train.txt
+  eval_file: data/eval.txt
+  tokenizer: gpt2
+
+  preprocessing:
+    lowercase: false
+    remove_special_chars: false
+
+# ═══════════════════════════════════════════════════════════
+# 性能层配置（启用 L1）
+# ═══════════════════════════════════════════════════════════
+performance:
+  enabled: true
+
+  virtual_blackwell:
+    enabled: true
+    mode: max_memory         # 最大内存优化
+
+    gpu_flash:
+      enabled: true
+      compression: mxfp4
+      batch_compression: true
+      adaptive_precision: true
+
+    vgpu_stack:
+      enabled: true
+      layers:
+        - type: gpu
+          size: auto
+        - type: cpu
+          size: 128GB
+        - type: ssd
+          size: 512GB
+          path: /tmp/vgpu_cache
+
+    npu:
+      enabled: true
+      providers: ["ascend", "kunlun", "iluvatar"]
+
+  monitoring:
+    enabled: true
+    metrics: ["throughput", "memory_usage", "gpu_utilization", "npu_utilization"]
+    interval: 10
+
+# ═══════════════════════════════════════════════════════════
+# 记忆层配置（启用 L2）
+# ═══════════════════════════════════════════════════════════
+memory:
+  enabled: true
+
+  aim_memory:
+    enabled: true
+    mode: aim-nc
+
+    inertial_routing:
+      enabled: true
+      decay_rate: 0.9
+      temperature: 0.1
+
+    temporal_mirror:
+      enabled: true
+      mirror_steps: 10        # 更长镜像
+      reflection_weight: 0.5
+
+    anchor_correction:
+      enabled: true
+      correction_strength: 0.3
+      sovereignty: strict
+
+  aim_nc:
+    enabled: true
+
+    ngram:
+      n: 4                    # 4-gram
+      vocab_size: 50000
+      smoothing: kneser_ney   # 更高级的平滑
+
+    trie:
+      max_depth: 15           # 更深的树
+      pruning_threshold: 1e-6
+      compression: true
+
+    anchor_sovereignty:
+      enabled: true
+      priority: hybrid        # 混合策略
+
+  graph_rag:
+    enabled: true
+
+    graph:
+      backend: neo4j          # 更强大的图数据库
+      max_nodes: 1000000
+      max_edges: 10000000
+
+    knowledge_graph:
+      entity_extraction: true
+      relation_extraction: true
+      embedding_dim: 512      # 更大的嵌入
+
+    retrieval:
+      top_k: 20               # 更多检索结果
+      similarity_metric: cosine
+      reranking: true
+      hybrid_search: true     # 混合检索
+
+  persistence:
+    enabled: true
+    backend: postgres         # 更强大的持久化
+    checkpoint_interval: 500
+    path: ./memory_checkpoints/full
+
+# ═══════════════════════════════════════════════════════════
+# 应用层配置（启用 L3）
+# ═══════════════════════════════════════════════════════════
+product:
+  enabled: true
+
+  # WebUI 配置
+  webui:
+    enabled: true
+    host: 0.0.0.0
+    port: 8080
+    features:
+      - chat
+      - training_monitor
+      - model_explorer
+      - memory_viewer
+      - performance_dashboard
+
+  # API 配置
+  api:
+    enabled: true
+    host: 0.0.0.0
+    port: 8000
+    endpoints:
+      - /v1/chat/completions
+      - /v1/embeddings
+      - /v1/models
+      - /v1/memory/query
+      - /v1/performance/stats
+    auth:
+      enabled: true
+      type: api_key
+
+  # 插件系统
+  plugins:
+    enabled: true
+    auto_discover: true
+    plugins_dir: ./plugins
+    allowed_plugins:
+      - compression
+      - web_search
+      - code_execution
+      - image_generation
+
+  # 可观测性
+  observability:
+    enabled: true
+
+    # 日志
+    logging:
+      level: DEBUG
+      format: json
+      outputs:
+        - console
+        - file
+        - elasticsearch
+
+    # 指标
+    metrics:
+      enabled: true
+      backend: prometheus
+      port: 9090
+      export_interval: 15
+
+    # 追踪
+    tracing:
+      enabled: true
+      backend: jaeger
+      sampling_rate: 0.1
+
+    # 告警
+    alerting:
+      enabled: true
+      rules:
+        - name: high_gpu_usage
+          condition: gpu_usage > 95
+          action: notify
+        - name: low_throughput
+          condition: throughput < 100
+          action: notify
+
+# ═══════════════════════════════════════════════════════════
+# 输出配置
+# ═══════════════════════════════════════════════════════════
+output:
+  checkpoint_dir: ./checkpoints/full
+  log_dir: ./logs/full
+  tensorboard: true
+  wandb: true                 # Weights & Biases 集成
+  save_total_limit: 10
+
+# ═══════════════════════════════════════════════════════════
+# 适用场景
+# ═══════════════════════════════════════════════════════════
+# - 生产部署：完整的企业级功能
+# - 大规模训练：最高性能和可观测性
+# - 研发实验：需要所有功能进行对比
+# - 演示展示：完整的功能展示
+# - 持续运营：需要监控和告警

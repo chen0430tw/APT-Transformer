@@ -41,8 +41,8 @@ def test_webui_import():
 
         # Try to import (will fail if gradio not available)
         if gradio_available:
-            from apt_model.webui import create_webui, launch_webui
-            from apt_model.webui.app import WebUIState
+            from apt.apps.webui import create_webui, launch_webui
+            from apt.apps.webui.app import WebUIState
 
             print("  ✅ WebUI modules imported successfully")
 
@@ -64,8 +64,8 @@ def test_api_import():
     """Test API module imports"""
     print("Testing API imports...")
     try:
-        from apt_model.api import create_app, run_server
-        from apt_model.api.server import (
+        from apt.apps.api import create_app, run_server
+        from apt.apps.api.server import (
             GenerateRequest,
             GenerateResponse,
             BatchGenerateRequest,
@@ -85,7 +85,7 @@ def test_api_import():
 
         # Test request models (only if fastapi available)
         try:
-            from apt_model.api.server import FASTAPI_AVAILABLE
+            from apt.apps.api.server import FASTAPI_AVAILABLE
             if FASTAPI_AVAILABLE:
                 req = GenerateRequest(text="test", max_length=50)
                 assert req.text == "test"
@@ -159,13 +159,13 @@ def test_integration():
     try:
         # Try to import both states
         try:
-            from apt_model.webui.app import WebUIState
+            from apt.apps.webui.app import WebUIState
             webui_state = WebUIState()
         except ImportError:
             print("  ⚠️  WebUI state skipped (gradio not available)")
             webui_state = None
 
-        from apt_model.api.server import APIState
+        from apt.apps.api.server import APIState
         api_state = APIState()
 
         # At least API should work
@@ -196,7 +196,7 @@ def test_preparation_code_integration():
 
         if torch_available:
             # Check gradient monitor has export_for_webui
-            from apt_model.training.gradient_monitor import GradientMonitor
+            from apt.apt_model.training.gradient_monitor import GradientMonitor
 
             # Check method exists
             assert hasattr(GradientMonitor, 'export_for_webui')

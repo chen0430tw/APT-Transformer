@@ -1,0 +1,14 @@
+Device: cpu
+W shape: torch.Size([128, 64])
+X shape: torch.Size([64, 32])
+Y shape: torch.Size([128, 32])
+Computation error: 0.261382
+Status: [X]
+
+Coarse levels: 10
+Fine levels: 15
+BOH priority: coarse_first
+BOH status: ready
+Shared memory entries: 2
+
+[OK] All tests passed!

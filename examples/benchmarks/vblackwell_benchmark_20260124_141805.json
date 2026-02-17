@@ -1,0 +1,263 @@
+{
+  "timestamp": "2026-01-24T14:18:05.641164",
+  "hardware": {
+    "gpu": [
+      {
+        "id": 0,
+        "name": "NVIDIA GeForce RTX 3070 Laptop GPU",
+        "total_memory_gb": 7.99951171875,
+        "compute_capability": "8.6",
+        "type": "cuda"
+      }
+    ],
+    "cpu": {
+      "model": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+      "cores": 8,
+      "architecture": "AMD64"
+    },
+    "memory": {
+      "total_gb": 23.698562622070312,
+      "available_gb": 4.3890533447265625,
+      "used_percent": 81.5
+    },
+    "storage": {
+      "total_gb": 953.8681602478027,
+      "free_gb": 47.09890365600586,
+      "used_percent": 95.1
+    }
+  },
+  "results": [
+    {
+      "config": {
+        "name": "小型模型 (7B, FP16)",
+        "model_size_gb": 14,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 6.399609375000001,
+        "cpu_gb": 7.600390624999999,
+        "ssd_gb": 0.0,
+        "overflow_gb": 0.0,
+        "total_gb": 14,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": true,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": true,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 68.3,
+        "rating": "良好 (Good)",
+        "gpu_hit_rate": 45.7,
+        "cpu_hit_rate": 54.3,
+        "ssd_hit_rate": 0.0
+      }
+    },
+    {
+      "config": {
+        "name": "小型模型 (7B, MXFP4)",
+        "model_size_gb": 3.5,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 3.5,
+        "cpu_gb": 0.0,
+        "ssd_gb": 0.0,
+        "overflow_gb": 0.0,
+        "total_gb": 3.5,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": true,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": true,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 90.0,
+        "rating": "优秀 (Excellent)",
+        "gpu_hit_rate": 100.0,
+        "cpu_hit_rate": 0.0,
+        "ssd_hit_rate": 0.0
+      }
+    },
+    {
+      "config": {
+        "name": "中型模型 (13B, FP16)",
+        "model_size_gb": 26,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 6.399609375000001,
+        "cpu_gb": 8.0,
+        "ssd_gb": 11.600390625,
+        "overflow_gb": 0.0,
+        "total_gb": 26,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": true,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": true,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 42.0,
+        "rating": "一般 (Fair)",
+        "gpu_hit_rate": 24.6,
+        "cpu_hit_rate": 30.8,
+        "ssd_hit_rate": 44.6
+      }
+    },
+    {
+      "config": {
+        "name": "中型模型 (13B, MXFP4)",
+        "model_size_gb": 6.5,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 6.399609375000001,
+        "cpu_gb": 0.10039062499999929,
+        "ssd_gb": 0.0,
+        "overflow_gb": 0.0,
+        "total_gb": 6.5,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": true,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": true,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 89.4,
+        "rating": "优秀 (Excellent)",
+        "gpu_hit_rate": 98.5,
+        "cpu_hit_rate": 1.5,
+        "ssd_hit_rate": 0.0
+      }
+    },
+    {
+      "config": {
+        "name": "大型模型 (70B, FP16)",
+        "model_size_gb": 140,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 6.399609375000001,
+        "cpu_gb": 8.0,
+        "ssd_gb": 32.0,
+        "overflow_gb": 93.60039062499999,
+        "total_gb": 140,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": false,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": false,
+        "no_overflow": false
+      },
+      "performance": {
+        "score": 0,
+        "rating": "N/A",
+        "bottleneck": "SSD空间不足"
+      }
+    },
+    {
+      "config": {
+        "name": "大型模型 (70B, MXFP4)",
+        "model_size_gb": 35,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 6.399609375000001,
+        "cpu_gb": 8.0,
+        "ssd_gb": 20.600390625,
+        "overflow_gb": 0.0,
+        "total_gb": 35,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": false,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": false,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 0,
+        "rating": "N/A",
+        "bottleneck": "SSD空间不足"
+      }
+    },
+    {
+      "config": {
+        "name": "超大模型 (175B, FP16)",
+        "model_size_gb": 350,
+        "num_gpus": 4
+      },
+      "vb_config": {
+        "gpu_gb": 25.598437500000003,
+        "cpu_gb": 32.0,
+        "ssd_gb": 128.0,
+        "overflow_gb": 164.4015625,
+        "total_gb": 350,
+        "num_gpus": 4
+      },
+      "feasibility": {
+        "overall": false,
+        "gpu_available": false,
+        "gpu_memory": true,
+        "cpu_memory": false,
+        "storage": false,
+        "no_overflow": false
+      },
+      "performance": {
+        "score": 0,
+        "rating": "N/A",
+        "bottleneck": "GPU数量不足"
+      }
+    },
+    {
+      "config": {
+        "name": "超大模型 (405B, MXFP4)",
+        "model_size_gb": 101,
+        "num_gpus": 4
+      },
+      "vb_config": {
+        "gpu_gb": 25.598437500000003,
+        "cpu_gb": 32.0,
+        "ssd_gb": 43.4015625,
+        "overflow_gb": 0.0,
+        "total_gb": 101,
+        "num_gpus": 4
+      },
+      "feasibility": {
+        "overall": false,
+        "gpu_available": false,
+        "gpu_memory": true,
+        "cpu_memory": false,
+        "storage": false,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 0,
+        "rating": "N/A",
+        "bottleneck": "GPU数量不足"
+      }
+    }
+  ]
+}

@@ -6,13 +6,16 @@
 与现有retrieval系统集成，提供基于KG的检索能力
 """
 
-import torch
-import torch.nn as nn
+from apt.core.fake_torch import get_torch
+torch = get_torch()
+from apt.core.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 
 from apt.core.base_provider import BaseProvider
-from apt_model.modeling.knowledge_graph import KnowledgeGraph, Triple
+from apt.apt_model.modeling.knowledge_graph import KnowledgeGraph, Triple
 
 
 class KGRetriever(nn.Module):

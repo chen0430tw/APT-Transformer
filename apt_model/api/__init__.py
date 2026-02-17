@@ -1,12 +1,17 @@
 """
-APT Model REST API
+apt_model.api - APT API Package
 
-FastAPI-based REST API for:
-- Model inference (single and batch)
-- Training monitoring
-- Checkpoint management
+REST API server for APT Model inference.
+
+Usage:
+    python -m apt_model.api.server --checkpoint-dir ./checkpoints
+
+This wraps apt.apps.api functionality with a CLI interface.
 """
 
-from .server import create_app, run_server
-
-__all__ = ['create_app', 'run_server']
+# Re-export from new location
+try:
+    from apt.apps.api import *
+except ImportError as e:
+    print(f"⚠️  Error importing API: {e}")
+    print("   API functionality is in apt.apps.api")

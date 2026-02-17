@@ -140,7 +140,7 @@ pytest --lf
 ## 🔗 相关文档
 
 - [项目README](../README.md)
-- [插件开发指南](../apt_model/cli/PLUGIN_GUIDE.md)
+- [插件开发指南](../apt/apps/cli/PLUGIN_GUIDE.md)
 - [完整文档中心](../docs/README.md)
 
 ## 📧 报告问题

@@ -82,7 +82,7 @@ def main():
         # 尝试导入APT管理员模式模块
         try:
             # 方法1: 如果已安装为包
-            from apt_model.interactive.admin_mode import start_admin_mode
+            from apt.apps.interactive.admin_mode import start_admin_mode
             print("✅ 从已安装的包加载管理员模式")
         except ImportError:
             # 方法2: 从当前目录加载

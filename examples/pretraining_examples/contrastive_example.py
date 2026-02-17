@@ -11,8 +11,8 @@
 import torch
 import torch.nn as nn
 import logging
-from apt_model.pretraining import create_contrastive_pretrainer, ContrastiveConfig
-from apt_model.pretraining.contrastive_pretrain import TextAugmentation
+from apt.apt_model.pretraining import create_contrastive_pretrainer, ContrastiveConfig
+from apt.core.pretraining.contrastive_pretrain import TextAugmentation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

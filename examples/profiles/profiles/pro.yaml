@@ -1,0 +1,193 @@
+# APT-Transformer Pro Profile
+# 专业版 (L0 + L2) - 核心算法 + 记忆系统
+
+name: apt-pro
+version: 2.0.0
+description: "专业版 - 核心APT算法 + AIM-Memory记忆系统 (L0 + L2)"
+
+# ═══════════════════════════════════════════════════════════
+# 启用层级
+# ═══════════════════════════════════════════════════════════
+layers:
+  - L0  # Kernel: Autopoietic Transform, DBC-DAC, Left-Spin Smooth
+  - L2  # Memory: AIM-Memory, AIM-NC, GraphRAG
+
+# ═══════════════════════════════════════════════════════════
+# 核心模型配置
+# ═══════════════════════════════════════════════════════════
+model:
+  type: APTModel
+  extends: lite.yaml  # 继承 lite 配置
+
+  # 模型结构
+  vocab_size: 50000
+  d_model: 768
+  num_heads: 12
+  num_encoder_layers: 12
+  num_decoder_layers: 12
+  max_seq_len: 2048          # 更长序列（得益于记忆系统）
+
+  # 核心特性（APT 三大创新）
+  use_autopoietic: true
+  use_dbc_dac: true
+  use_left_spin: true
+
+  # Autopoietic 参数
+  autopoietic:
+    adaptive_rank_ratio: 0.3
+    energy_threshold: 0.95
+
+  # DBC-DAC 参数
+  dbc_dac:
+    compression_ratio: 0.7
+    compensation: true
+
+  # Left-Spin 参数
+  left_spin:
+    smooth_factor: 0.1
+    epsilon: 1.0e-6
+    grad_threshold: 1000.0
+
+# ═══════════════════════════════════════════════════════════
+# 训练配置
+# ═══════════════════════════════════════════════════════════
+training:
+  optimizer: AdamW
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  batch_size: 32
+  max_steps: 100000
+  gradient_accumulation_steps: 1
+
+  lr_scheduler: cosine
+  warmup_steps: 1000
+  max_grad_norm: 1.0
+
+  eval_steps: 1000
+  save_steps: 5000
+  logging_steps: 100
+
+# ═══════════════════════════════════════════════════════════
+# 数据配置
+# ═══════════════════════════════════════════════════════════
+data:
+  train_file: data/train.txt
+  eval_file: data/eval.txt
+  tokenizer: gpt2
+
+  preprocessing:
+    lowercase: false
+    remove_special_chars: false
+
+# ═══════════════════════════════════════════════════════════
+# 性能层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+performance:
+  enabled: false
+
+# ═══════════════════════════════════════════════════════════
+# 记忆层配置（启用 L2）
+# ═══════════════════════════════════════════════════════════
+memory:
+  enabled: true
+
+  # AIM-Memory 配置
+  aim_memory:
+    enabled: true
+    mode: aim-nc  # aim-base | aim-nc (with N-gram)
+
+    # 核心参数
+    inertial_routing:
+      enabled: true
+      decay_rate: 0.9
+      temperature: 0.1
+
+    temporal_mirror:
+      enabled: true
+      mirror_steps: 5
+      reflection_weight: 0.5
+
+    anchor_correction:
+      enabled: true
+      correction_strength: 0.3
+      sovereignty: strict  # strict | balanced | loose
+
+  # AIM-NC (N-gram + Trie 集成)
+  aim_nc:
+    enabled: true
+
+    # N-gram 配置
+    ngram:
+      n: 3                    # 3-gram
+      vocab_size: 50000
+      smoothing: laplace      # laplace | kneser_ney
+
+    # Trie 树配置
+    trie:
+      max_depth: 10
+      pruning_threshold: 1e-5
+      compression: true
+
+    # 锚点主权
+    anchor_sovereignty:
+      enabled: true
+      priority: trie_first    # trie_first | ngram_first | hybrid
+
+  # GraphRAG 配置
+  graph_rag:
+    enabled: true
+
+    # 图结构
+    graph:
+      backend: networkx       # networkx | neo4j | dgraph
+      max_nodes: 100000
+      max_edges: 1000000
+
+    # 知识图谱
+    knowledge_graph:
+      entity_extraction: true
+      relation_extraction: true
+      embedding_dim: 256
+
+    # RAG 检索
+    retrieval:
+      top_k: 10
+      similarity_metric: cosine
+      reranking: true
+
+  # 记忆持久化
+  persistence:
+    enabled: true
+    backend: sqlite           # sqlite | redis | postgres
+    checkpoint_interval: 1000  # 每1000步保存
+    path: ./memory_checkpoints/pro
+
+# ═══════════════════════════════════════════════════════════
+# 应用层配置（禁用）
+# ═══════════════════════════════════════════════════════════
+product:
+  enabled: false
+  logging:
+    level: INFO
+    format: simple
+
+# ═══════════════════════════════════════════════════════════
+# 输出配置
+# ═══════════════════════════════════════════════════════════
+output:
+  checkpoint_dir: ./checkpoints/pro
+  log_dir: ./logs/pro
+  tensorboard: true
+  save_total_limit: 5
+
+# ═══════════════════════════════════════════════════════════
+# 适用场景
+# ═══════════════════════════════════════════════════════════
+# - 长文本理解：需要长上下文记忆
+# - 知识增强：结合外部知识图谱
+# - 多轮对话：需要历史记忆
+# - RAG应用：检索增强生成
+# - 终身学习：持续学习场景

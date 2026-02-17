@@ -1,0 +1,100 @@
+# APT Standard Profile
+# 标准配置 - 适用于常规训练和生产环境
+
+profile:
+  name: standard
+  description: "标准配置，平衡性能和资源使用"
+  version: "2.0.0"
+
+model:
+  # 模型架构选择
+  architecture: apt_base
+  hidden_size: 1024
+  num_layers: 24
+  num_attention_heads: 16
+  intermediate_size: 4096
+  max_position_embeddings: 2048
+  vocab_size: 50000
+
+  # 功能开关
+  features:
+    multimodal: true
+    moe: false
+    flash_attention: true
+    gradient_checkpointing: true
+
+training:
+  # 训练配置
+  batch_size: 32
+  gradient_accumulation_steps: 4
+  learning_rate: 3.0e-5
+  warmup_steps: 1000
+  max_steps: 100000
+
+  # 分布式训练
+  distributed:
+    enabled: true
+    backend: nccl
+    world_size: 4
+
+  # 混合精度
+  mixed_precision: bf16
+
+  # 优化器
+  optimizer: adamw
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+
+memory:
+  # 内存优化
+  offload_optimizer: false
+  cpu_offload: false
+  max_memory_per_gpu: "24GB"
+  gradient_checkpointing: true
+
+vgpu:
+  # Virtual Blackwell配置
+  enabled: true
+  max_virtual_gpus: 4
+  scheduling: fair
+  isolation: true
+
+perf:
+  # 性能优化
+  compile_model: true
+  use_torch_compile: true
+  profile_enabled: false
+
+extensions:
+  # 扩展功能
+  rag:
+    enabled: true
+    index_type: faiss
+    embedding_dim: 1024
+  knowledge_graph:
+    enabled: true
+    backend: neo4j
+  mcp:
+    enabled: true
+    protocol_version: "1.0"
+
+plugins:
+  # 插件配置
+  enabled:
+    - custom_metrics
+    - data_augmentation
+
+monitoring:
+  # 监控配置
+  tensorboard: true
+  wandb: true
+  metrics_interval: 50
+  log_gradients: true
+
+checkpoints:
+  # 检查点配置
+  save_interval: 500
+  keep_last_n: 5
+  save_optimizer: true
+  async_save: true

@@ -401,8 +401,8 @@ APT-Transformer/
 ## 📚 相关文档
 
 - [HLBD训练指南](HLBD_HARDCORE_TRAINING.md)
-- [训练后端使用](docs/TRAINING_BACKENDS.md)
-- [仓库结构](docs/repo_schema.md)
+- [训练后端使用](../performance/TRAINING_BACKENDS.md)
+- [仓库结构](../guides/repo_schema.md)
 - [模型架构](docs/MODEL_ARCHITECTURE.md)
 
 ## 🏆 成就总结

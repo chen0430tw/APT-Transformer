@@ -19,11 +19,11 @@ import logging
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from apt_model.config.config import APTConfig
-from apt_model.config.multimodal_config import MultimodalConfig
-from apt_model.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
-from apt_model.data.multimodal_dataset import create_multimodal_dataloader
-from apt_model.training.trainer import APTTrainer
+from apt.core.config.config import APTConfig
+from apt.core.config.multimodal_config import MultimodalConfig
+from apt.apt_model.modeling.multimodal_model import MultimodalAPTModel, create_multimodal_model
+from apt.core.data.multimodal_dataset import create_multimodal_dataloader
+from apt.apt_model.training.trainer import APTTrainer
 
 # 设置日志
 logging.basicConfig(

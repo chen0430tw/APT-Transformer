@@ -85,9 +85,9 @@ python monitor_all_trainings.py
 ## 📚 Documentation
 
 All features are fully documented:
-- [TRAINING_BACKENDS.md](TRAINING_BACKENDS.md) - Training backend guide
-- [VISUALIZATION_GUIDE.md](VISUALIZATION_GUIDE.md) - Visualization guide
-- [docs/README.md](docs/README.md) - Updated documentation index
+- [TRAINING_BACKENDS.md](../../docs/performance/TRAINING_BACKENDS.md) - Training backend guide
+- [VISUALIZATION_GUIDE.md](../../docs/product/VISUALIZATION_GUIDE.md) - Visualization guide
+- [docs/README.md](../../README.md) - Updated documentation index
 
 ## ⚠️ Breaking Changes
 

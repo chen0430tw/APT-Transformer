@@ -227,9 +227,9 @@ dc2acc6 - Add Windows support for test scripts
 
 ## 📖 相关文档
 
-- [测试工具使用指南](测试工具使用指南.md)
-- [README_TEST.md](README_TEST.md)
-- [APT Model Handbook](docs/APT_MODEL_HANDBOOK.md)
+- [测试工具使用指南](../../docs/testing/测试工具使用指南.md)
+- [README_TEST.md](../../docs/testing/README_TEST.md)
+- [APT Model Handbook](../../docs/kernel/APT_MODEL_HANDBOOK.md)
 
 ---
 

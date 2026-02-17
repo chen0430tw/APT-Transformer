@@ -1,70 +1,67 @@
-# -*- coding: utf-8 -*-
 """
-APT Model (自生成变换器) 训练工具
-一个功能丰富的模型训练和评估工具
+apt_model - APT CLI Package
 
-重要：此模块使用延迟导入以避免强制依赖torch。
-子模块（如apt_model.tools.apx）可以独立使用而无需安装torch。
+Command-line interface for APT Model training and inference.
+
+This is one of the official entry points for APT (along with quickstart.py and apt.* API).
+
+Usage:
+    python -m apt_model chat        # Interactive chat
+    python -m apt_model train       # Training
+    python -m apt_model --help      # Show help
+
+For Python API approach, see: quickstart.py or apt.* modules
 """
 
-__version__ = "1.0.0"
-__author__ = "APT Team"
+import sys
+import warnings
 
-__all__ = [
-    "APTConfig",
-    "MultimodalConfig",
-    "APTLargeModel",
-    "MultimodalAPTModel",
-    "train_model",
-    "device",
-]
+__version__ = "2.0.0"
+__all__ = []
 
+# Deprecation warning for developer import API only
+# CLI usage (python -m apt_model) remains fully supported
+def _check_import_usage():
+    """Show deprecation warning only for developer imports, not CLI usage"""
+    # Check if we're being imported (not run as __main__)
+    if __name__ != '__main__':
+        # Check if this is a developer import (not just CLI subprocess)
+        # We detect CLI by checking if __main__ is our own __main__.py
+        import inspect
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            caller_file = frame.f_back.f_code.co_filename
+            # If caller is NOT our own __main__.py, it's a developer import
+            if not caller_file.endswith('apt_model/__main__.py'):
+                warnings.warn(
+                    "\n"
+                    "╔══════════════════════════════════════════════════════════════╗\n"
+                    "║ Deprecation Warning: Developer Import API                   ║\n"
+                    "╠══════════════════════════════════════════════════════════════╣\n"
+                    "║                                                              ║\n"
+                    "║ ⚠️  Deprecated: Developer import entrypoints only            ║\n"
+                    "║ ✅  CLI remains supported: python -m apt_model ...           ║\n"
+                    "║                                                              ║\n"
+                    "║ If you're seeing this as a CLI user - ignore it.            ║\n"
+                    "║ This warning is for developers who import apt_model in code.║\n"
+                    "║                                                              ║\n"
+                    "╠══════════════════════════════════════════════════════════════╣\n"
+                    "║ Recommended migration for developers:                       ║\n"
+                    "║                                                              ║\n"
+                    "║   OLD (deprecated):                                          ║\n"
+                    "║     from apt_model.training import Trainer                   ║\n"
+                    "║     from apt_model.config import Config                      ║\n"
+                    "║                                                              ║\n"
+                    "║   NEW (recommended):                                         ║\n"
+                    "║     from apt.core.config import load_profile                 ║\n"
+                    "║     from apt.trainops.engine import Trainer                  ║\n"
+                    "║                                                              ║\n"
+                    "║ See: docs/ARCHITECTURE_2.0.md for migration guide            ║\n"
+                    "╚══════════════════════════════════════════════════════════════╝\n",
+                    DeprecationWarning,
+                    stacklevel=3
+                )
 
-def __getattr__(name):
-    """Lazily import heavy submodules only when requested."""
+# Run the check
+_check_import_usage()
 
-    if name == "APTConfig":
-        from apt_model.config.apt_config import APTConfig as _APTConfig
-
-        return _APTConfig
-
-    if name == "MultimodalConfig":
-        from apt_model.config.multimodal_config import MultimodalConfig as _MultimodalConfig
-
-        return _MultimodalConfig
-
-    if name == "APTLargeModel":
-        from apt_model.modeling.apt_model import APTLargeModel as _APTLargeModel
-
-        return _APTLargeModel
-
-    if name == "MultimodalAPTModel":
-        from apt_model.modeling.multimodal_model import (
-            MultimodalAPTModel as _MultimodalAPTModel,
-        )
-
-        return _MultimodalAPTModel
-
-    if name == "train_model":
-        try:
-            from apt_model.training.trainer import train_model as _train_model
-        except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
-            raise ImportError(
-                "train_model requires optional training dependencies to be installed"
-            ) from exc
-
-        return _train_model
-
-    if name == "device":
-        return _detect_device()
-
-    raise AttributeError(f"module 'apt_model' has no attribute {name!r}")
-
-
-def _detect_device():
-    try:  # pragma: no cover - depends on optional torch installation
-        import torch
-    except ModuleNotFoundError:
-        return "cpu"
-
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")

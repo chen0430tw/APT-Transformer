@@ -11,7 +11,7 @@ DPO训练示例
 import torch
 import torch.nn as nn
 import logging
-from apt_model.rl import create_dpo_trainer, DPOConfig
+from apt.apps.rl import create_dpo_trainer, DPOConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

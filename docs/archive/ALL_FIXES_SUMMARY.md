@@ -193,13 +193,13 @@ python -m apt_model.webui.app --checkpoint-dir ./checkpoints
 ## 🔗 相关文档
 
 ### 安装相关
-- [INSTALLATION.md](INSTALLATION.md) - 详细安装指南
+- [INSTALLATION.md](../../INSTALLATION.md) - 详细安装指南
 - [FIX_MODULE_NOT_FOUND.md](FIX_MODULE_NOT_FOUND.md) - 模块导入问题技术文档
-- [README.md](README.md) - 项目主文档（已更新）
+- [README.md](../../README.md) - 项目主文档（已更新）
 
 ### WebUI 相关
 - [FIX_WEBUI_LINEPLOT.md](FIX_WEBUI_LINEPLOT.md) - WebUI 修复详细说明
-- [apt_model/webui/app.py](apt_model/webui/app.py) - WebUI 主程序
+- [apt_model/webui/app.py](../../apt/apps/webui/app.py) - WebUI 主程序
 
 ### PR 相关
 - [PR_SETUP_FIX.md](PR_SETUP_FIX.md) - Pull Request 描述
@@ -283,7 +283,7 @@ python -m apt_model.webui.app --checkpoint-dir ./checkpoints
 如果遇到问题：
 
 1. **查看文档**
-   - [INSTALLATION.md](INSTALLATION.md) - 安装问题
+   - [INSTALLATION.md](../../INSTALLATION.md) - 安装问题
    - [FIX_MODULE_NOT_FOUND.md](FIX_MODULE_NOT_FOUND.md) - 导入问题
    - [FIX_WEBUI_LINEPLOT.md](FIX_WEBUI_LINEPLOT.md) - WebUI 问题
 

@@ -12,7 +12,12 @@ APT Core Codecs
 - UnicodeNormalizer: Unicode规范化
 
 使用方式:
-    from apt.core.codecs import Codec, register_codec, get_codec
+    try:
+        from apt.core.codecs import Codec, register_codec, get_codec
+    except ImportError:
+        Codec = None
+        register_codec = None
+        get_codec = None
 
     # 注册codec
     register_codec(MyCodec())
@@ -26,32 +31,54 @@ APT Core Codecs
 """
 
 # API接口
-from apt.core.codecs.api import (
-    Codec,
-    CodecConfig,
-)
+try:
+    from apt.core.codecs.api import (
+        Codec,
+        CodecConfig,
+    )
+except ImportError:
+    Codec = None
+    CodecConfig = None
 
 # 注册表
-from apt.core.codecs.registry import (
-    CodecRegistry,
-    codec_registry,
-    register_codec,
-    get_codec,
-    get_codec_for_language,
-    list_codecs,
-    list_languages,
-)
+try:
+    from apt.core.codecs.registry import (
+        CodecRegistry,
+        codec_registry,
+        register_codec,
+        get_codec,
+        get_codec_for_language,
+        list_codecs,
+        list_languages,
+    )
+except ImportError:
+    CodecRegistry = None
+    codec_registry = None
+    register_codec = None
+    get_codec = None
+    get_codec_for_language = None
+    list_codecs = None
+    list_languages = None
 
 # Unicode规范化
-from apt.core.codecs.unicode_norm import (
-    UnicodeNormalizer,
-    default_normalizer,
-    normalize_unicode,
-    nfc,
-    nfkc,
-    remove_accents,
-    to_halfwidth,
-)
+try:
+    from apt.core.codecs.unicode_norm import (
+        UnicodeNormalizer,
+        default_normalizer,
+        normalize_unicode,
+        nfc,
+        nfkc,
+        remove_accents,
+        to_halfwidth,
+    )
+except ImportError:
+    UnicodeNormalizer = None
+    default_normalizer = None
+    normalize_unicode = None
+    nfc = None
+    nfkc = None
+    remove_accents = None
+    to_halfwidth = None
 
 __all__ = [
     # API

@@ -9,7 +9,9 @@ All attention plugins must implement this interface.
 
 from abc import abstractmethod
 from typing import Dict, Any, Optional
-import torch.nn as nn
+from apt.core.fake_torch import get_torch
+torch = get_torch()
+nn = torch.nn
 
 from apt.core.registry import Provider
 

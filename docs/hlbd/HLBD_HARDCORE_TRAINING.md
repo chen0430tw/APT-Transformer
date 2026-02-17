@@ -286,10 +286,10 @@ echo "Config: epochs=50, bs=32, lr=5e-5" >> experiments/exp_001.txt
 
 ## 📚 相关文档
 
-- [训练后端使用指南](docs/TRAINING_BACKENDS.md)
+- [训练后端使用指南](../performance/TRAINING_BACKENDS.md)
 - [APT模型架构](docs/MODEL_ARCHITECTURE.md)
-- [可视化指南](docs/VISUALIZATION_GUIDE.md)
-- [仓库结构](docs/repo_schema.md)
+- [可视化指南](../product/VISUALIZATION_GUIDE.md)
+- [仓库结构](../guides/repo_schema.md)
 
 ## 🎯 下一步
 
