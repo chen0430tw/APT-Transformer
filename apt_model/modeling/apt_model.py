@@ -570,15 +570,16 @@ class AutopoieticAttention(nn.Module):
             batch_scores = attention_scores[b]  # shape: [num_heads, seq_len1, seq_len2]
             mean_attention = batch_scores.mean(dim=0)  # [seq_len1, seq_len2]
 
-            # 记录一下batch_scores统计
-            b_min = batch_scores.min().item()
-            b_max = batch_scores.max().item()
-            b_mean = batch_scores.mean().item()
-            b_std = batch_scores.std().item()
-            debug_lines.append(
-                f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
-                f"mean={b_mean:.4f}, std={b_std:.4f}"
-            )
+            # 记录batch_scores统计 (仅 debug 模式, .item() 会触发 CUDA 同步)
+            if getattr(self, 'debug_mode', False):
+                b_min = batch_scores.min().item()
+                b_max = batch_scores.max().item()
+                b_mean = batch_scores.mean().item()
+                b_std = batch_scores.std().item()
+                debug_lines.append(
+                    f"[Batch {b}] batch_scores stats: min={b_min:.4f}, max={b_max:.4f}, "
+                    f"mean={b_mean:.4f}, std={b_std:.4f}"
+                )
 
             # eps处理
             eps_safe = torch.clamp(torch.tensor(self.eps, device=attention_scores.device), min=0.05, max=0.8)
@@ -716,11 +717,12 @@ class AutopoieticAttention(nn.Module):
                 debug_lines.append(f"[Batch {b}] 温度调节出错: {e}")
                 final_scores = torch.clamp(final_scores / 1.0, min=-10.0, max=10.0)
 
-            # 检查异常值比例
+            # 检查异常值比例 (用纯 tensor 比较避免 .item() CUDA 同步)
             abnormal_mask = torch.isnan(final_scores) | torch.isinf(final_scores)
-            abnormal_ratio = abnormal_mask.float().mean().item()
-            if abnormal_ratio > 0.2:
-                debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio*100:.2f}%), 使用安全回退 -> mean_attention")
+            abnormal_ratio_t = abnormal_mask.float().mean()
+            if abnormal_ratio_t > 0.2:
+                if getattr(self, 'debug_mode', False):
+                    debug_lines.append(f"[Batch {b}] 警告: 异常比例过高({abnormal_ratio_t.item()*100:.2f}%), 使用安全回退 -> mean_attention")
                 final_scores = torch.clamp(mean_attention, min=-10.0, max=10.0)
             else:
                 final_scores = torch.nan_to_num(final_scores, nan=0.0)
@@ -753,22 +755,21 @@ class AutopoieticAttention(nn.Module):
         transform_scores = torch.nan_to_num(transform_scores, nan=0.0)
         transform_scores = torch.clamp(transform_scores, min=-30.0, max=30.0)
 
-        # 打印 transform_scores 统计
-        final_min = transform_scores.min().item()
-        final_max = transform_scores.max().item()
-        final_mean = transform_scores.mean().item()
-        final_std = transform_scores.std().item()
-        final_has_nan = torch.isnan(transform_scores).any().item()
-        final_has_inf = torch.isinf(transform_scores).any().item()
-        debug_lines.append(
-            f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
-            f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
-            f"NaN={final_has_nan}, Inf={final_has_inf}"
-        )
-        debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
-
-        # 将所有调试信息写入日志
-        self.log_debug("\n".join(debug_lines))
+        # 打印 transform_scores 统计 (仅 debug 模式)
+        if getattr(self, 'debug_mode', False):
+            final_min = transform_scores.min().item()
+            final_max = transform_scores.max().item()
+            final_mean = transform_scores.mean().item()
+            final_std = transform_scores.std().item()
+            final_has_nan = torch.isnan(transform_scores).any().item()
+            final_has_inf = torch.isinf(transform_scores).any().item()
+            debug_lines.append(
+                f"[Output Stats] transform_scores shape={list(transform_scores.shape)} "
+                f"min={final_min:.4f}, max={final_max:.4f}, mean={final_mean:.4f}, std={final_std:.4f}, "
+                f"NaN={final_has_nan}, Inf={final_has_inf}"
+            )
+            debug_lines.append("[autopoietic_transform] >>>>>>>>> EXIT FUNCTION <<<<<<<<")
+            self.log_debug("\n".join(debug_lines))
         return transform_scores
 
     def forward(
