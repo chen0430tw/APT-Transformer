@@ -3,8 +3,9 @@
 """
 APT 速食预训练脚本 (QuickCook Pretraining)
 
-将 C4(en) + mC4(zh) + FineWeb + HLBD 四套数据集混合进行预训练。
-通过数据稀释 (data dilution) 的方式让模型同时学习英文、中文和结构化课程数据。
+将 C4(en) + Chinese-C4(zh) + FineWeb + HLBD 等数据集混合进行预训练。
+可选启用 Wikipedia / arXiv / GitHub Code 数据集。
+通过数据稀释 (data dilution) 的方式让模型同时学习英文、中文、代码和学术文本。
 
 分词器采用参考 DeepSeek/Qwen 的 Byte-Level BPE 方案:
   - 使用 HuggingFace tokenizers 库从混合语料自动训练
@@ -43,12 +44,20 @@ APT 速食预训练脚本 (QuickCook Pretraining)
 
     # 持续课程学习: 训练中途切换数据
     # 创建 curriculum.json 放到 --datasets-dir:
-    #   {"weights": {"c4_en": 0.2, "mc4_zh": 0.5, "fineweb": 0.2, "hlbd": 0.1}}
+    #   {"weights": {"c4_en": 0.2, "chinese_c4": 0.3, "fineweb": 0.2, "hlbd": 0.1,
+    #               "wiki": 0.1, "arxiv": 0.05, "code": 0.05}}
     # 训练器会在下一个检查间隔自动加载新权重。
 
     # 单机调试 (不启动分布式)
     python -m apt.trainops.scripts.pretrain_quickcook \\
         --output-dir ./quickcook_output --epochs 1 --no-distributed
+
+    # 全数据源训练 (含 Wiki + arXiv + Code):
+    torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
+        --output-dir $WORK/output --epochs 3 \\
+        --use-wiki --weight-wiki 0.10 \\
+        --use-arxiv --weight-arxiv 0.08 \\
+        --use-code --weight-code 0.05 --code-languages Python JavaScript Go
 
     # 启用虚拟 GPU 加速 (可选, 任意组合):
     torchrun --nproc_per_node=4 -m apt.trainops.scripts.pretrain_quickcook \\
@@ -87,7 +96,7 @@ _VIRTUAL_VRAM_AVAILABLE = False
 try:
     from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
     _VIRTUAL_VRAM_AVAILABLE = True
-except ImportError:
+except Exception:
     VirtualVRAMConfig = None  # type: ignore[assignment,misc]
     virtual_vram = None  # type: ignore[assignment]
 
@@ -100,7 +109,7 @@ try:
         vb_stats_summary,
     )
     _VIRTUAL_BLACKWELL_AVAILABLE = True
-except ImportError:
+except Exception:
     VBConfigV64 = None  # type: ignore[assignment,misc]
     apply_virtual_blackwell_v64 = None  # type: ignore[assignment]
     vb_stats_summary = None  # type: ignore[assignment]
@@ -117,7 +126,7 @@ try:
         VA100SignalCollector,
     )
     _VIRTUAL_A100_AVAILABLE = True
-except ImportError:
+except Exception:
     VirtualVRAMBackend = None  # type: ignore[assignment,misc]
     VA100SignalCollector = None  # type: ignore[assignment,misc]
 
@@ -246,16 +255,16 @@ class CurriculumManager:
     持续课程学习管理器。
 
     监视 datasets_dir/curriculum.json, 训练中途可以:
-    1. 修改数据源权重 (如: 降低 C4 比例, 提高 mC4 比例)
+    1. 修改数据源权重 (如: 降低 C4 比例, 提高 chinese_c4 比例)
     2. 指定新的本地数据目录
     3. 关闭/开启某个数据源
 
     curriculum.json 格式:
     {
-        "weights": {"c4_en": 0.2, "mc4_zh": 0.5, "fineweb": 0.2, "hlbd": 0.1},
+        "weights": {"c4_en": 0.2, "chinese_c4": 0.5, "fineweb": 0.2, "hlbd": 0.1},
         "hlbd_path": "/data/new_hlbd/",  // 可选
         "use_c4": true,                  // 可选
-        "use_mc4_zh": true,              // 可选
+        "use_mc4_zh": true,              // 可选 (兼容旧名, 控制 chinese_c4)
         "use_fineweb": true              // 可选
     }
     """
@@ -419,11 +428,13 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
     从多个 HuggingFace 流式数据集 + 本地 HLBD 数据中,
     按指定权重随机抽取样本, 实现数据稀释混合学习。
 
-    设计参考:
+    支持的数据源:
+      - C4: allenai/c4 (英文, ~365GB)
+      - Chinese-C4: shjwudp/chinese-c4 (中文)
       - FineWeb: HuggingFaceFW/fineweb (英文, ~15T tokens)
-      - FineWeb2: HuggingFaceFW/fineweb-2 (多语言, ~3T words)
-      - C4: allenai/c4 (英文, 365GB)
-      - mC4: mc4 (多语言, zh 子集)
+      - Wikipedia: omarkamali/wikipedia-monthly (多语言, 月更, 流式)
+      - arXiv: togethercomputer/RedPajama-Data-1T "arxiv" (论文全文 LaTeX)
+      - Code: codeparrot/github-code (115M 文件, 多语言代码)
       - HLBD: 本地分层语言启蒙数据集 (结构化课程数据)
     """
 
@@ -441,6 +452,16 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         use_c4: bool = True,
         use_mc4_zh: bool = True,
         use_fineweb: bool = True,
+        use_wiki: bool = False,
+        use_arxiv: bool = False,
+        use_code: bool = False,
+        # 顺序遍历模式: 指定的数据源按顺序完整过一遍 (不随机跳跃)
+        # "sequential" = 顺序遍历, "interleaved" = 随机采样 (默认)
+        wiki_mode: str = "sequential",
+        arxiv_mode: str = "sequential",
+        code_mode: str = "sequential",
+        # Code 数据集语言过滤
+        code_languages: Optional[List[str]] = None,
         # 随机种子
         seed: int = 42,
         # 每次从流中预取的文档数
@@ -457,17 +478,28 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         self.rank = rank
         self.world_size = world_size
 
-        # 默认权重: C4_en 40%, mC4_zh 25%, FineWeb 25%, HLBD 10%
+        # 默认权重
         self.weights = weights or {
-            "c4_en": 0.40,
-            "mc4_zh": 0.25,
+            "c4_en": 0.35,
+            "chinese_c4": 0.20,
             "fineweb": 0.25,
             "hlbd": 0.10,
+            "wiki": 0.00,
+            "arxiv": 0.00,
+            "code": 0.00,
         }
 
         self.use_c4 = use_c4
         self.use_mc4_zh = use_mc4_zh
         self.use_fineweb = use_fineweb
+        self.use_wiki = use_wiki
+        self.use_arxiv = use_arxiv
+        self.use_code = use_code
+        self.wiki_mode = wiki_mode
+        self.arxiv_mode = arxiv_mode
+        self.code_mode = code_mode
+        self.code_languages = code_languages or ["Python", "JavaScript", "TypeScript",
+                                                  "Java", "C", "C++", "Go", "Rust"]
         self.hlbd_path = hlbd_path
         self.datasets_dir = datasets_dir
 
@@ -499,7 +531,8 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
 
         return self._hlbd_texts
 
-    def _create_hf_stream(self, dataset_name: str, subset: Optional[str] = None):
+    def _create_hf_stream(self, dataset_name: str, subset: Optional[str] = None,
+                          **extra_kwargs):
         """创建 HuggingFace 流式数据集迭代器"""
         try:
             from datasets import load_dataset
@@ -510,6 +543,7 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             )
 
         kwargs = {"streaming": True, "split": "train", "trust_remote_code": True}
+        kwargs.update(extra_kwargs)
         if subset:
             ds = load_dataset(dataset_name, subset, **kwargs)
         else:
@@ -523,12 +557,28 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
 
     def _extract_text(self, example: Dict[str, Any], source: str) -> Optional[str]:
         """从不同数据源的样本中提取文本"""
-        # C4 和 FineWeb 都用 "text" 字段
+        # --- Code 数据集: codeparrot/github-code 使用 "code" 字段 ---
+        if source == "code":
+            code = example.get("code", "")
+            if code:
+                # 可选: 加上文件路径作为上下文
+                path = example.get("path", "")
+                lang = example.get("language", "")
+                if path:
+                    return f"# {path} ({lang})\n{code}"
+                return code
+            return None
+
+        # --- Wiki 数据集: wikipedia-monthly 使用 "text" 字段 ---
+        # --- arXiv 数据集: RedPajama 使用 "text" 字段 ---
+        # --- C4 / Chinese-C4 / FineWeb 都使用 "text" 字段 ---
         if "text" in example:
             return example["text"]
-        # mC4 也用 "text"
+
+        # mC4 兼容
         if "content" in example:
             return example["content"]
+
         return None
 
     def _tokenize_and_chunk(self, text: str) -> List[torch.Tensor]:
@@ -557,124 +607,289 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
 
         return chunks
 
+    def _init_source(self, name: str, connect_fn, weight: float,
+                     target_dict: dict, names_list: list, weights_list: list,
+                     label: str):
+        """辅助: 尝试连接一个数据源并注册到目标 dict"""
+        try:
+            stream = connect_fn()
+            target_dict[name] = stream
+            names_list.append(name)
+            weights_list.append(weight)
+            logger.info(f"{label} 流式数据集已连接")
+        except Exception as e:
+            logger.warning(f"{label} 连接失败, 跳过: {e}")
+
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
         """
-        交替采样迭代器。
+        混合采样迭代器。
 
-        使用加权随机选择从各数据源采样, 实现数据稀释混合。
+        两种模式:
+          - interleaved (随机交替): C4/Chinese-C4/FineWeb/HLBD 等大规模数据按权重随机采样
+          - sequential (顺序遍历): Wiki/arXiv/Code 等知识密集型数据按顺序完整遍历
+
+        顺序数据源会在每 seq_interval 个随机样本后插入一个顺序文档,
+        确保整个数据集被完整学习一遍, 而不是随机跳跃式采样。
         """
         import random
         rng = random.Random(self.seed + self.rank)
 
-        # === 初始化各数据源 ===
-        sources = {}
-        source_weights = []
-        source_names = []
+        # === 初始化: 分为 interleaved (随机) 和 sequential (顺序) 两组 ===
+        interleaved_sources = {}
+        interleaved_names = []
+        interleaved_weights = []
 
+        sequential_sources = {}   # name -> iterator
+        sequential_names = []
+        sequential_weights = {}   # name -> weight (用于计算插入频率)
+
+        # --- 判断某个数据源该进哪组 ---
+        mode_map = {"wiki": self.wiki_mode, "arxiv": self.arxiv_mode, "code": self.code_mode}
+
+        def _target(name):
+            """返回 (target_dict, names_list, weights_list) 给 interleaved 或 sequential"""
+            if mode_map.get(name) == "sequential":
+                return sequential_sources, sequential_names, None
+            return interleaved_sources, interleaved_names, interleaved_weights
+
+        # --- C4 (en): 始终 interleaved ---
         if self.use_c4 and self.weights.get("c4_en", 0) > 0:
-            try:
-                sources["c4_en"] = self._create_hf_stream("allenai/c4", "en")
-                source_names.append("c4_en")
-                source_weights.append(self.weights["c4_en"])
-                logger.info("C4 (en) 流式数据集已连接")
-            except Exception as e:
-                logger.warning(f"C4 (en) 连接失败, 跳过: {e}")
+            self._init_source(
+                "c4_en",
+                lambda: self._create_hf_stream("allenai/c4", "en"),
+                self.weights["c4_en"],
+                interleaved_sources, interleaved_names, interleaved_weights,
+                "C4 (en)",
+            )
 
-        if self.use_mc4_zh and self.weights.get("mc4_zh", 0) > 0:
-            try:
-                sources["mc4_zh"] = self._create_hf_stream("mc4", "zh")
-                source_names.append("mc4_zh")
-                source_weights.append(self.weights["mc4_zh"])
-                logger.info("mC4 (zh) 流式数据集已连接")
-            except Exception as e:
-                logger.warning(f"mC4 (zh) 连接失败, 跳过: {e}")
+        # --- Chinese-C4 (替代旧版 mC4): 始终 interleaved ---
+        zh_weight = self.weights.get("chinese_c4", 0) or self.weights.get("mc4_zh", 0)
+        if self.use_mc4_zh and zh_weight > 0:
+            self._init_source(
+                "chinese_c4",
+                lambda: self._create_hf_stream("shjwudp/chinese-c4"),
+                zh_weight,
+                interleaved_sources, interleaved_names, interleaved_weights,
+                "Chinese-C4 (shjwudp/chinese-c4)",
+            )
 
+        # --- FineWeb: 始终 interleaved ---
         if self.use_fineweb and self.weights.get("fineweb", 0) > 0:
-            try:
-                sources["fineweb"] = self._create_hf_stream("HuggingFaceFW/fineweb")
-                source_names.append("fineweb")
-                source_weights.append(self.weights["fineweb"])
-                logger.info("FineWeb 流式数据集已连接")
-            except Exception as e:
-                logger.warning(f"FineWeb 连接失败, 跳过: {e}")
+            self._init_source(
+                "fineweb",
+                lambda: self._create_hf_stream("HuggingFaceFW/fineweb"),
+                self.weights["fineweb"],
+                interleaved_sources, interleaved_names, interleaved_weights,
+                "FineWeb",
+            )
 
-        # HLBD (本地, 循环采样)
+        # --- Wikipedia (omarkamali/wikipedia-monthly) ---
+        if self.use_wiki and self.weights.get("wiki", 0) > 0:
+            td, tn, tw = _target("wiki")
+            w = self.weights["wiki"]
+            try:
+                wiki_stream = self._create_hf_stream(
+                    "omarkamali/wikipedia-monthly", "latest.en"
+                )
+                td["wiki"] = wiki_stream
+                tn.append("wiki")
+                if tw is not None:
+                    tw.append(w)
+                else:
+                    sequential_weights["wiki"] = w
+                mode_label = "顺序遍历" if self.wiki_mode == "sequential" else "随机交替"
+                logger.info(f"Wikipedia (en, wikipedia-monthly) [{mode_label}] 已连接")
+            except Exception as e:
+                logger.warning(f"Wikipedia 连接失败, 跳过: {e}")
+
+        # --- arXiv (RedPajama-Data-1T arxiv 子集) ---
+        if self.use_arxiv and self.weights.get("arxiv", 0) > 0:
+            td, tn, tw = _target("arxiv")
+            w = self.weights["arxiv"]
+            try:
+                arxiv_stream = self._create_hf_stream(
+                    "togethercomputer/RedPajama-Data-1T", "arxiv"
+                )
+                td["arxiv"] = arxiv_stream
+                tn.append("arxiv")
+                if tw is not None:
+                    tw.append(w)
+                else:
+                    sequential_weights["arxiv"] = w
+                mode_label = "顺序遍历" if self.arxiv_mode == "sequential" else "随机交替"
+                logger.info(f"arXiv (RedPajama-1T/arxiv) [{mode_label}] 已连接")
+            except Exception as e:
+                logger.warning(f"arXiv 连接失败, 跳过: {e}")
+
+        # --- GitHub Code (codeparrot/github-code) ---
+        if self.use_code and self.weights.get("code", 0) > 0:
+            td, tn, tw = _target("code")
+            w = self.weights["code"]
+            try:
+                code_stream = self._create_hf_stream(
+                    "codeparrot/github-code",
+                    languages=self.code_languages,
+                )
+                td["code"] = code_stream
+                tn.append("code")
+                if tw is not None:
+                    tw.append(w)
+                else:
+                    sequential_weights["code"] = w
+                langs = ", ".join(self.code_languages[:3])
+                mode_label = "顺序遍历" if self.code_mode == "sequential" else "随机交替"
+                logger.info(f"GitHub Code ({langs}...) [{mode_label}] 已连接")
+            except Exception as e:
+                logger.warning(f"GitHub Code 连接失败, 跳过: {e}")
+
+        # --- HLBD (本地, 循环采样): 始终 interleaved ---
         hlbd_texts = self._load_hlbd()
+        hlbd_idx = 0
         if hlbd_texts and self.weights.get("hlbd", 0) > 0:
-            source_names.append("hlbd")
-            source_weights.append(self.weights["hlbd"])
-            hlbd_idx = 0
+            interleaved_names.append("hlbd")
+            interleaved_weights.append(self.weights["hlbd"])
             logger.info(f"HLBD 本地数据已加载: {len(hlbd_texts)} 样本")
 
-        if not source_names:
+        if not interleaved_names and not sequential_names:
             raise RuntimeError("没有可用的数据源! 请检查网络连接或 HLBD 数据路径。")
 
-        # 归一化权重
-        total_w = sum(source_weights)
-        source_weights = [w / total_w for w in source_weights]
+        # === 归一化 interleaved 权重 ===
+        if interleaved_weights:
+            total_w = sum(interleaved_weights)
+            interleaved_weights = [w / total_w for w in interleaved_weights]
 
-        exhausted = set()
+        # === 计算 sequential 插入频率 ===
+        # seq_interval: 每产出 N 个 interleaved 样本后, 插入 1 个 sequential 文档
+        # 越大的 weight → 插入越频繁 (interval 越小)
+        # 公式: interval = round(1 / weight) ，weight=0.10 → 每 10 个随机样本插 1 个
+        seq_intervals = {}
+        for name in sequential_names:
+            w = sequential_weights.get(name, 0.10)
+            seq_intervals[name] = max(1, round(1.0 / w))
+
+        if sequential_names:
+            logger.info(
+                f"顺序遍历数据源: "
+                + ", ".join(f"{n} (每{seq_intervals[n]}步插入1篇)" for n in sequential_names)
+            )
+
+        # === 主循环 ===
+        interleaved_exhausted = set()
+        sequential_exhausted = set()
         sample_count = 0
+        seq_round_robin = 0  # 轮询 sequential 数据源
 
-        while len(exhausted) < len(source_names):
-            # === 持续课程学习: 每 1000 个样本检查 curriculum.json ===
+        # 辅助: 从一个数据源取下一篇文档并 yield 所有 chunk
+        def _yield_from_source(name, stream):
+            """从数据源取一篇文档, 返回 chunk 生成器"""
+            try:
+                example = next(stream)
+            except StopIteration:
+                return None  # 已耗尽
+            text = self._extract_text(example, name)
+            if text is None or len(text.strip()) < 10:
+                return []  # 空文档, 返回空 list (非 None, 表示未耗尽)
+            return self._tokenize_and_chunk(text)
+
+        while True:
+            # 检查是否所有数据源都耗尽
+            all_interleaved_done = (
+                len(interleaved_exhausted) >= len(interleaved_names)
+                if interleaved_names else True
+            )
+            all_sequential_done = (
+                len(sequential_exhausted) >= len(sequential_names)
+                if sequential_names else True
+            )
+            if all_interleaved_done and all_sequential_done:
+                break
+
             sample_count += 1
+
+            # === 持续课程学习: 每 1000 个样本检查 curriculum.json ===
             if sample_count % 1000 == 0:
                 update = self._curriculum.check_for_update()
                 if update:
                     new_weights = update.get("weights")
                     if new_weights:
-                        for i, name in enumerate(source_names):
+                        for i, name in enumerate(interleaved_names):
                             if name in new_weights:
-                                source_weights[i] = new_weights[name]
-                        w_sum = sum(source_weights)
-                        source_weights = [w / w_sum for w in source_weights]
-                        logger.info(f"课程权重已更新: {dict(zip(source_names, source_weights))}")
-                    # 可选: 切换 HLBD 数据路径
+                                interleaved_weights[i] = new_weights[name]
+                        w_sum = sum(interleaved_weights)
+                        if w_sum > 0:
+                            interleaved_weights = [w / w_sum for w in interleaved_weights]
+                        logger.info(f"课程权重已更新: {dict(zip(interleaved_names, interleaved_weights))}")
                     new_hlbd = update.get("hlbd_path")
                     if new_hlbd and new_hlbd != self.hlbd_path:
                         self.hlbd_path = new_hlbd
-                        self._hlbd_texts = None  # 强制重新加载
+                        self._hlbd_texts = None
                         hlbd_texts = self._load_hlbd()
                         logger.info(f"HLBD 数据路径已切换: {new_hlbd}")
-            # 加权随机选择数据源
-            chosen = rng.choices(source_names, weights=source_weights, k=1)[0]
 
-            if chosen in exhausted:
-                continue
+            # === 顺序数据源: 按频率插入 ===
+            if sequential_names and not all_sequential_done:
+                # 从上次停止的位置开始轮询, 每步只推进一格确保公平
+                start_idx = seq_round_robin % len(sequential_names)
+                for offset in range(len(sequential_names)):
+                    seq_name = sequential_names[(start_idx + offset) % len(sequential_names)]
 
-            text = None
+                    if seq_name in sequential_exhausted:
+                        continue
 
-            if chosen == "hlbd":
-                if not hlbd_texts:
-                    exhausted.add("hlbd")
+                    interval = seq_intervals[seq_name]
+                    if sample_count % interval != 0:
+                        continue
+
+                    stream = sequential_sources.get(seq_name)
+                    if stream is None:
+                        sequential_exhausted.add(seq_name)
+                        continue
+
+                    chunks = _yield_from_source(seq_name, stream)
+                    if chunks is None:
+                        logger.info(f"顺序数据源 {seq_name} 已完整遍历")
+                        sequential_exhausted.add(seq_name)
+                        continue
+
+                    for chunk in chunks:
+                        yield {"input_ids": chunk[:-1], "labels": chunk[1:]}
+                    break  # 每步最多插入一篇 sequential 文档
+                seq_round_robin += 1  # 每个主循环步进一格, 而非每次检查都步进
+
+            # === Interleaved 数据源: 加权随机采样 ===
+            if interleaved_names and not all_interleaved_done:
+                chosen = rng.choices(interleaved_names, weights=interleaved_weights, k=1)[0]
+
+                if chosen in interleaved_exhausted:
                     continue
-                text = hlbd_texts[hlbd_idx % len(hlbd_texts)]
-                hlbd_idx += 1
-            else:
-                stream = sources.get(chosen)
-                if stream is None:
-                    exhausted.add(chosen)
-                    continue
-                try:
-                    example = next(stream)
-                    text = self._extract_text(example, chosen)
-                except StopIteration:
-                    logger.info(f"数据源 {chosen} 已耗尽")
-                    exhausted.add(chosen)
+
+                text = None
+
+                if chosen == "hlbd":
+                    if not hlbd_texts:
+                        interleaved_exhausted.add("hlbd")
+                        continue
+                    text = hlbd_texts[hlbd_idx % len(hlbd_texts)]
+                    hlbd_idx += 1
+                else:
+                    stream = interleaved_sources.get(chosen)
+                    if stream is None:
+                        interleaved_exhausted.add(chosen)
+                        continue
+                    try:
+                        example = next(stream)
+                        text = self._extract_text(example, chosen)
+                    except StopIteration:
+                        logger.info(f"数据源 {chosen} 已耗尽")
+                        interleaved_exhausted.add(chosen)
+                        continue
+
+                if text is None or len(text.strip()) < 10:
                     continue
 
-            if text is None or len(text.strip()) < 10:
-                continue
-
-            # 分词 + 切块
-            chunks = self._tokenize_and_chunk(text)
-            for chunk in chunks:
-                # 自回归 LM: input = chunk[:-1], target = chunk[1:]
-                yield {
-                    "input_ids": chunk[:-1],
-                    "labels": chunk[1:],
-                }
+                chunks = self._tokenize_and_chunk(text)
+                for chunk in chunks:
+                    yield {"input_ids": chunk[:-1], "labels": chunk[1:]}
 
 
 def quickcook_collate_fn(
@@ -1234,6 +1449,8 @@ class QuickCookTrainer:
         vb_adapter: Optional[Any] = None,                 # VirtualBlackwellAdapterV64
         va100_tier_manager: Optional[Any] = None,         # VirtualVRAMBackend
         va100_signal_collector: Optional[Any] = None,     # VA100SignalCollector
+        # 模型配置 (保存到 checkpoint 以便恢复)
+        model_config: Optional[Dict[str, Any]] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -1250,6 +1467,12 @@ class QuickCookTrainer:
         self.save_interval = save_interval
         self.max_steps = max_steps
         self.epochs = epochs
+        self.model_config = model_config or {}
+        if self.model_config:
+            _required = {"arch", "vocab_size", "d_model", "num_heads", "num_layers", "max_seq_len"}
+            _missing = _required - self.model_config.keys()
+            if _missing:
+                logger.warning(f"model_config 缺少字段: {_missing}, checkpoint 恢复时可能失败")
 
         # 可选虚拟 GPU 组件
         self._vram_config = virtual_vram_config
@@ -1330,12 +1553,14 @@ class QuickCookTrainer:
         base_model = self.model.module if hasattr(self.model, "module") else self.model
 
         ckpt = {
+            "format": "quickcook",
             "global_step": self.global_step,
             "model_state_dict": base_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "metrics": metrics,
             "tokenizer_vocab_size": self.tokenizer.vocab_size,
+            "model_config": self.model_config,
         }
 
         ckpt_path = os.path.join(
@@ -1805,16 +2030,44 @@ def parse_args():
     parser.add_argument("--datasets-dir", type=str, default=None,
                         help="数据集总目录 (放 curriculum.json 用于持续课程学习)")
     parser.add_argument("--no-c4", action="store_true", help="不使用 C4 (en)")
-    parser.add_argument("--no-mc4", action="store_true", help="不使用 mC4 (zh)")
+    parser.add_argument("--no-mc4", action="store_true",
+                        help="不使用 Chinese-C4 (中文, 替代旧版 mC4)")
     parser.add_argument("--no-fineweb", action="store_true", help="不使用 FineWeb")
-    parser.add_argument("--weight-c4", type=float, default=0.40,
-                        help="C4 (en) 采样权重 (默认 0.40)")
-    parser.add_argument("--weight-mc4", type=float, default=0.25,
-                        help="mC4 (zh) 采样权重 (默认 0.25)")
+    parser.add_argument("--use-wiki", action="store_true",
+                        help="启用 Wikipedia 数据集 (omarkamali/wikipedia-monthly)")
+    parser.add_argument("--use-arxiv", action="store_true",
+                        help="启用 arXiv 论文数据集 (RedPajama-1T/arxiv)")
+    parser.add_argument("--use-code", action="store_true",
+                        help="启用 GitHub Code 数据集 (codeparrot/github-code)")
+    parser.add_argument("--code-languages", type=str, nargs="+",
+                        default=["Python", "JavaScript", "TypeScript",
+                                 "Java", "C", "C++", "Go", "Rust"],
+                        help="Code 数据集语言过滤 (默认: Python JS TS Java C C++ Go Rust)")
+    parser.add_argument("--weight-c4", type=float, default=0.35,
+                        help="C4 (en) 采样权重 (默认 0.35)")
+    parser.add_argument("--weight-mc4", type=float, default=0.20,
+                        help="Chinese-C4 采样权重 (默认 0.20)")
     parser.add_argument("--weight-fineweb", type=float, default=0.25,
                         help="FineWeb 采样权重 (默认 0.25)")
     parser.add_argument("--weight-hlbd", type=float, default=0.10,
                         help="HLBD 采样权重 (默认 0.10)")
+    parser.add_argument("--weight-wiki", type=float, default=0.10,
+                        help="Wikipedia 采样权重 (默认 0.10, 需 --use-wiki)")
+    parser.add_argument("--weight-arxiv", type=float, default=0.08,
+                        help="arXiv 采样权重 (默认 0.08, 需 --use-arxiv)")
+    parser.add_argument("--weight-code", type=float, default=0.05,
+                        help="GitHub Code 采样权重 (默认 0.05, 需 --use-code)")
+    # 顺序遍历 vs 随机交替
+    parser.add_argument("--wiki-mode", type=str, default="sequential",
+                        choices=["sequential", "interleaved"],
+                        help="Wiki 数据加载模式: sequential=顺序完整遍历, "
+                             "interleaved=随机交替采样 (默认 sequential)")
+    parser.add_argument("--arxiv-mode", type=str, default="sequential",
+                        choices=["sequential", "interleaved"],
+                        help="arXiv 数据加载模式 (默认 sequential)")
+    parser.add_argument("--code-mode", type=str, default="sequential",
+                        choices=["sequential", "interleaved"],
+                        help="Code 数据加载模式 (默认 sequential)")
 
     # --- 分词器 ---
     parser.add_argument("--tokenizer-path", type=str, default=None,
@@ -2099,9 +2352,12 @@ def main():
     # --- 数据集 ---
     weights = {
         "c4_en": args.weight_c4,
-        "mc4_zh": args.weight_mc4,
+        "chinese_c4": args.weight_mc4,
         "fineweb": args.weight_fineweb,
         "hlbd": args.weight_hlbd,
+        "wiki": args.weight_wiki,
+        "arxiv": args.weight_arxiv,
+        "code": args.weight_code,
     }
 
     train_dataset = InterleavedStreamDataset(
@@ -2113,6 +2369,13 @@ def main():
         use_c4=not args.no_c4,
         use_mc4_zh=not args.no_mc4,
         use_fineweb=not args.no_fineweb,
+        use_wiki=args.use_wiki,
+        use_arxiv=args.use_arxiv,
+        use_code=args.use_code,
+        code_languages=args.code_languages,
+        wiki_mode=args.wiki_mode,
+        arxiv_mode=args.arxiv_mode,
+        code_mode=args.code_mode,
         seed=args.seed,
         rank=rank,
         world_size=world_size,
@@ -2140,6 +2403,15 @@ def main():
         vb_adapter=vb_adapter,
         va100_tier_manager=va100_tier,
         va100_signal_collector=va100_signal,
+        # 模型配置 (保存到 checkpoint)
+        model_config={
+            "arch": args.model_arch,
+            "vocab_size": tokenizer.vocab_size,
+            "d_model": args.d_model,
+            "num_heads": args.num_heads,
+            "num_layers": args.num_layers,
+            "max_seq_len": args.max_seq_len,
+        },
     )
 
     try:

@@ -20,15 +20,15 @@ Virtual Blackwell特性：
 使用示例：
     try:
         from apt.vgpu.runtime import VirtualGPU
-    except ImportError:
+    except (ImportError, OSError):
         VirtualGPU = None
     try:
         from apt.vgpu.scheduler import GPUScheduler
-    except ImportError:
+    except (ImportError, OSError):
         GPUScheduler = None
     try:
         from apt.vgpu.memory import GPUMemoryManager
-    except ImportError:
+    except (ImportError, OSError):
         GPUMemoryManager = None
 """
 
@@ -44,7 +44,7 @@ try:
         VBOptimizedLinear,
         enable_vb_optimization,
     )
-except ImportError:
+except (ImportError, OSError):
     VirtualBlackwellAdapter = None
     create_virtual_blackwell = None
     VGPUStack = None
@@ -56,7 +56,7 @@ try:
         VGPUResourceEstimator,
         quick_estimate,
     )
-except ImportError:
+except (ImportError, OSError):
     VGPUResourceEstimator = None
     quick_estimate = None
 
