@@ -124,8 +124,9 @@ class LeftSpinStep(nn.Module):
         phi_raw = self.alpha * F.softplus(s - self.tau)
 
         # 惯性平滑（使用全局 phi_prev，适用于 batch 维度）
-        if self.phi_prev.numel() == 1:
-            # 初始化为与 phi_raw 相同形状
+        if self.phi_prev.numel() == 1 or self.phi_prev.shape != phi_raw.shape:
+            # 初始化或重新初始化为与 phi_raw 相同形状
+            # 处理变长序列：当序列长度变化时重新初始化
             self.phi_prev = torch.zeros_like(phi_raw)
 
         phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
