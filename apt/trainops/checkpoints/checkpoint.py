@@ -28,10 +28,11 @@ def save_model(model, tokenizer, path, config=None):
     os.makedirs(tokenizer_path, exist_ok=True)
     tokenizer.save_pretrained(tokenizer_path)
     
-    # 保存配置
+    # 保存配置 (兼容 dict 和带 to_dict() 的配置对象)
     if config:
+        config_dict = config if isinstance(config, dict) else config.to_dict()
         with open(os.path.join(path, "config.json"), 'w') as f:
-            json.dump(config.to_dict(), f, indent=2)
+            json.dump(config_dict, f, indent=2)
 
 def _detect_checkpoint_format(checkpoint):
     """

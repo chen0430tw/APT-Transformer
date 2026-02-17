@@ -828,10 +828,10 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
 
             # === 顺序数据源: 按频率插入 ===
             if sequential_names and not all_sequential_done:
-                # 轮询每个 sequential 源, 检查是否该插入
-                for _ in range(len(sequential_names)):
-                    seq_name = sequential_names[seq_round_robin % len(sequential_names)]
-                    seq_round_robin += 1
+                # 从上次停止的位置开始轮询, 每步只推进一格确保公平
+                start_idx = seq_round_robin % len(sequential_names)
+                for offset in range(len(sequential_names)):
+                    seq_name = sequential_names[(start_idx + offset) % len(sequential_names)]
 
                     if seq_name in sequential_exhausted:
                         continue
@@ -854,6 +854,7 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
                     for chunk in chunks:
                         yield {"input_ids": chunk[:-1], "labels": chunk[1:]}
                     break  # 每步最多插入一篇 sequential 文档
+                seq_round_robin += 1  # 每个主循环步进一格, 而非每次检查都步进
 
             # === Interleaved 数据源: 加权随机采样 ===
             if interleaved_names and not all_interleaved_done:
@@ -1467,6 +1468,11 @@ class QuickCookTrainer:
         self.max_steps = max_steps
         self.epochs = epochs
         self.model_config = model_config or {}
+        if self.model_config:
+            _required = {"arch", "vocab_size", "d_model", "num_heads", "num_layers", "max_seq_len"}
+            _missing = _required - self.model_config.keys()
+            if _missing:
+                logger.warning(f"model_config 缺少字段: {_missing}, checkpoint 恢复时可能失败")
 
         # 可选虚拟 GPU 组件
         self._vram_config = virtual_vram_config
