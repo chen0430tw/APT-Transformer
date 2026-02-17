@@ -18,8 +18,6 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 from apt.core.fake_torch import get_torch
 torch = get_torch()
-from apt.core.fake_torch import get_torch
-torch = get_torch()
 nn = torch.nn
 
 from apt.core.infrastructure.logging import get_progress_logger

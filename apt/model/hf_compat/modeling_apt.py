@@ -10,13 +10,13 @@ APT 支持两种模式:
 import torch
 import torch.nn as nn
 from typing import Optional
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast, Seq2SeqLMOutput
 
 from apt.model.hf_compat.configs import APTConfig
 
 
-class APTForCausalLM(PreTrainedModel):
+class APTForCausalLM(PreTrainedModel, GenerationMixin):
     """APT decoder-only 模式的 HF 封装 (vLLM/OpenRouter 兼容)"""
 
     config_class = APTConfig
@@ -90,7 +90,7 @@ class APTForCausalLM(PreTrainedModel):
         return {"input_ids": input_ids}
 
 
-class APTForSeq2SeqLM(PreTrainedModel):
+class APTForSeq2SeqLM(PreTrainedModel, GenerationMixin):
     """APT encoder-decoder 模式的 HF 封装"""
 
     config_class = APTConfig

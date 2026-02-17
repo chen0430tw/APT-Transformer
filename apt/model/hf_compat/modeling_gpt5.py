@@ -2,13 +2,13 @@
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from apt.model.hf_compat.configs import GPT5Config
 
 
-class GPT5ForCausalLM(PreTrainedModel):
+class GPT5ForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = GPT5Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = False

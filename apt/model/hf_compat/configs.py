@@ -16,11 +16,6 @@ from transformers import PretrainedConfig
 
 class GPT4oConfig(PretrainedConfig):
     model_type = "gpt4o"
-    # auto_map: Hub 上 from_pretrained() 自动解析 (repo 根目录下需要对应 .py)
-    auto_map = {
-        "AutoConfig": "configuration_gpt4o.GPT4oConfig",
-        "AutoModelForCausalLM": "modeling_gpt4o.GPT4oForCausalLM",
-    }
 
     def __init__(
         self,
@@ -54,6 +49,11 @@ class GPT4oConfig(PretrainedConfig):
         self.intermediate_size = d_ff
         self.max_position_embeddings = max_seq_len
         self.num_key_value_heads = num_kv_heads if num_kv_heads else n_heads
+        # auto_map: Hub 上 from_pretrained() 自动解析
+        self.auto_map = {
+            "AutoConfig": "configuration_gpt4o.GPT4oConfig",
+            "AutoModelForCausalLM": "modeling_gpt4o.GPT4oForCausalLM",
+        }
 
 
 # ============================================================================
@@ -62,10 +62,6 @@ class GPT4oConfig(PretrainedConfig):
 
 class GPTo3Config(PretrainedConfig):
     model_type = "gpto3"
-    auto_map = {
-        "AutoConfig": "configuration_gpto3.GPTo3Config",
-        "AutoModelForCausalLM": "modeling_gpto3.GPTo3ForCausalLM",
-    }
 
     def __init__(
         self,
@@ -103,6 +99,10 @@ class GPTo3Config(PretrainedConfig):
         self.intermediate_size = d_ff
         self.max_position_embeddings = max_seq_len
         self.num_key_value_heads = num_kv_heads if num_kv_heads else n_heads
+        self.auto_map = {
+            "AutoConfig": "configuration_gpto3.GPTo3Config",
+            "AutoModelForCausalLM": "modeling_gpto3.GPTo3ForCausalLM",
+        }
 
 
 # ============================================================================
@@ -111,10 +111,6 @@ class GPTo3Config(PretrainedConfig):
 
 class GPT5Config(PretrainedConfig):
     model_type = "gpt5"
-    auto_map = {
-        "AutoConfig": "configuration_gpt5.GPT5Config",
-        "AutoModelForCausalLM": "modeling_gpt5.GPT5ForCausalLM",
-    }
 
     def __init__(
         self,
@@ -158,6 +154,10 @@ class GPT5Config(PretrainedConfig):
         self.num_attention_heads = n_heads
         self.num_hidden_layers = n_layers
         self.num_key_value_heads = num_kv_heads if num_kv_heads else n_heads
+        self.auto_map = {
+            "AutoConfig": "configuration_gpt5.GPT5Config",
+            "AutoModelForCausalLM": "modeling_gpt5.GPT5ForCausalLM",
+        }
 
 
 # ============================================================================
@@ -166,10 +166,6 @@ class GPT5Config(PretrainedConfig):
 
 class Claude4Config(PretrainedConfig):
     model_type = "claude4"
-    auto_map = {
-        "AutoConfig": "configuration_claude4.Claude4Config",
-        "AutoModelForCausalLM": "modeling_claude4.Claude4ForCausalLM",
-    }
 
     def __init__(
         self,
@@ -200,6 +196,10 @@ class Claude4Config(PretrainedConfig):
         self.num_hidden_layers = num_layers
         self.intermediate_size = d_ff
         self.max_position_embeddings = max_seq_len
+        self.auto_map = {
+            "AutoConfig": "configuration_claude4.Claude4Config",
+            "AutoModelForCausalLM": "modeling_claude4.Claude4ForCausalLM",
+        }
 
 
 # ============================================================================
@@ -208,13 +208,7 @@ class Claude4Config(PretrainedConfig):
 
 class APTConfig(PretrainedConfig):
     model_type = "apt"
-    # APT 是 encoder-decoder，标记给 HF
     is_encoder_decoder = True
-    auto_map = {
-        "AutoConfig": "configuration_apt.APTConfig",
-        "AutoModelForCausalLM": "modeling_apt.APTForCausalLM",
-        "AutoModelForSeq2SeqLM": "modeling_apt.APTForSeq2SeqLM",
-    }
 
     def __init__(
         self,
@@ -260,3 +254,8 @@ class APTConfig(PretrainedConfig):
         self.intermediate_size = d_ff
         self.max_position_embeddings = max_seq_len
         self.decoder_layers = num_decoder_layers
+        self.auto_map = {
+            "AutoConfig": "configuration_apt.APTConfig",
+            "AutoModelForCausalLM": "modeling_apt.APTForCausalLM",
+            "AutoModelForSeq2SeqLM": "modeling_apt.APTForSeq2SeqLM",
+        }

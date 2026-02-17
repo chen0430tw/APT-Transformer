@@ -2,13 +2,13 @@
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from apt.model.hf_compat.configs import GPTo3Config
 
 
-class GPTo3ForCausalLM(PreTrainedModel):
+class GPTo3ForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = GPTo3Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = False
