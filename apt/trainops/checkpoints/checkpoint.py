@@ -41,6 +41,9 @@ def _detect_checkpoint_format(checkpoint):
     返回:
         str: "quickcook" | "hlbd" | "unknown"
     """
+    if not isinstance(checkpoint, dict):
+        return "unknown"
+
     # 1. 显式标记
     if checkpoint.get("format") == "quickcook":
         return "quickcook"
@@ -307,6 +310,16 @@ def _load_quickcook_checkpoint(checkpoint, path, device):
             "  3. 手动补丁: 用 torch.load/torch.save 给 checkpoint 添加 model_config 字段"
         )
 
+    # 验证必需字段
+    _required = {"arch", "vocab_size", "d_model", "num_heads", "num_layers", "max_seq_len"}
+    _missing = _required - set(model_config.keys())
+    if _missing:
+        raise ValueError(
+            f"QuickCook checkpoint 的 model_config 缺少必需字段: {_missing}\n"
+            f"  实际包含: {sorted(model_config.keys())}\n"
+            f"  path: {path}"
+        )
+
     # 根据 model_config 创建模型
     arch = model_config["arch"]
     vocab_size = model_config["vocab_size"]
@@ -444,6 +457,9 @@ def _load_single_file_checkpoint_from_dict(checkpoint, path, device):
             """解码ID序列"""
             if isinstance(ids, torch.Tensor):
                 ids = ids.tolist()
+
+            if not ids:
+                return ""
 
             # 移除批次维度
             if isinstance(ids[0], list):
