@@ -901,6 +901,14 @@ def quickcook_collate_fn(
 
     将一个 batch 中长度不等的 input_ids/labels pad 到同一长度。
     """
+    if not batch:
+        # 空 batch 防护: DataLoader 在流式数据源耗尽时可能产生空 batch
+        return {
+            "input_ids": torch.zeros(0, 1, dtype=torch.long),
+            "labels": torch.full((0, 1), -100, dtype=torch.long),
+            "attention_mask": torch.zeros(0, 1, dtype=torch.long),
+        }
+
     input_ids_list = [item["input_ids"] for item in batch]
     labels_list = [item["labels"] for item in batch]
 
@@ -2227,11 +2235,16 @@ def main():
     torch.manual_seed(args.seed + rank)
 
     # --- 分词器 ---
+    tokenizer = None
+    tok_path = os.path.join(args.output_dir, "tokenizer.json")
+
     if args.tokenizer_path and os.path.exists(args.tokenizer_path):
+        # 路径 A: 所有 rank 直接加载已有分词器 (无需 barrier)
         if rank == 0:
             logger.info(f"加载已有分词器: {args.tokenizer_path}")
         tokenizer = AdaptiveBPETokenizer.load(args.tokenizer_path)
     else:
+        # 路径 B: rank 0 训练, 其他 rank 等待后加载
         if rank == 0:
             logger.info("未找到分词器, 从混合语料训练新分词器...")
             corpus_path = os.path.join(args.output_dir, "tokenizer_corpus.txt")
@@ -2245,22 +2258,27 @@ def main():
                 iter(texts),
                 vocab_size=args.vocab_size,
             )
-            tokenizer.save(os.path.join(args.output_dir, "tokenizer.json"))
+            tokenizer.save(tok_path)
             logger.info(f"分词器训练完成, 词表: {tokenizer.vocab_size}")
-        else:
-            # 非 rank 0 进程等待分词器就绪
-            if world_size > 1:
-                dist.barrier()
 
-        # 所有进程加载分词器
-        tok_path = os.path.join(args.output_dir, "tokenizer.json")
-        if rank == 0 and world_size > 1:
-            dist.barrier()  # rank 0 写完后放行
+        # 同步: 所有 rank 都必须到达这里, rank 0 写完文件后才放行
+        if world_size > 1:
+            dist.barrier()
 
-        if rank != 0 or (rank == 0 and args.tokenizer_path is None):
-            if os.path.exists(tok_path):
-                tokenizer = AdaptiveBPETokenizer.load(tok_path)
-            # 如果上面已经训练好了 tokenizer, rank 0 不需要再加载
+        # 非 rank 0 从文件加载 (rank 0 已经有了)
+        if rank != 0:
+            if not os.path.exists(tok_path):
+                raise FileNotFoundError(
+                    f"分词器文件不存在: {tok_path}\n"
+                    f"Rank {rank} 等待 rank 0 训练分词器, 但文件未生成。"
+                )
+            tokenizer = AdaptiveBPETokenizer.load(tok_path)
+
+    if tokenizer is None:
+        raise RuntimeError(
+            "分词器初始化失败。请通过 --tokenizer-path 指定已有分词器, "
+            "或确保数据源可用以训练新分词器。"
+        )
 
     if rank == 0:
         logger.info(f"分词器词表大小: {tokenizer.vocab_size}")
@@ -2278,8 +2296,22 @@ def main():
     if args.resume:
         if rank == 0:
             logger.info(f"从检查点恢复: {args.resume}")
+        if not os.path.exists(args.resume):
+            raise FileNotFoundError(f"检查点文件不存在: {args.resume}")
         ckpt = torch.load(args.resume, map_location="cpu")
-        model.load_state_dict(ckpt["model_state_dict"])
+        if not isinstance(ckpt, dict) or "model_state_dict" not in ckpt:
+            available_keys = list(ckpt.keys()) if isinstance(ckpt, dict) else type(ckpt).__name__
+            raise KeyError(
+                f"检查点格式不兼容: {args.resume}\n"
+                f"  需要 key 'model_state_dict', 实际包含: {available_keys}\n"
+                f"  可能原因: checkpoint 来自不同版本或不同训练脚本"
+            )
+        missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        if rank == 0 and (missing or unexpected):
+            if missing:
+                logger.warning(f"检查点缺少 {len(missing)} 个参数 (模型新增层): {missing[:5]}...")
+            if unexpected:
+                logger.warning(f"检查点多出 {len(unexpected)} 个参数 (模型已删层): {unexpected[:5]}...")
 
     total_params = sum(p.numel() for p in model.parameters())
     if rank == 0:
