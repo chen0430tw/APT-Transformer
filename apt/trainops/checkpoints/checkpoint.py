@@ -33,13 +33,42 @@ def save_model(model, tokenizer, path, config=None):
         with open(os.path.join(path, "config.json"), 'w') as f:
             json.dump(config.to_dict(), f, indent=2)
 
+def _detect_checkpoint_format(checkpoint):
+    """
+    检测 checkpoint 格式。
+
+    返回:
+        str: "quickcook" | "hlbd" | "unknown"
+    """
+    # 1. 显式标记
+    if checkpoint.get("format") == "quickcook":
+        return "quickcook"
+
+    # 2. 有 model_config 且无 HLBD 特征 → QuickCook (新版)
+    if "model_config" in checkpoint and "tokenizer_char_to_id" not in checkpoint:
+        return "quickcook"
+
+    # 3. 有 global_step + tokenizer_vocab_size 且无 HLBD 的 tokenizer_char_to_id → QuickCook (旧版, 缺 model_config)
+    if ("global_step" in checkpoint
+            and "tokenizer_vocab_size" in checkpoint
+            and "tokenizer_char_to_id" not in checkpoint):
+        return "quickcook"
+
+    # 4. 有 HLBD 特征字段
+    if "tokenizer_char_to_id" in checkpoint and "config" in checkpoint:
+        return "hlbd"
+
+    return "unknown"
+
+
 def load_model(path, device=None):
     """
     加载模型、分词器和配置
 
-    支持两种格式:
+    支持三种格式:
     1. 目录格式: 包含 config.json, model.pt, tokenizer/ 等文件
-    2. 单文件格式: .pt checkpoint 文件 (HLBD 格式)
+    2. QuickCook 格式: .pt checkpoint (global_step + model_config + tokenizer.json)
+    3. HLBD 格式: .pt checkpoint (tokenizer_char_to_id + config)
 
     参数:
         path: 模型路径（目录或 .pt 文件）
@@ -48,9 +77,6 @@ def load_model(path, device=None):
     返回:
         tuple: (model, tokenizer, config)
     """
-    from transformers import GPT2Tokenizer
-    from apt.core.config.apt_config import APTConfig
-    from apt.model.architectures.apt_model import APTLargeModel
     from apt.core import get_device
 
     if device is None:
@@ -90,13 +116,22 @@ def load_model(path, device=None):
     if os.path.isfile(path) and path.endswith('.pt'):
         # 探测 checkpoint 格式
         checkpoint = torch.load(path, map_location=device)
-        if checkpoint.get("format") == "quickcook" or (
-            "model_config" in checkpoint and "tokenizer_char_to_id" not in checkpoint
-        ):
+        fmt = _detect_checkpoint_format(checkpoint)
+
+        if fmt == "quickcook":
             return _load_quickcook_checkpoint(checkpoint, path, device)
-        else:
-            # HLBD 格式
+        elif fmt == "hlbd":
             return _load_single_file_checkpoint_from_dict(checkpoint, path, device)
+        else:
+            # 未知格式 — 列出 keys 帮助诊断
+            keys = sorted(checkpoint.keys()) if isinstance(checkpoint, dict) else ["(非 dict)"]
+            raise ValueError(
+                f"无法识别的 checkpoint 格式: {path}\n"
+                f"包含的 keys: {keys}\n\n"
+                f"支持的格式:\n"
+                f"  - QuickCook: 需要 global_step + tokenizer_vocab_size (+ model_config)\n"
+                f"  - HLBD: 需要 tokenizer_char_to_id + config"
+            )
     elif os.path.isdir(path):
         # 目录格式
         return _load_directory_checkpoint(path, device)
@@ -258,11 +293,17 @@ def _load_quickcook_checkpoint(checkpoint, path, device):
 
     model_config = checkpoint.get("model_config", {})
     if not model_config:
+        step = checkpoint.get("global_step", "?")
+        keys = sorted(checkpoint.keys()) if isinstance(checkpoint, dict) else []
         raise ValueError(
             f"QuickCook checkpoint 缺少 model_config 字段: {path}\n"
-            "此 checkpoint 可能来自旧版本的 pretrain_quickcook.py。\n"
-            "请使用 --resume 参数在 pretrain_quickcook.py 中恢复训练，"
-            "而不是通过 load_model() 加载。"
+            f"  global_step={step}, keys={keys}\n\n"
+            "此 checkpoint 来自旧版本的 pretrain_quickcook.py (保存时未包含 model_config)。\n"
+            "无法自动推断模型架构参数 (arch/d_model/num_heads/num_layers/max_seq_len)。\n\n"
+            "解决方案:\n"
+            "  1. 使用 pretrain_quickcook.py --resume 恢复训练, 新的 checkpoint 会包含 model_config\n"
+            "  2. 重新训练 (推荐): python -m apt.trainops.scripts.pretrain_quickcook ...\n"
+            "  3. 手动补丁: 用 torch.load/torch.save 给 checkpoint 添加 model_config 字段"
         )
 
     # 根据 model_config 创建模型
