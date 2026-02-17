@@ -82,7 +82,7 @@ def setup_logging(
         console_handler = logging.StreamHandler(sys.stdout)
     else:
         console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1, closefd=False)
         )
 
     console_handler.setLevel(level)
@@ -167,7 +167,7 @@ def get_progress_logger(
         console_handler = logging.StreamHandler(sys.stdout)
     else:
         console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1, closefd=False)
         )
 
     console_handler.setFormatter(formatter)

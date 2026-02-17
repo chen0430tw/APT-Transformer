@@ -78,20 +78,22 @@ def setup_logging(
     no_encoding = os.environ.get("APT_NO_STDOUT_ENCODING", "0") == "1"
 
     # 创建控制台处理器
+    # 注意: open(fd, closefd=False) 至关重要!
+    # closefd=True (默认) 会在文件对象被 GC 或 handler 被清理时关闭 fd 1 (stdout),
+    # 导致后续所有 print/sys.stdout.write 报 "OSError: Bad file descriptor"
     if no_encoding:
         console_handler = logging.StreamHandler(sys.stdout)
     else:
         try:
             console_handler = logging.StreamHandler(
-                open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+                open(sys.stdout.fileno(), mode='w', encoding='utf-8',
+                     buffering=1, closefd=False)
             )
         except (OSError, ValueError):
-            # 如果stdout文件描述符无效，使用简单的StreamHandler
             console_handler = logging.StreamHandler(sys.stdout)
 
     console_handler.setLevel(level)
 
-    # 创建格式器
     if use_colors:
         formatter = ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     else:
@@ -166,16 +168,16 @@ def get_progress_logger(
     # 简单的格式器用于进度日志
     formatter = logging.Formatter('%(message)s')
 
-    # 创建控制台处理器
+    # 创建控制台处理器 (closefd=False: 不关闭 fd 1)
     if no_encoding:
         console_handler = logging.StreamHandler(sys.stdout)
     else:
         try:
             console_handler = logging.StreamHandler(
-                open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+                open(sys.stdout.fileno(), mode='w', encoding='utf-8',
+                     buffering=1, closefd=False)
             )
         except (OSError, ValueError):
-            # 如果stdout文件描述符无效，使用简单的StreamHandler
             console_handler = logging.StreamHandler(sys.stdout)
 
     console_handler.setFormatter(formatter)

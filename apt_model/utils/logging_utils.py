@@ -176,7 +176,7 @@ def get_progress_logger(name: str = 'progress', log_file: Optional[str] = None) 
     else:
         # 使用UTF-8编码
         console_handler = logging.StreamHandler(
-            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+            open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1, closefd=False)
         )
         
     console_handler.setFormatter(formatter)
