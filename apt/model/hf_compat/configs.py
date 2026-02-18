@@ -229,6 +229,10 @@ class APTConfig(PretrainedConfig):
         eos_token_id: int = 3,
         **kwargs,
     ):
+        # APT 模型使用 weight tying (token_embedding 与 output_projection 共享权重)
+        # 必须告知 HF，否则 save_pretrained() 会重复保存权重，
+        # from_pretrained() 加载后也不会重新绑定
+        kwargs.setdefault("tie_word_embeddings", True)
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,

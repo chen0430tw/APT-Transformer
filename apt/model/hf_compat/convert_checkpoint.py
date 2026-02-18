@@ -160,8 +160,11 @@ def convert(
 
     # 尝试直接加载，如果失败则重映射键名
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if missing and not unexpected:
+    if missing:
         # 可能需要加 "model." 前缀
+        # 注意: 当 checkpoint 使用无前缀键名 (如 token_embedding.weight)
+        # 而 HF wrapper 期望前缀键名 (如 model.token_embedding.weight) 时，
+        # missing 和 unexpected 都会非空，所以这里只检查 missing
         remapped = remap_state_dict(state_dict, model_type)
         missing2, unexpected2 = model.load_state_dict(remapped, strict=False)
         if len(missing2) < len(missing):
