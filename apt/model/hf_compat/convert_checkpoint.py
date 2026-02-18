@@ -243,6 +243,18 @@ def convert(
     state_dict = ckpt["model_state_dict"]
     print(f"        state_dict 键数: {len(state_dict)}")
 
+    # 过滤 LeftSpinStep 的动态 buffer (phi_prev / delta_prev)
+    # 这些 buffer 训练时被动态 resize 到 [batch, seq_len]，
+    # 转换时 shape 必然与新模型的默认值 (scalar) 不匹配。
+    # 保留在 model 中为 persistent，以便 QuickCook 训练恢复时可以加载，
+    # 但 HF 转换不需要它们（首次 forward 会自动 resize）。
+    _leftspin_keys = [k for k in state_dict
+                      if k.endswith('.phi_prev') or k.endswith('.delta_prev')]
+    if _leftspin_keys:
+        for k in _leftspin_keys:
+            del state_dict[k]
+        print(f"        过滤 {len(_leftspin_keys)} 个 LeftSpin 动态 buffer")
+
     # 2. 构建配置
     print("  [2/5] 构建 HF Config...")
     overrides = dict(config_overrides or {})
