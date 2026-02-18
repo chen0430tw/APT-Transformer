@@ -185,6 +185,9 @@ def remap_state_dict(state_dict: Dict[str, torch.Tensor], model_type: str) -> Di
     处理两层映射:
     1. 旧版架构兼容 (分离 q/k/v → 融合 qkv, linear1/2 → ffn, sr_conv → 丢弃)
     2. 添加 "model." 前缀 (原始 APT → HF wrapper)
+
+    注意: phi_prev/delta_prev 等动态 buffer 的 shape 差异
+    由 LeftSpinStep._load_from_state_dict 内部处理，无需在此剥离。
     """
     # 先处理旧版架构映射
     if _is_legacy_checkpoint(state_dict):
@@ -259,10 +262,12 @@ def convert(
     model = model_cls(config)
 
     # 尝试直接加载，如果失败则重映射键名
+    # 注意: LeftSpinStep 的 phi_prev/delta_prev 动态 buffer 的 shape 差异
+    # 由 LeftSpinStep._load_from_state_dict 自动处理（外挂层模式）
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     if missing:
         # 可能需要加 "model." 前缀
-        # 注意: 当 checkpoint 使用无前缀键名 (如 token_embedding.weight)
+        # 当 checkpoint 使用无前缀键名 (如 token_embedding.weight)
         # 而 HF wrapper 期望前缀键名 (如 model.token_embedding.weight) 时，
         # missing 和 unexpected 都会非空，所以这里只检查 missing
         remapped = remap_state_dict(state_dict, model_type)

@@ -62,6 +62,8 @@ class LeftSpinStep(nn.Module):
         self.eps = eps
 
         # 缓冲角历史（用于惯性平滑）
+        # 训练中会被动态 resize 到 [batch, seq_len]，
+        # 恢复训练时通过 _load_from_state_dict 自动处理 shape 差异
         self.register_buffer('phi_prev', torch.tensor(0.0))
         # 上一次的增量（用于计算二阶导数/加速度）
         self.register_buffer('delta_prev', None)
@@ -220,6 +222,42 @@ class LeftSpinStep(nn.Module):
         }
 
         return u_next, stats
+
+    def _load_from_state_dict(
+        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+    ):
+        """处理 phi_prev / delta_prev 的 shape 差异
+
+        这两个 buffer 在训练中会被动态 resize (从 scalar 扩展为 [batch, seq_len])，
+        checkpoint 保存时带着训练时的 shape。加载到新模型时 shape 可能不同
+        （不同 batch_size 或序列长度），此时重置为 scalar 而不是报错。
+        同理 delta_prev 可能是 None 也可能是 [batch, seq_len, d_model]。
+
+        类似自生成注意力 (auto_u/auto_v) 的外挂层模式：
+        模块自身负责兼容性，不需要外部 strip。
+        """
+        phi_key = prefix + 'phi_prev'
+        delta_key = prefix + 'delta_prev'
+
+        # phi_prev: 如果 shape 不匹配，重置为 scalar（首次 forward 会重新 resize）
+        if phi_key in state_dict:
+            saved = state_dict[phi_key]
+            if saved.shape != self.phi_prev.shape:
+                # shape 不同说明 batch/seq 变了，惯性记忆失效，重置
+                state_dict[phi_key] = torch.tensor(0.0, dtype=saved.dtype)
+
+        # delta_prev: 如果目标是 None 但 checkpoint 里有值，跳过
+        if delta_key in state_dict:
+            saved = state_dict[delta_key]
+            if self.delta_prev is None and saved is not None:
+                # 当前模型 delta_prev=None，checkpoint 里有训练时的值
+                # 直接丢弃 — 新的 forward 会重新计算
+                del state_dict[delta_key]
+
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict,
+            missing_keys, unexpected_keys, error_msgs
+        )
 
     def reset_state(self):
         """重置内部状态（用于新序列开始）"""
