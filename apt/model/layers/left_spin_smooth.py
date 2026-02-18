@@ -61,10 +61,11 @@ class LeftSpinStep(nn.Module):
         self.gate_type = gate_type
         self.eps = eps
 
-        # 缓冲角历史（用于惯性平滑）
-        self.register_buffer('phi_prev', torch.tensor(0.0))
-        # 上一次的增量（用于计算二阶导数/加速度）
-        self.register_buffer('delta_prev', None)
+        # 缓冲角历史（用于惯性平滑）— 非持久化，因为训练中会被动态 resize
+        # 保存在 checkpoint 中会导致 load_state_dict shape mismatch
+        self.register_buffer('phi_prev', torch.tensor(0.0), persistent=False)
+        # 上一次的增量（用于计算二阶导数/加速度）— 同理非持久化
+        self.register_buffer('delta_prev', None, persistent=False)
 
     def compute_spike_strength(
         self,

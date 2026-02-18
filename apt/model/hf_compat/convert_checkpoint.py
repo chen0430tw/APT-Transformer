@@ -179,17 +179,49 @@ def _remap_legacy_apt_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[st
     return new_sd
 
 
+def _strip_runtime_buffers(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """移除训练时动态 buffer，避免 load_state_dict 的 shape mismatch
+
+    LeftSpinStep 的 phi_prev/delta_prev 在训练中会被动态 resize
+    (从 scalar [] 扩展为 [batch, seq_len])，保存 checkpoint 时会带着
+    训练时的 shape。HF wrapper 新建模型时这些 buffer 是 scalar/None，
+    load_state_dict 即使 strict=False 也会报 size mismatch。
+
+    这些 buffer 是纯运行时状态，不影响模型能力，安全移除。
+    """
+    runtime_patterns = (
+        ".phi_prev",        # LeftSpinStep 缓冲角历史（动态 resize）
+        ".delta_prev",      # LeftSpinStep 上次增量（动态 resize）
+        ".total_steps",     # LeftSpinResidual 统计计数器
+        ".smoothed_steps",  # LeftSpinResidual 统计计数器
+    )
+    stripped = {}
+    removed = []
+    for k, v in state_dict.items():
+        if any(k.endswith(p) for p in runtime_patterns):
+            removed.append(k)
+        else:
+            stripped[k] = v
+    if removed:
+        print(f"        移除 {len(removed)} 个运行时 buffer (phi_prev/delta_prev/统计计数器)")
+    return stripped
+
+
 def remap_state_dict(state_dict: Dict[str, torch.Tensor], model_type: str) -> Dict[str, torch.Tensor]:
     """重映射 state_dict 键名
 
-    处理两层映射:
+    处理三层映射:
     1. 旧版架构兼容 (分离 q/k/v → 融合 qkv, linear1/2 → ffn, sr_conv → 丢弃)
-    2. 添加 "model." 前缀 (原始 APT → HF wrapper)
+    2. 移除运行时 buffer (phi_prev/delta_prev 等动态 resize 的训练状态)
+    3. 添加 "model." 前缀 (原始 APT → HF wrapper)
     """
     # 先处理旧版架构映射
     if _is_legacy_checkpoint(state_dict):
         print("        检测到旧版 APT checkpoint, 执行架构键名映射...")
         state_dict = _remap_legacy_apt_state_dict(state_dict)
+
+    # 移除运行时 buffer
+    state_dict = _strip_runtime_buffers(state_dict)
 
     # 再添加 model. 前缀
     new_sd = {}
@@ -258,15 +290,48 @@ def convert(
     model_cls = _import_class(model_cls_path)
     model = model_cls(config)
 
+    # 先移除运行时 buffer，避免 shape mismatch 导致 load_state_dict 崩溃
+    # (LeftSpinStep 的 phi_prev/delta_prev 在训练中会被动态 resize)
+    state_dict = _strip_runtime_buffers(state_dict)
+
     # 尝试直接加载，如果失败则重映射键名
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    try:
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    except RuntimeError as e:
+        if "size mismatch" in str(e):
+            print(f"        直接加载出现 shape mismatch, 尝试键名重映射...")
+            missing = list(model.state_dict().keys())  # 强制走 remap 路径
+            unexpected = []
+        else:
+            raise
+
     if missing:
         # 可能需要加 "model." 前缀
         # 注意: 当 checkpoint 使用无前缀键名 (如 token_embedding.weight)
         # 而 HF wrapper 期望前缀键名 (如 model.token_embedding.weight) 时，
         # missing 和 unexpected 都会非空，所以这里只检查 missing
         remapped = remap_state_dict(state_dict, model_type)
-        missing2, unexpected2 = model.load_state_dict(remapped, strict=False)
+        try:
+            missing2, unexpected2 = model.load_state_dict(remapped, strict=False)
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                # 还有其他 shape mismatch，逐键过滤
+                print(f"        仍有 shape mismatch, 执行逐键 shape 兼容加载...")
+                model_sd = model.state_dict()
+                compatible = {
+                    k: v for k, v in remapped.items()
+                    if k in model_sd and model_sd[k].shape == v.shape
+                }
+                skipped = set(remapped.keys()) - set(compatible.keys())
+                if skipped:
+                    print(f"        跳过 {len(skipped)} 个 shape 不匹配的键")
+                    for sk in sorted(skipped)[:5]:
+                        ckpt_shape = remapped[sk].shape if sk in remapped else "N/A"
+                        model_shape = model_sd[sk].shape if sk in model_sd else "N/A"
+                        print(f"          - {sk}: checkpoint {ckpt_shape} vs model {model_shape}")
+                missing2, unexpected2 = model.load_state_dict(compatible, strict=False)
+            else:
+                raise
         if len(missing2) < len(missing):
             missing, unexpected = missing2, unexpected2
             state_dict = remapped
