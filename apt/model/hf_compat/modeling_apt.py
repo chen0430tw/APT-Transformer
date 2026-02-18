@@ -67,9 +67,13 @@ class APTForCausalLM(PreTrainedModel, GenerationMixin):
     def tie_weights(self, **kwargs):
         """绑定 token_embedding 和 output_projection 的权重
 
-        APT 模型在构造时已内部绑定 (apt_model.py:1570)，
-        此方法确保 HF 的 from_pretrained() 加载后也能正确重新绑定。
+        HF 5.x: 父类通过 _tied_weights_keys dict 驱动原生绑定机制，
+        会更新 all_tied_weights_keys 并在 save_pretrained 中自动去重。
+        回退: 手动 setattr 以兼容不同 HF 版本。
         """
+        # 调用父类 — 让 HF 5.x 原生绑定 + all_tied_weights_keys 更新
+        super().tie_weights(**kwargs)
+        # 额外保证: 手动绑定 (兼容 HF 4.x / 版本差异)
         if getattr(self.config, "tie_word_embeddings", False):
             input_embeddings = self.get_input_embeddings()
             output_embeddings = self.get_output_embeddings()
@@ -157,6 +161,7 @@ class APTForSeq2SeqLM(PreTrainedModel, GenerationMixin):
 
     def tie_weights(self, **kwargs):
         """绑定 token_embedding 和 output_projection 的权重"""
+        super().tie_weights(**kwargs)
         if getattr(self.config, "tie_word_embeddings", False):
             input_embeddings = self.get_input_embeddings()
             output_embeddings = self.get_output_embeddings()

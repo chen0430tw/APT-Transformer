@@ -304,7 +304,22 @@ def convert(
 
     # 4. 保存为 safetensors (或 .bin)
     print("  [4/5] 保存模型权重...")
-    model.save_pretrained(output_dir, safe_serialization=safe_serialization)
+    # 手动构建 state_dict，去掉共享权重中的冗余副本。
+    # APT 的 output_projection.weight 和 token_embedding.weight 共享同一 tensor，
+    # 不同 HF 版本对 _tied_weights_keys 格式要求不一致 (list vs dict)，
+    # 直接从 state_dict 删除冗余键最稳定——load 时由 tie_weights() 重新绑定。
+    save_sd = model.state_dict()
+    tied_pairs = [
+        ("model.output_projection.weight", "model.token_embedding.weight"),
+    ]
+    for tied_key, source_key in tied_pairs:
+        if tied_key in save_sd and source_key in save_sd:
+            if save_sd[tied_key].data_ptr() == save_sd[source_key].data_ptr():
+                del save_sd[tied_key]
+                print(f"        权重共享: {tied_key} → {source_key} (仅保存一份)")
+    model.save_pretrained(
+        output_dir, safe_serialization=safe_serialization, state_dict=save_sd
+    )
     fmt = "safetensors" if safe_serialization else "pytorch_bin"
     print(f"        权重格式: {fmt}")
 
