@@ -27,7 +27,7 @@ class VeinProjector(nn.Module):
     Low-rank projector: provides project() / reconstruct().
     U: R^r -> R^d, V: R^d -> R^r with orthogonal init.
     """
-    def __init__(self, d_model: int, rank: int):
+    def __init__(self, d_model: int, rank: int, **kwargs):
         super().__init__()
         assert 1 <= rank < d_model, "rank must be in [1, d_model-1]"
         self.d_model = d_model

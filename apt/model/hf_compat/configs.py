@@ -153,6 +153,7 @@ class GPT5Config(PretrainedConfig):
         self.hidden_size = d_model
         self.num_attention_heads = n_heads
         self.num_hidden_layers = n_layers
+        self.intermediate_size = 4 * d_model
         self.num_key_value_heads = num_kv_heads if num_kv_heads else n_heads
         self.auto_map = {
             "AutoConfig": "configuration_gpt5.GPT5Config",

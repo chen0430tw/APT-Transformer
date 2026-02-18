@@ -213,7 +213,7 @@ def save_generation_config(output_dir: str, model_type: str, eos_token_id: int =
         "top_k": 50,
         "max_new_tokens": 2048,
         "repetition_penalty": 1.1,
-        "transformers_version": "4.40.0",
+        "transformers_version": __import__("transformers").__version__,
     }
     path = os.path.join(output_dir, "generation_config.json")
     with open(path, "w", encoding="utf-8") as f:
