@@ -74,8 +74,9 @@ def build_config(model_type: str, ckpt: Dict[str, Any], overrides: Dict[str, Any
     config_cls = _import_class(config_cls_path)
 
     # 尝试从检查点中提取模型配置
+    # 支持新版 ("model_config") 和旧版 ("config") 两种格式
     config_kwargs = {}
-    model_config = ckpt.get("model_config", {})
+    model_config = ckpt.get("model_config") or ckpt.get("config", {})
     if isinstance(model_config, dict):
         config_kwargs.update(model_config)
     elif hasattr(model_config, "__dict__"):
@@ -91,15 +92,108 @@ def build_config(model_type: str, ckpt: Dict[str, Any], overrides: Dict[str, Any
     return config_cls(**config_kwargs)
 
 
+def _is_legacy_checkpoint(state_dict: Dict[str, torch.Tensor]) -> bool:
+    """检测是否为旧版架构的 checkpoint
+
+    旧版特征: 使用分离的 q_proj/k_proj/v_proj 和 linear1/linear2
+    新版特征: 使用融合的 qkv_proj 和 ffn.dense_ffn
+    """
+    has_separate_qkv = any(
+        ".q_proj." in k or ".k_proj." in k or ".v_proj." in k
+        for k in state_dict.keys()
+    )
+    has_fused_qkv = any(".qkv_proj." in k for k in state_dict.keys())
+    return has_separate_qkv and not has_fused_qkv
+
+
+def _remap_legacy_apt_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """将旧版 APT checkpoint 的 state_dict 转换为新版格式
+
+    处理以下变更:
+    1. q_proj + k_proj + v_proj → qkv_proj (权重拼接)
+    2. linear1/linear2 → ffn.dense_ffn.0/ffn.dense_ffn.3 (路径重命名)
+    3. sr_conv1/sr_conv2/sr_layernorm → 丢弃 (架构不兼容, auto_u/auto_v/auto_gate 随机初始化)
+    """
+    import re
+
+    new_sd = {}
+    # 收集 q/k/v 权重用于后续合并
+    qkv_buffer: Dict[str, Dict[str, torch.Tensor]] = {}
+    skipped_keys = []
+
+    for k, v in state_dict.items():
+        # --- 1. 丢弃旧版 sr_conv (与新版 auto_u/auto_v/auto_gate 架构不兼容) ---
+        if ".sr_conv1." in k or ".sr_conv2." in k or ".sr_layernorm." in k:
+            skipped_keys.append(k)
+            continue
+
+        # --- 2. 收集分离的 q/k/v 投影用于合并 ---
+        m = re.match(r"(.+\.(?:self_attn|multihead_attn))\.(q_proj|k_proj|v_proj)\.(weight|bias)", k)
+        if m:
+            attn_prefix = m.group(1)   # e.g. "encoder_layers.0.self_attn"
+            proj_type = m.group(2)      # "q_proj", "k_proj", "v_proj"
+            param_type = m.group(3)     # "weight" or "bias"
+            buf_key = f"{attn_prefix}.{param_type}"
+            if buf_key not in qkv_buffer:
+                qkv_buffer[buf_key] = {}
+            qkv_buffer[buf_key][proj_type] = v
+            continue
+
+        # --- 3. FFN 路径重命名: linear1 → ffn.dense_ffn.0, linear2 → ffn.dense_ffn.3 ---
+        if ".linear1." in k:
+            new_k = k.replace(".linear1.", ".ffn.dense_ffn.0.")
+            new_sd[new_k] = v
+            continue
+        if ".linear2." in k:
+            new_k = k.replace(".linear2.", ".ffn.dense_ffn.3.")
+            new_sd[new_k] = v
+            continue
+
+        # --- 4. 其他 key 保持不变 ---
+        new_sd[k] = v
+
+    # --- 合并 q/k/v → qkv_proj ---
+    for buf_key, projections in qkv_buffer.items():
+        # buf_key 格式: "encoder_layers.0.self_attn.weight"
+        parts = buf_key.rsplit(".", 1)
+        attn_prefix = parts[0]  # "encoder_layers.0.self_attn"
+        param_type = parts[1]    # "weight" or "bias"
+
+        if all(p in projections for p in ("q_proj", "k_proj", "v_proj")):
+            # 拼接: [q, k, v] → qkv (dim 0)
+            merged = torch.cat([
+                projections["q_proj"],
+                projections["k_proj"],
+                projections["v_proj"],
+            ], dim=0)
+            new_k = f"{attn_prefix}.qkv_proj.{param_type}"
+            new_sd[new_k] = merged
+        else:
+            # 不完整, 保留原始 key
+            for proj_type, tensor in projections.items():
+                new_sd[f"{attn_prefix}.{proj_type}.{param_type}"] = tensor
+
+    if skipped_keys:
+        print(f"        旧版兼容: 跳过 {len(skipped_keys)} 个 sr_conv 键 (新版使用 auto_u/auto_v/auto_gate)")
+
+    return new_sd
+
+
 def remap_state_dict(state_dict: Dict[str, torch.Tensor], model_type: str) -> Dict[str, torch.Tensor]:
     """重映射 state_dict 键名
 
-    原始模型直接保存的 state_dict 键名可能不带 "model." 前缀，
-    而 HF wrapper 的键名是 "model.xxx"。
+    处理两层映射:
+    1. 旧版架构兼容 (分离 q/k/v → 融合 qkv, linear1/2 → ffn, sr_conv → 丢弃)
+    2. 添加 "model." 前缀 (原始 APT → HF wrapper)
     """
+    # 先处理旧版架构映射
+    if _is_legacy_checkpoint(state_dict):
+        print("        检测到旧版 APT checkpoint, 执行架构键名映射...")
+        state_dict = _remap_legacy_apt_state_dict(state_dict)
+
+    # 再添加 model. 前缀
     new_sd = {}
     for k, v in state_dict.items():
-        # 已经有 model. 前缀的保持不变
         if k.startswith("model."):
             new_sd[k] = v
         else:
@@ -148,7 +242,13 @@ def convert(
 
     # 2. 构建配置
     print("  [2/5] 构建 HF Config...")
-    config = build_config(model_type, ckpt, config_overrides or {})
+    overrides = dict(config_overrides or {})
+    # 旧版 checkpoint 自动设置兼容参数
+    if _is_legacy_checkpoint(state_dict):
+        overrides.setdefault("use_rmsnorm", False)   # 旧版用 LayerNorm
+        overrides.setdefault("use_swiglu", False)     # 旧版用标准 FFN
+        print("        旧版 checkpoint: 自动设置 use_rmsnorm=False, use_swiglu=False")
+    config = build_config(model_type, ckpt, overrides)
     config.save_pretrained(output_dir)
     print(f"        config.json -> {output_dir}/config.json")
 
