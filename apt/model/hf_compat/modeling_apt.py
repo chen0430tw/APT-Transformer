@@ -22,6 +22,9 @@ class APTForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = APTConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = False
+    # 声明 output_projection.weight 与 token_embedding.weight 绑定，
+    # 让 HF 的 save_pretrained() 不重复保存
+    _tied_weights_keys = {"model.output_projection.weight": "model.token_embedding.weight"}
 
     def __init__(self, config: APTConfig):
         super().__init__(config)
@@ -61,6 +64,18 @@ class APTForCausalLM(PreTrainedModel, GenerationMixin):
     def set_output_embeddings(self, value):
         self.model.output_projection = value
 
+    def tie_weights(self, **kwargs):
+        """绑定 token_embedding 和 output_projection 的权重
+
+        APT 模型在构造时已内部绑定 (apt_model.py:1570)，
+        此方法确保 HF 的 from_pretrained() 加载后也能正确重新绑定。
+        """
+        if getattr(self.config, "tie_word_embeddings", False):
+            input_embeddings = self.get_input_embeddings()
+            output_embeddings = self.get_output_embeddings()
+            if output_embeddings is not None and input_embeddings is not None:
+                output_embeddings.weight = input_embeddings.weight
+
     def forward(
         self,
         input_ids=None,
@@ -96,6 +111,7 @@ class APTForSeq2SeqLM(PreTrainedModel, GenerationMixin):
     config_class = APTConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = False
+    _tied_weights_keys = {"model.output_projection.weight": "model.token_embedding.weight"}
 
     def __init__(self, config: APTConfig):
         super().__init__(config)
@@ -138,6 +154,14 @@ class APTForSeq2SeqLM(PreTrainedModel, GenerationMixin):
 
     def get_encoder(self):
         return self.model
+
+    def tie_weights(self, **kwargs):
+        """绑定 token_embedding 和 output_projection 的权重"""
+        if getattr(self.config, "tie_word_embeddings", False):
+            input_embeddings = self.get_input_embeddings()
+            output_embeddings = self.get_output_embeddings()
+            if output_embeddings is not None and input_embeddings is not None:
+                output_embeddings.weight = input_embeddings.weight
 
     def forward(
         self,

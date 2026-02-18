@@ -153,6 +153,7 @@ class GPT5Config(PretrainedConfig):
         self.hidden_size = d_model
         self.num_attention_heads = n_heads
         self.num_hidden_layers = n_layers
+        self.intermediate_size = 4 * d_model
         self.num_key_value_heads = num_kv_heads if num_kv_heads else n_heads
         self.auto_map = {
             "AutoConfig": "configuration_gpt5.GPT5Config",
@@ -229,6 +230,10 @@ class APTConfig(PretrainedConfig):
         eos_token_id: int = 3,
         **kwargs,
     ):
+        # APT 模型使用 weight tying (token_embedding 与 output_projection 共享权重)
+        # 必须告知 HF，否则 save_pretrained() 会重复保存权重，
+        # from_pretrained() 加载后也不会重新绑定
+        kwargs.setdefault("tie_word_embeddings", True)
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
