@@ -21,9 +21,11 @@ class VeinProjector(nn.Module):
 
     This is the original implementation from vft_tva.py.
     """
-    def __init__(self, d_model: int, rank: int):
+    def __init__(self, d_model: int, rank: int, **kwargs):
         super().__init__()
         assert 1 <= rank < d_model, "rank must be in [1, d_model-1]"
+        self.d_model = d_model
+        self.rank = rank
         self.U = nn.Linear(rank, d_model, bias=False)
         self.V = nn.Linear(d_model, rank, bias=False)
         nn.init.orthogonal_(self.U.weight)
