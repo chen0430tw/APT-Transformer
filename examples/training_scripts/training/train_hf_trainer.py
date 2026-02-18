@@ -54,10 +54,10 @@ from train_hlbd_playground import DynamicTagTokenizer, HLBDPlaygroundDataset, co
 # APT模型HuggingFace适配器
 # ============================================================================
 
-class APTConfig(PretrainedConfig):
-    """APT模型配置（HuggingFace兼容）"""
+class APTConfigLegacy(PretrainedConfig):
+    """APT模型配置（旧版训练脚本用, 正式版请用 apt.model.hf_compat.APTConfig）"""
 
-    model_type = "apt"
+    model_type = "apt_legacy"
 
     def __init__(
         self,
@@ -84,12 +84,12 @@ class APTConfig(PretrainedConfig):
         self.use_dbc_dac = use_dbc_dac
 
 
-class APTForCausalLM(PreTrainedModel):
-    """APT模型HuggingFace包装器"""
+class APTForCausalLMLegacy(PreTrainedModel):
+    """APT模型HuggingFace包装器（旧版, 正式版请用 apt.model.hf_compat.APTForCausalLM）"""
 
-    config_class = APTConfig
+    config_class = APTConfigLegacy
 
-    def __init__(self, config: APTConfig):
+    def __init__(self, config: APTConfigLegacy):
         super().__init__(config)
 
         # 创建APT模型配置
@@ -380,7 +380,7 @@ def main():
 
     # 模型配置
     print("\n🏗️  构建APT模型...")
-    config = APTConfig(
+    config = APTConfigLegacy(
         vocab_size=tokenizer.vocab_size,
         d_model=args.d_model,
         n_heads=args.n_heads,
@@ -392,7 +392,7 @@ def main():
         use_dbc_dac=True
     )
 
-    model = APTForCausalLM(config)
+    model = APTForCausalLMLegacy(config)
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"   总参数: {total_params:,}")
