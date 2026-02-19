@@ -445,7 +445,7 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
       - ProLong-TextFull: orionweller/ProLong-TextFull (MDS 格式, arxiv+books+openwebmath,
                           需提前下载到本地并安装 mosaicml-streaming)
       - Wikipedia: omarkamali/wikipedia-monthly (多语言, 月更, 流式)
-      - arXiv: togethercomputer/RedPajama-Data-1T "arxiv" (论文全文 LaTeX)
+      - arXiv/数学: EleutherAI/proof-pile-2 (arXiv LaTeX 源 + 代数计算栈 + 数学网页, 55B tokens)
       - Code: codeparrot/github-code (115M 文件, 多语言代码)
       - HLBD: 本地分层语言启蒙数据集 (结构化课程数据)
     """
@@ -472,6 +472,8 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         prolong_subsets: Optional[List[str]] = None,
         use_wiki: bool = False,
         use_arxiv: bool = False,
+        use_finemath: bool = False,
+        finemath_config: str = "finemath-4plus",
         use_code: bool = False,
         # 顺序遍历模式: 指定的数据源按顺序完整过一遍 (不随机跳跃)
         # "sequential" = 顺序遍历, "interleaved" = 随机采样 (默认)
@@ -507,6 +509,7 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             "prolong": 0.00,
             "wiki": 0.00,
             "arxiv": 0.00,
+            "finemath": 0.00,
             "code": 0.00,
         }
 
@@ -518,9 +521,11 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         self.cosmopedia_subset = cosmopedia_subset
         self.use_prolong = use_prolong
         self.prolong_path = prolong_path
-        self.prolong_subsets = prolong_subsets or ["arxiv", "books", "openwebmath"]
+        self.prolong_subsets = prolong_subsets or ["books"]
         self.use_wiki = use_wiki
         self.use_arxiv = use_arxiv
+        self.use_finemath = use_finemath
+        self.finemath_config = finemath_config
         self.use_code = use_code
         self.wiki_mode = wiki_mode
         self.arxiv_mode = arxiv_mode
@@ -683,7 +688,8 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             return None
 
         # --- Wiki 数据集: wikipedia-monthly 使用 "text" 字段 ---
-        # --- arXiv 数据集: RedPajama 使用 "text" 字段 ---
+        # --- arXiv 数据集: proof-pile-2 使用 "text" 字段 ---
+        # --- FineMath: HuggingFaceTB/finemath 使用 "text" 字段 ---
         # --- C4 / Chinese-C4 / FineWeb 都使用 "text" 字段 ---
         if "text" in example:
             return example["text"]
@@ -757,7 +763,12 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         sequential_weights = {}   # name -> weight (用于计算插入频率)
 
         # --- 判断某个数据源该进哪组 ---
-        mode_map = {"wiki": self.wiki_mode, "arxiv": self.arxiv_mode, "code": self.code_mode}
+        mode_map = {
+            "wiki": self.wiki_mode,
+            "arxiv": self.arxiv_mode,
+            "finemath": "interleaved",  # FineMath 始终 interleaved（数据量小，顺序遍历无意义）
+            "code": self.code_mode,
+        }
 
         def _target(name):
             """返回 (target_dict, names_list, weights_list) 给 interleaved 或 sequential"""
@@ -855,13 +866,18 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             except Exception as e:
                 logger.warning(f"Wikipedia 连接失败, 跳过: {e}")
 
-        # --- arXiv (RedPajama-Data-1T arxiv 子集) ---
+        # --- arXiv/数学 (EleutherAI/proof-pile-2: arXiv LaTeX源 + 代数计算栈 + 数学网页) ---
+        # proof-pile-2 default 配置包含:
+        #   arxiv LaTeX 源 (~29B tokens, 真实数学符号，非 PDF 解析)
+        #   algebraic-stack (11B tokens, Lean/Coq/Isabelle/CAS 形式化代码)
+        #   open-web-math (15B tokens)
+        # 合计 ~55B tokens，Llemma 7B/34B 预训练验证配方
         if self.use_arxiv and self.weights.get("arxiv", 0) > 0:
             td, tn, tw = _target("arxiv")
             w = self.weights["arxiv"]
             try:
                 arxiv_stream = self._create_hf_stream(
-                    "togethercomputer/RedPajama-Data-1T", "arxiv"
+                    "EleutherAI/proof-pile-2", "default"
                 )
                 td["arxiv"] = arxiv_stream
                 tn.append("arxiv")
@@ -870,9 +886,31 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
                 else:
                     sequential_weights["arxiv"] = w
                 mode_label = "顺序遍历" if self.arxiv_mode == "sequential" else "随机交替"
-                logger.info(f"arXiv (RedPajama-1T/arxiv) [{mode_label}] 已连接")
+                logger.info(f"arXiv/数学 (proof-pile-2: LaTeX源+代数栈+数学网页) [{mode_label}] 已连接")
             except Exception as e:
-                logger.warning(f"arXiv 连接失败, 跳过: {e}")
+                logger.warning(f"arXiv/proof-pile-2 连接失败, 跳过: {e}")
+
+        # --- FineMath (HuggingFaceTB/finemath: 高质量数学解题内容) ---
+        # LLaMA-3.1-70B 打分过滤的数学网页内容
+        #   finemath-3plus: 34B tokens (3-5 分)
+        #   finemath-4plus:  9.6B tokens (4-5 分, 质量更高)
+        if self.use_finemath and self.weights.get("finemath", 0) > 0:
+            td, tn, tw = _target("finemath")
+            w = self.weights["finemath"]
+            _fm_config = self.finemath_config
+            try:
+                finemath_stream = self._create_hf_stream(
+                    "HuggingFaceTB/finemath", _fm_config
+                )
+                td["finemath"] = finemath_stream
+                tn.append("finemath")
+                if tw is not None:
+                    tw.append(w)
+                else:
+                    sequential_weights["finemath"] = w
+                logger.info(f"FineMath ({_fm_config}: 高质量数学解题内容) 已连接")
+            except Exception as e:
+                logger.warning(f"FineMath 连接失败, 跳过: {e}")
 
         # --- GitHub Code (codeparrot/github-code) ---
         if self.use_code and self.weights.get("code", 0) > 0:
@@ -2218,7 +2256,8 @@ def parse_args():
     parser.add_argument("--use-wiki", action="store_true",
                         help="启用 Wikipedia 数据集 (omarkamali/wikipedia-monthly)")
     parser.add_argument("--use-arxiv", action="store_true",
-                        help="启用 arXiv 论文数据集 (RedPajama-1T/arxiv)")
+                        help="启用 arXiv/数学数据集 (EleutherAI/proof-pile-2: "
+                             "arXiv LaTeX源+代数计算栈+数学网页, 55B tokens)")
     parser.add_argument("--use-code", action="store_true",
                         help="启用 GitHub Code 数据集 (codeparrot/github-code)")
     parser.add_argument("--code-languages", type=str, nargs="+",
@@ -2236,7 +2275,16 @@ def parse_args():
     parser.add_argument("--weight-wiki", type=float, default=0.10,
                         help="Wikipedia 采样权重 (默认 0.10, 需 --use-wiki)")
     parser.add_argument("--weight-arxiv", type=float, default=0.08,
-                        help="arXiv 采样权重 (默认 0.08, 需 --use-arxiv)")
+                        help="arXiv/proof-pile-2 采样权重 (默认 0.08, 需 --use-arxiv)")
+    parser.add_argument("--use-finemath", action="store_true",
+                        help="启用 FineMath 数据集 (HuggingFaceTB/finemath, "
+                             "LLaMA-3.1-70B 打分高质量数学内容)")
+    parser.add_argument("--finemath-config", type=str, default="finemath-4plus",
+                        choices=["finemath-3plus", "finemath-4plus"],
+                        help="FineMath 子集 (默认 finemath-4plus: 9.6B tokens 高质量; "
+                             "finemath-3plus: 34B tokens 更大规模)")
+    parser.add_argument("--weight-finemath", type=float, default=0.10,
+                        help="FineMath 采样权重 (默认 0.10, 需 --use-finemath)")
     parser.add_argument("--weight-code", type=float, default=0.05,
                         help="GitHub Code 采样权重 (默认 0.05, 需 --use-code)")
     # 顺序遍历 vs 随机交替
@@ -2274,8 +2322,8 @@ def parse_args():
                              "(huggingface-cli download orionweller/ProLong-TextFull "
                              "--repo-type dataset --local-dir <path>)")
     parser.add_argument("--prolong-subsets", type=str, nargs="+",
-                        default=["arxiv", "books", "openwebmath"],
-                        help="ProLong 子集列表 (默认: arxiv books openwebmath)")
+                        default=["books"],
+                        help="ProLong 子集列表 (默认: books; arxiv/openwebmath 由 proof-pile-2 替代)")
     parser.add_argument("--weight-prolong", type=float, default=0.10,
                         help="ProLong 采样权重 (默认 0.10, 需 --use-prolong)")
 
@@ -2326,6 +2374,17 @@ def parse_args():
     parser.add_argument("--gradient-checkpointing", action="store_true",
                         help="启用梯度检查点 (省显存)")
 
+    # --- 训练阶段速记 (--stage 会自动覆盖数据源开关和权重默认值) ---
+    # Stage 1: 通用多语言预训练底噪 (C4/FineWeb/mC4 主导, 少量数学/代码)
+    # Stage 2: 数学/推理强化 (proof-pile-2 + finemath-4plus + cosmopedia 主导)
+    parser.add_argument(
+        "--stage", type=int, default=None, choices=[1, 2],
+        help="训练阶段速记 (1=通用预训练底噪, 2=数学推理强化). "
+             "选择 Stage 2 时自动启用 --use-arxiv --use-finemath --use-cosmopedia "
+             "--use-code 并调整权重为推荐的 Stage 2 比例. "
+             "可配合其他权重参数手动微调.",
+    )
+
     # --- 缓存 & 杂项 ---
     parser.add_argument("--cache-dir", type=str, default=None,
                         help="HF 缓存目录 (默认: $WORK/.cache/huggingface). "
@@ -2373,6 +2432,29 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # --- --stage 速记: 自动覆盖数据源开关和权重为推荐配置 ---
+    if args.stage == 2:
+        # Stage 2: 数学/推理强化
+        # 启用 proof-pile-2 arXiv、FineMath-4plus、Cosmopedia(auto_math_text)、Code
+        args.use_arxiv = True
+        args.use_finemath = True
+        args.finemath_config = "finemath-4plus"
+        args.use_cosmopedia = True
+        args.cosmopedia_subset = "auto_math_text"
+        args.use_code = True
+        # 推荐 Stage 2 权重（代码↑, 数学↑, 通用Web↓）
+        args.weight_c4     = 0.10
+        args.weight_mc4    = 0.08
+        args.weight_fineweb = 0.10
+        args.weight_code   = 0.12
+        args.weight_arxiv  = 0.15
+        args.weight_finemath = 0.10
+        args.weight_cosmopedia = 0.05
+        # bookcorpus / wiki / prolong 保持原默认（用户可另行启用）
+    elif args.stage == 1:
+        # Stage 1: 通用预训练底噪（默认行为，无需覆盖）
+        pass
 
     # --- 缓存目录 (在任何 HF import 之前设置) ---
     setup_cache_dir(args.cache_dir)
@@ -2594,6 +2676,7 @@ def main():
         "prolong": args.weight_prolong,
         "wiki": args.weight_wiki,
         "arxiv": args.weight_arxiv,
+        "finemath": args.weight_finemath if args.use_finemath else 0.0,
         "code": args.weight_code,
     }
 
@@ -2614,6 +2697,8 @@ def main():
         prolong_subsets=args.prolong_subsets,
         use_wiki=args.use_wiki,
         use_arxiv=args.use_arxiv,
+        use_finemath=args.use_finemath,
+        finemath_config=args.finemath_config,
         use_code=args.use_code,
         code_languages=args.code_languages,
         wiki_mode=args.wiki_mode,

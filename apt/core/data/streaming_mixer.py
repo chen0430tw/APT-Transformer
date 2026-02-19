@@ -267,6 +267,9 @@ def _prolong_mds_generator(
     ProLong-TextFull (orionweller/ProLong-TextFull) 使用 MosaicML Streaming
     MDS 格式存储，包含 arxiv + books + openwebmath 三个子集。
 
+    注意：本项目仅使用 books 子集（默认），arxiv/openwebmath 改由
+    EleutherAI/proof-pile-2 提供（保留真实 LaTeX 源，质量更高）。
+
     使用前需要:
       1. 下载数据集::
 
@@ -280,17 +283,12 @@ def _prolong_mds_generator(
     目录结构（每个子集下有多个 shard 组）::
 
         <local_path>/
-            arxiv/
-                1-2/  (index.json + *.mds.zstd)
-                1-7/
             books/
                 3-9/
-            openwebmath/
-                0-7/
 
     参数:
         local_path: ProLong-TextFull 根目录路径
-        subsets:    子集列表，默认 ["arxiv", "books", "openwebmath"]
+        subsets:    子集列表，默认 ["books"]（arxiv/openwebmath 由 proof-pile-2 替代）
         min_chars:  最小字符数
     """
     try:
@@ -305,7 +303,7 @@ def _prolong_mds_generator(
         logger.warning(f"ProLong 本地路径不存在: {local_path}")
         return
 
-    _subsets = subsets or ['arxiv', 'books', 'openwebmath']
+    _subsets = subsets or ['books']
     for subset in _subsets:
         subset_dir = os.path.join(local_path, subset)
         if not os.path.isdir(subset_dir):
@@ -355,7 +353,7 @@ def make_prolong_mds_iterable(
 
     参数:
         local_path: ProLong-TextFull 根目录路径
-        subsets:    子集列表（默认 ["arxiv", "books", "openwebmath"]）
+        subsets:    子集列表（默认 ["books"]，arxiv/openwebmath 由 proof-pile-2 替代）
         min_chars:  最小字符数
     返回:
         datasets.IterableDataset，字段为 {'text': str}
@@ -704,7 +702,7 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "lang":    "books",
         "note":    "英文书籍 — BookCorpus 7185 本，MIT 许可，提升叙事/长文本理解",
     },
-    # ── ProLong-TextFull（arxiv+books+openwebmath 长上下文混合，MDS 格式）────
+    # ── ProLong-TextFull（只用 books 子集，arxiv/openwebmath 由 proof-pile-2 替代）────
     # local_path 默认 None，跳过；提前下载后设置路径即可启用：
     #   huggingface-cli download orionweller/ProLong-TextFull \
     #       --repo-type dataset --local-dir ./prolong_textfull
@@ -712,10 +710,10 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
     {
         "source_type": "prolong_mds",
         "local_path":  None,
-        "subsets":     ["arxiv", "books", "openwebmath"],
+        "subsets":     ["books"],
         "weight":      0.04,
-        "lang":        "prolong",
-        "note":        "ProLong-TextFull (orionweller) — 长上下文 arxiv+books+openwebmath",
+        "lang":        "prolong-books",
+        "note":        "ProLong-TextFull books 子集（长上下文书籍，MDS 格式，arxiv/openwebmath 由 proof-pile-2 替代）",
     },
     # ── Wikipedia（高质量知识锚点，小权重上采样，参考 LLaMA-3 处理方式）──
     {
@@ -751,9 +749,134 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "note":    "韩文维基百科 2023-11 快照",
     },
 ]
-# 合计权重（ProLong local_path=None 时跳过，其余归一化）:
+# 合计权重（ProLong local_path=None 时跳过，其余自动归一化）:
 # 0.31+0.18+0.08+0.05+0.04+0.04+0.04+0.08+0.05+0.03+(0.04)+0.02+0.02+0.01+0.01 = 1.00
-# 不含 prolong: 0.96（自动归一化）；含 prolong: 1.00
+# 不含 prolong: 0.96（自动归一化）；含 prolong books: 1.00
+
+# ── Stage 1 alias ──────────────────────────────────────────────────────────────
+#: MULTILINGUAL_BASE_MIX 即 Stage 1 通用预训练底噪
+STAGE_1_MIX: List[Dict[str, Any]] = MULTILINGUAL_BASE_MIX
+
+# ── Stage 2: 数学/推理能力强化 mix ────────────────────────────────────────────
+#:
+#: 设计原则：在 Stage 1 通用能力基础上，强化数学符号处理、形式化推理、代码-数学迁移。
+#:
+#: 相比 Stage 1 主要变化：
+#:   1. FineWeb-2 多语言总占比从 74% 降至约 31%，减少通用 Web 噪声
+#:   2. 代码占比从 8% 升至 12%，代码推理正向迁移数学推理
+#:   3. 新增 proof-pile-2 15%：
+#:        arXiv LaTeX 源（~29B tokens，真实数学符号）
+#:        + 代数计算栈 algebraic-stack（11B tokens，CAS/Lean/Coq/Isabelle 形式化证明）
+#:        + 数学网页 open-web-math（15B tokens）
+#:        合计 55B tokens，Llemma 7B/34B 预训练验证配方
+#:   4. 新增 finemath-4plus 10%：
+#:        LLaMA-3.1-70B 打分 4-5 分的高质量数学解题步骤网页，9.6B tokens
+#:        GSM8k/MATH benchmark SOTA（2024）
+#:   5. 新增 cosmopedia/auto_math_text 5%：合成数学教科书，10.3B tokens
+#:   6. ProLong-TextFull 仍只用 books 子集（长文本能力保持）
+#:
+#: 有效权重合计（不含 ProLong 本地路径时）:
+#:   0.18+0.10+0.03+0.12+0.15+0.10+0.05+0.03+0.02+0.02+0.03 = 0.83 → 自动归一化
+#:   含 ProLong books: +0.04 → 0.87 → 自动归一化
+STAGE_2_MIX: List[Dict[str, Any]] = [
+    # ── 通用 Web（缩减至约 31%，保留多语言基础）───────────────────────────────
+    {
+        "dataset": "HuggingFaceFW/fineweb-2",
+        "config":  "eng_Latn",
+        "column":  "text",
+        "weight":  0.18,
+        "lang":    "en",
+        "note":    "英语 Web — FineWeb-2（Stage 2 减量，保留语言能力基础）",
+    },
+    {
+        "dataset": "HuggingFaceFW/fineweb-2",
+        "config":  "zho_Hans",
+        "column":  "text",
+        "weight":  0.10,
+        "lang":    "zh",
+        "note":    "简体中文 Web — FineWeb-2",
+    },
+    {
+        "dataset": "HuggingFaceFW/fineweb-2",
+        "config":  "jpn_Jpan",
+        "column":  "text",
+        "weight":  0.03,
+        "lang":    "ja",
+        "note":    "日文 Web — FineWeb-2（保留少量，维持 CJK 能力）",
+    },
+    # ── 代码（提升至 12%，代码推理与数学推理正向迁移）───────────────────────
+    {
+        "dataset": "codeparrot/github-code-clean",
+        "config":  None,
+        "column":  "code",
+        "weight":  0.12,
+        "lang":    "code",
+        "note":    "多语言代码 — github-code-clean（Stage 2 增至 12%，强化推理）",
+    },
+    # ── arXiv LaTeX 数学源（核心新增，替代 RedPajama/ProLong-arxiv）─────────
+    {
+        "dataset": "EleutherAI/proof-pile-2",
+        "config":  "default",
+        "column":  "text",
+        "weight":  0.15,
+        "lang":    "proof-pile",
+        "note":    "proof-pile-2 默认配置：arXiv LaTeX 源(29B) + 代数计算栈(11B) + "
+                   "数学网页 open-web-math(15B)，共 55B tokens，Llemma 7B/34B 验证配方",
+    },
+    # ── 高质量数学网页（LLaMA-3.1-70B 打分过滤）─────────────────────────────
+    {
+        "dataset": "HuggingFaceTB/finemath",
+        "config":  "finemath-4plus",
+        "column":  "text",
+        "weight":  0.10,
+        "lang":    "finemath",
+        "note":    "FineMath-4+：LLaMA-3.1-70B 打分 4-5 分，高质量数学解题内容，"
+                   "9.6B tokens，GSM8k/MATH SOTA（2024）",
+    },
+    # ── 合成数学教科书（Cosmopedia）──────────────────────────────────────────
+    {
+        "dataset": "HuggingFaceTB/cosmopedia",
+        "config":  "auto_math_text",
+        "column":  "text",
+        "weight":  0.05,
+        "lang":    "cosmopedia-math",
+        "note":    "Cosmopedia auto_math_text：数学网站合成教科书，10.3B tokens，Apache 2.0",
+    },
+    # ── 书籍长文本（ProLong books + BookCorpus，维持长上下文能力）───────────
+    {
+        "source_type": "prolong_mds",
+        "local_path":  None,
+        "subsets":     ["books"],
+        "weight":      0.04,
+        "lang":        "prolong-books",
+        "note":        "ProLong-TextFull books 子集（长上下文书籍，MDS 格式，需本地下载）",
+    },
+    {
+        "dataset": "rojagtap/bookcorpus",
+        "config":  None,
+        "column":  "text",
+        "weight":  0.03,
+        "lang":    "books",
+        "note":    "BookCorpus 英文书籍（叙事长文本，维持长程依赖建模）",
+    },
+    # ── Wikipedia 知识锚点（小权重，避免稀释数学训练目标）──────────────────
+    {
+        "dataset": "wikimedia/wikipedia",
+        "config":  "20231101.en",
+        "column":  "text",
+        "weight":  0.02,
+        "lang":    "wiki-en",
+        "note":    "英文维基（知识锚点，小权重）",
+    },
+    {
+        "dataset": "wikimedia/wikipedia",
+        "config":  "20231101.zh",
+        "column":  "text",
+        "weight":  0.02,
+        "lang":    "wiki-zh",
+        "note":    "中文维基（知识锚点，小权重）",
+    },
+]
 
 
 # ============================================================================
