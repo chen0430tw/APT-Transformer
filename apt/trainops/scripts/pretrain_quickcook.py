@@ -64,7 +64,8 @@ APT 速食预训练脚本 (QuickCook Pretraining)
         --output-dir $WORK/output --epochs 3 \\
         --use-virtual-vram \\
         --use-virtual-blackwell --vb-pulse-interval 20 \\
-        --use-virtual-a100 --va100-vram-budget-gb 7.5
+        --use-virtual-a100 --va100-vram-budget-gb 7.5 \\
+        --use-lecac --lecac-bits 2
 
 作者: chen0430tw
 """
@@ -144,6 +145,18 @@ try:
 except Exception:
     VirtualVRAMBackend = None  # type: ignore[assignment,misc]
     VA100SignalCollector = None  # type: ignore[assignment,misc]
+
+# --- LECAC: 激活值量化存储 + 梯度补偿 ---
+_LECAC_AVAILABLE = False
+try:
+    from apt.vgpu.runtime.lecac import (
+        replace_linear_with_lecac,
+        LECACConfig,
+    )
+    _LECAC_AVAILABLE = True
+except Exception:
+    replace_linear_with_lecac = None  # type: ignore[assignment]
+    LECACConfig = None  # type: ignore[assignment,misc]
 
 # --- mosaicml-streaming: ProLong-TextFull MDS 格式读取 ---
 _MOSAICML_STREAMING_AVAILABLE = False
@@ -2439,6 +2452,18 @@ def parse_args():
     vgpu_group.add_argument("--va100-prefetch-window", type=int, default=2,
                             help="Virtual A100: 预取窗口 (提前搬运几层, 默认 2)")
 
+    # LECAC: 激活值量化存储 + 梯度补偿
+    vgpu_group.add_argument("--use-lecac", action="store_true",
+                            help="启用 LECAC (INT2/INT4 激活值量化 + 低熵梯度补偿, 降低训练显存)")
+    vgpu_group.add_argument("--lecac-bits", type=int, default=2, choices=[2, 4],
+                            help="LECAC 量化精度: 2=INT2 (默认, 最省显存) 或 4=INT4 (更高精度)")
+    vgpu_group.add_argument("--lecac-alpha", type=float, default=None,
+                            help="LECAC 补偿强度 (默认 4/e ≈ 1.4715, 即自然均衡常数)")
+    vgpu_group.add_argument("--lecac-orthogonal", action="store_true",
+                            help="LECAC: 启用正交投影补偿 (减少梯度方向漂移, 默认关闭)")
+    vgpu_group.add_argument("--lecac-skip-names", type=str, nargs="+", default=[],
+                            help="LECAC: 跳过的子模块名称前缀 (如 lm_head embed, 默认空)")
+
     # DeepSpeed 会注入自己的 argparse 参数
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="(DeepSpeed 自动注入)")
@@ -2633,6 +2658,37 @@ def main():
                     f"[Virtual Blackwell] 已替换 {replaced} 个 nn.Linear, "
                     f"pulse_interval={args.vb_pulse_interval}, "
                     f"fake_int8={args.vb_use_fake_int8}"
+                )
+
+    # --- LECAC: 激活值量化存储 + 梯度补偿 ---
+    # 必须在 DDP/FSDP wrap 之前, 因为它修改模型结构 (替换 nn.Linear)
+    if args.use_lecac:
+        if not _LECAC_AVAILABLE:
+            if rank == 0:
+                logger.warning(
+                    "已指定 --use-lecac 但 lecac 不可用, "
+                    "请确认 apt.vgpu.runtime.lecac 可导入。跳过。"
+                )
+        else:
+            import math as _math
+            lecac_alpha = args.lecac_alpha if args.lecac_alpha is not None else 4.0 / _math.e
+            skip_names = tuple(args.lecac_skip_names) if args.lecac_skip_names else ()
+            replace_linear_with_lecac(
+                model,
+                bits=args.lecac_bits,
+                alpha=lecac_alpha,
+                orthogonal=args.lecac_orthogonal,
+                skip_names=skip_names,
+            )
+            if rank == 0:
+                lecac_count = sum(
+                    1 for m in model.modules()
+                    if type(m).__name__ == "LECACLinear"
+                )
+                logger.info(
+                    f"[LECAC] 已替换 {lecac_count} 个 nn.Linear, "
+                    f"bits={args.lecac_bits}, alpha={lecac_alpha:.4f}, "
+                    f"orthogonal={args.lecac_orthogonal}"
                 )
 
     # --- Virtual VRAM: 激活值 offload 配置 (不修改模型, 训练时用 context) ---
