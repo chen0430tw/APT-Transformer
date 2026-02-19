@@ -86,6 +86,21 @@ import torch.distributed as dist
 
 logger = logging.getLogger(__name__)
 
+# datasets>=4.0 移除了 trust_remote_code 参数（C4/mC4 已迁移 Parquet 格式，不再需要）
+# 旧版本仍需要该参数，否则 C4/mC4 自定义脚本无法加载
+def _datasets_supports_trust_remote_code() -> bool:
+    try:
+        import importlib.metadata
+        ver = importlib.metadata.version("datasets")
+        major = int(ver.split(".")[0])
+        return major < 4
+    except Exception:
+        return False  # 无法判断时保守起见不传，新版本行为
+
+_HF_LOAD_KWARGS: Dict[str, Any] = {}
+if _datasets_supports_trust_remote_code():
+    _HF_LOAD_KWARGS["trust_remote_code"] = True
+
 
 # ============================================================================
 # 可选依赖: 虚拟 GPU 加速 (Virtual VRAM / Virtual Blackwell / Virtual A100)
@@ -660,7 +675,8 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
                 "流式加载不需要下载完整数据集, 会按需从 HuggingFace Hub 拉取。"
             )
 
-        kwargs = {"streaming": True, "split": "train", "trust_remote_code": True}
+        kwargs = {"streaming": True, "split": "train"}
+        kwargs.update(_HF_LOAD_KWARGS)
         kwargs.update(extra_kwargs)
         if subset:
             ds = load_dataset(dataset_name, subset, **kwargs)
@@ -2159,7 +2175,7 @@ def collect_tokenizer_corpus(
         from datasets import load_dataset
         logger.info(f"从 C4 (en) 采样 {per_source} 条...")
         ds = load_dataset("allenai/c4", "en", streaming=True, split="train",
-                          trust_remote_code=True)
+                          **_HF_LOAD_KWARGS)
         count = 0
         for example in ds:
             if "text" in example and len(example["text"].strip()) > 50:
@@ -2176,7 +2192,7 @@ def collect_tokenizer_corpus(
         from datasets import load_dataset
         logger.info(f"从 mC4 (zh) 采样 {per_source} 条...")
         ds = load_dataset("mc4", "zh", streaming=True, split="train",
-                          trust_remote_code=True)
+                          **_HF_LOAD_KWARGS)
         count = 0
         for example in ds:
             if "text" in example and len(example["text"].strip()) > 50:

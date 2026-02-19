@@ -1,0 +1,89 @@
+{
+  "timestamp": "2026-02-19T15:38:00.135901",
+  "hardware": {
+    "gpu": [
+      {
+        "id": 0,
+        "name": "CPU Only",
+        "type": "cpu"
+      }
+    ],
+    "cpu": {
+      "model": "x86_64",
+      "cores": 16,
+      "architecture": "x86_64"
+    },
+    "memory": {
+      "total_gb": 16.0,
+      "available_gb": 8.0,
+      "used_percent": 50.0
+    },
+    "storage": {
+      "total_gb": 500.0,
+      "free_gb": 250.0,
+      "used_percent": 50.0
+    }
+  },
+  "results": [
+    {
+      "config": {
+        "name": "小型模型 (7B)",
+        "model_size_gb": 14,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 2.0,
+        "cpu_gb": 8.0,
+        "ssd_gb": 4.0,
+        "overflow_gb": 0.0,
+        "total_gb": 14,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": true,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": true,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 44.3,
+        "rating": "一般 (Fair)",
+        "gpu_hit_rate": 14.3,
+        "cpu_hit_rate": 57.1,
+        "ssd_hit_rate": 28.6
+      }
+    },
+    {
+      "config": {
+        "name": "中型模型 (13B)",
+        "model_size_gb": 26,
+        "num_gpus": 1
+      },
+      "vb_config": {
+        "gpu_gb": 2.0,
+        "cpu_gb": 8.0,
+        "ssd_gb": 16.0,
+        "overflow_gb": 0.0,
+        "total_gb": 26,
+        "num_gpus": 1
+      },
+      "feasibility": {
+        "overall": true,
+        "gpu_available": true,
+        "gpu_memory": true,
+        "cpu_memory": true,
+        "storage": true,
+        "no_overflow": true
+      },
+      "performance": {
+        "score": 28.5,
+        "rating": "较差 (Poor)",
+        "gpu_hit_rate": 7.7,
+        "cpu_hit_rate": 30.8,
+        "ssd_hit_rate": 61.5
+      }
+    }
+  ]
+}
