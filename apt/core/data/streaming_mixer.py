@@ -637,6 +637,14 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
     },
     {
         "dataset": "HuggingFaceFW/fineweb-2",
+        "config":  "zho_Hant",
+        "column":  "text",
+        "weight":  0.05,
+        "lang":    "zh-hant",
+        "note":    "繁体中文 Web 文本 — FineWeb-2（涵盖台湾/香港/澳门地区繁体语料）",
+    },
+    {
+        "dataset": "HuggingFaceFW/fineweb-2",
         "config":  "jpn_Jpan",
         "column":  "text",
         "weight":  0.08,
@@ -750,8 +758,9 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
     },
 ]
 # 合计权重（ProLong local_path=None 时跳过，其余自动归一化）:
-# 0.31+0.18+0.08+0.05+0.04+0.04+0.04+0.08+0.05+0.03+(0.04)+0.02+0.02+0.01+0.01 = 1.00
-# 不含 prolong: 0.96（自动归一化）；含 prolong books: 1.00
+# 0.31+0.18+0.05+0.08+0.05+0.04+0.04+0.04+0.08+0.05+0.03+(0.04)+0.02+0.02+0.01+0.01 = 1.05
+# 权重总和 > 1 时由 interleave_datasets 自动归一化为概率分布
+# 不含 prolong: 1.01（自动归一化）；含 prolong books: 1.05（自动归一化）
 
 # ── Stage 1 alias ──────────────────────────────────────────────────────────────
 #: MULTILINGUAL_BASE_MIX 即 Stage 1 通用预训练底噪
@@ -776,8 +785,8 @@ STAGE_1_MIX: List[Dict[str, Any]] = MULTILINGUAL_BASE_MIX
 #:   6. ProLong-TextFull 仍只用 books 子集（长文本能力保持）
 #:
 #: 有效权重合计（不含 ProLong 本地路径时）:
-#:   0.18+0.10+0.03+0.12+0.15+0.10+0.05+0.03+0.02+0.02+0.03 = 0.83 → 自动归一化
-#:   含 ProLong books: +0.04 → 0.87 → 自动归一化
+#:   0.18+0.10+0.03+0.03+0.12+0.15+0.10+0.05+0.03+0.02+0.02+0.03 = 0.86 → 自动归一化
+#:   含 ProLong books: +0.04 → 0.90 → 自动归一化
 STAGE_2_MIX: List[Dict[str, Any]] = [
     # ── 通用 Web（缩减至约 31%，保留多语言基础）───────────────────────────────
     {
@@ -795,6 +804,14 @@ STAGE_2_MIX: List[Dict[str, Any]] = [
         "weight":  0.10,
         "lang":    "zh",
         "note":    "简体中文 Web — FineWeb-2",
+    },
+    {
+        "dataset": "HuggingFaceFW/fineweb-2",
+        "config":  "zho_Hant",
+        "column":  "text",
+        "weight":  0.03,
+        "lang":    "zh-hant",
+        "note":    "繁体中文 Web — FineWeb-2（台湾/香港/澳门繁体语料）",
     },
     {
         "dataset": "HuggingFaceFW/fineweb-2",
