@@ -130,6 +130,14 @@ except Exception:
     VirtualVRAMBackend = None  # type: ignore[assignment,misc]
     VA100SignalCollector = None  # type: ignore[assignment,misc]
 
+# --- mosaicml-streaming: ProLong-TextFull MDS 格式读取 ---
+_MOSAICML_STREAMING_AVAILABLE = False
+try:
+    from streaming import LocalDataset as _MDSLocalDataset
+    _MOSAICML_STREAMING_AVAILABLE = True
+except Exception:
+    _MDSLocalDataset = None  # type: ignore[assignment,misc]
+
 
 # ============================================================================
 # 工具: HF / datasets 缓存路径设置
@@ -432,6 +440,10 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
       - C4: allenai/c4 (英文, ~365GB)
       - Chinese-C4: shjwudp/chinese-c4 (中文)
       - FineWeb: HuggingFaceFW/fineweb (英文, ~15T tokens)
+      - BookCorpus: rojagtap/bookcorpus (~4.6GB, 7185 本英文书, MIT License)
+      - Cosmopedia: HuggingFaceTB/cosmopedia (25B tokens, 合成教科书/故事, Apache 2.0)
+      - ProLong-TextFull: orionweller/ProLong-TextFull (MDS 格式, arxiv+books+openwebmath,
+                          需提前下载到本地并安装 mosaicml-streaming)
       - Wikipedia: omarkamali/wikipedia-monthly (多语言, 月更, 流式)
       - arXiv: togethercomputer/RedPajama-Data-1T "arxiv" (论文全文 LaTeX)
       - Code: codeparrot/github-code (115M 文件, 多语言代码)
@@ -452,6 +464,12 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         use_c4: bool = True,
         use_mc4_zh: bool = True,
         use_fineweb: bool = True,
+        use_bookcorpus: bool = False,
+        use_cosmopedia: bool = False,
+        cosmopedia_subset: str = "web_samples_v2",
+        use_prolong: bool = False,
+        prolong_path: Optional[str] = None,
+        prolong_subsets: Optional[List[str]] = None,
         use_wiki: bool = False,
         use_arxiv: bool = False,
         use_code: bool = False,
@@ -484,6 +502,9 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             "chinese_c4": 0.20,
             "fineweb": 0.25,
             "hlbd": 0.10,
+            "bookcorpus": 0.00,
+            "cosmopedia": 0.00,
+            "prolong": 0.00,
             "wiki": 0.00,
             "arxiv": 0.00,
             "code": 0.00,
@@ -492,6 +513,12 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
         self.use_c4 = use_c4
         self.use_mc4_zh = use_mc4_zh
         self.use_fineweb = use_fineweb
+        self.use_bookcorpus = use_bookcorpus
+        self.use_cosmopedia = use_cosmopedia
+        self.cosmopedia_subset = cosmopedia_subset
+        self.use_prolong = use_prolong
+        self.prolong_path = prolong_path
+        self.prolong_subsets = prolong_subsets or ["arxiv", "books", "openwebmath"]
         self.use_wiki = use_wiki
         self.use_arxiv = use_arxiv
         self.use_code = use_code
@@ -530,6 +557,92 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             self._hlbd_texts = []
 
         return self._hlbd_texts
+
+    def _create_prolong_iter(self) -> Optional[Iterator[Dict[str, Any]]]:
+        """
+        创建 ProLong-TextFull MDS 格式数据迭代器。
+
+        ProLong-TextFull (orionweller/ProLong-TextFull) 使用 MosaicML Streaming
+        的 MDS 格式存储, 需要:
+          1. 提前将数据集下载到本地:
+               huggingface-cli download orionweller/ProLong-TextFull \\
+                   --repo-type dataset --local-dir ./prolong_textfull
+          2. 安装 mosaicml-streaming:
+               pip install mosaicml-streaming
+
+        目录结构示例:
+          <prolong_path>/
+              arxiv/
+                  1-2/   <- 每个子目录是一个独立 MDS shard 组
+                      index.json
+                      shard.00000.mds.zstd
+                  1-7/
+                      ...
+              books/
+                  3-9/
+                      ...
+              openwebmath/
+                  0-7/
+                      ...
+
+        Returns:
+            产生 {"text": str} 的生成器, 或 None (路径不存在时)
+        """
+        if not self.prolong_path or not os.path.isdir(self.prolong_path):
+            logger.warning(
+                f"ProLong 路径未指定或不存在: {self.prolong_path}\n"
+                "  请通过 --prolong-path 指定本地下载目录。"
+            )
+            return None
+
+        if not _MOSAICML_STREAMING_AVAILABLE:
+            raise ImportError(
+                "ProLong-TextFull 需要 mosaicml-streaming:\n"
+                "  pip install mosaicml-streaming\n"
+                "安装后重启训练。"
+            )
+
+        prolong_path = self.prolong_path
+        prolong_subsets = self.prolong_subsets
+
+        def _mds_gen() -> Iterator[Dict[str, Any]]:
+            for subset in prolong_subsets:
+                subset_dir = os.path.join(prolong_path, subset)
+                if not os.path.isdir(subset_dir):
+                    logger.warning(f"ProLong 子集目录不存在, 跳过: {subset_dir}")
+                    continue
+
+                # 每个子目录 (如 1-2, 1-7) 是一个独立的 MDS shard 组
+                shard_groups = sorted([
+                    d for d in os.listdir(subset_dir)
+                    if os.path.isdir(os.path.join(subset_dir, d))
+                ])
+                if not shard_groups:
+                    logger.warning(f"ProLong {subset}: 未找到 shard 子目录")
+                    continue
+
+                for sg in shard_groups:
+                    sg_path = os.path.join(subset_dir, sg)
+                    try:
+                        ds = _MDSLocalDataset(local=sg_path)
+                        logger.info(
+                            f"ProLong {subset}/{sg}: {len(ds)} 个样本"
+                        )
+                        for i in range(len(ds)):
+                            sample = ds[i]
+                            # MDS 样本字段名因 shard 可能不同, 依次尝试
+                            text = (
+                                sample.get("text")
+                                or sample.get("content")
+                                or sample.get("raw_content")
+                                or ""
+                            )
+                            if text:
+                                yield {"text": text}
+                    except Exception as e:
+                        logger.warning(f"ProLong MDS 读取失败 {sg_path}: {e}")
+
+        return _mds_gen()
 
     def _create_hf_stream(self, dataset_name: str, subset: Optional[str] = None,
                           **extra_kwargs):
@@ -682,6 +795,46 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
                 interleaved_sources, interleaved_names, interleaved_weights,
                 "FineWeb",
             )
+
+        # --- BookCorpus (rojagtap/bookcorpus): 始终 interleaved ---
+        if self.use_bookcorpus and self.weights.get("bookcorpus", 0) > 0:
+            self._init_source(
+                "bookcorpus",
+                lambda: self._create_hf_stream("rojagtap/bookcorpus"),
+                self.weights["bookcorpus"],
+                interleaved_sources, interleaved_names, interleaved_weights,
+                "BookCorpus (rojagtap/bookcorpus)",
+            )
+
+        # --- Cosmopedia (HuggingFaceTB/cosmopedia): 始终 interleaved ---
+        # 默认子集 web_samples_v2 (~50% 数据量); 可通过 cosmopedia_subset 指定其他子集:
+        # auto_math_text / khanacademy / openstax / stanford / stories / web_samples_v1 / wikihow
+        if self.use_cosmopedia and self.weights.get("cosmopedia", 0) > 0:
+            _cosmo_subset = self.cosmopedia_subset  # 捕获到局部变量, 避免闭包陷阱
+            self._init_source(
+                "cosmopedia",
+                lambda: self._create_hf_stream(
+                    "HuggingFaceTB/cosmopedia", _cosmo_subset
+                ),
+                self.weights["cosmopedia"],
+                interleaved_sources, interleaved_names, interleaved_weights,
+                f"Cosmopedia ({_cosmo_subset})",
+            )
+
+        # --- ProLong-TextFull (MDS 格式, 需本地路径): 始终 interleaved ---
+        # 包含 arxiv / books / openwebmath 三个子集
+        if self.use_prolong and self.weights.get("prolong", 0) > 0:
+            try:
+                prolong_iter = self._create_prolong_iter()
+                if prolong_iter is not None:
+                    interleaved_sources["prolong"] = prolong_iter
+                    interleaved_names.append("prolong")
+                    interleaved_weights.append(self.weights["prolong"])
+                    logger.info(
+                        f"ProLong-TextFull 已加载: subsets={self.prolong_subsets}"
+                    )
+            except ImportError as e:
+                logger.warning(f"ProLong 加载失败, 跳过: {e}")
 
         # --- Wikipedia (omarkamali/wikipedia-monthly) ---
         if self.use_wiki and self.weights.get("wiki", 0) > 0:
@@ -2098,6 +2251,34 @@ def parse_args():
                         choices=["sequential", "interleaved"],
                         help="Code 数据加载模式 (默认 sequential)")
 
+    # --- 新增数据源 (Stage 2 底噪) ---
+    parser.add_argument("--use-bookcorpus", action="store_true",
+                        help="启用 BookCorpus (rojagtap/bookcorpus, ~4.6GB, MIT)")
+    parser.add_argument("--weight-bookcorpus", type=float, default=0.05,
+                        help="BookCorpus 采样权重 (默认 0.05, 需 --use-bookcorpus)")
+
+    parser.add_argument("--use-cosmopedia", action="store_true",
+                        help="启用 Cosmopedia 合成数据集 (HuggingFaceTB/cosmopedia, 25B tokens, Apache 2.0)")
+    parser.add_argument("--cosmopedia-subset", type=str, default="web_samples_v2",
+                        choices=["web_samples_v1", "web_samples_v2", "auto_math_text",
+                                 "khanacademy", "openstax", "stanford", "stories", "wikihow"],
+                        help="Cosmopedia 子集 (默认 web_samples_v2, 数据量最大)")
+    parser.add_argument("--weight-cosmopedia", type=float, default=0.10,
+                        help="Cosmopedia 采样权重 (默认 0.10, 需 --use-cosmopedia)")
+
+    parser.add_argument("--use-prolong", action="store_true",
+                        help="启用 ProLong-TextFull MDS 数据 (orionweller/ProLong-TextFull, "
+                             "需提前下载到本地 + pip install mosaicml-streaming)")
+    parser.add_argument("--prolong-path", type=str, default=None,
+                        help="ProLong-TextFull 本地目录路径 "
+                             "(huggingface-cli download orionweller/ProLong-TextFull "
+                             "--repo-type dataset --local-dir <path>)")
+    parser.add_argument("--prolong-subsets", type=str, nargs="+",
+                        default=["arxiv", "books", "openwebmath"],
+                        help="ProLong 子集列表 (默认: arxiv books openwebmath)")
+    parser.add_argument("--weight-prolong", type=float, default=0.10,
+                        help="ProLong 采样权重 (默认 0.10, 需 --use-prolong)")
+
     # --- 分词器 ---
     parser.add_argument("--tokenizer-path", type=str, default=None,
                         help="已有分词器路径 (JSON). 不指定则从语料训练新的。")
@@ -2408,6 +2589,9 @@ def main():
         "chinese_c4": args.weight_mc4,
         "fineweb": args.weight_fineweb,
         "hlbd": args.weight_hlbd,
+        "bookcorpus": args.weight_bookcorpus,
+        "cosmopedia": args.weight_cosmopedia,
+        "prolong": args.weight_prolong,
         "wiki": args.weight_wiki,
         "arxiv": args.weight_arxiv,
         "code": args.weight_code,
@@ -2422,6 +2606,12 @@ def main():
         use_c4=not args.no_c4,
         use_mc4_zh=not args.no_mc4,
         use_fineweb=not args.no_fineweb,
+        use_bookcorpus=args.use_bookcorpus,
+        use_cosmopedia=args.use_cosmopedia,
+        cosmopedia_subset=args.cosmopedia_subset,
+        use_prolong=args.use_prolong,
+        prolong_path=args.prolong_path,
+        prolong_subsets=args.prolong_subsets,
         use_wiki=args.use_wiki,
         use_arxiv=args.use_arxiv,
         use_code=args.use_code,
