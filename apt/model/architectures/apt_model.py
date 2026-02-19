@@ -830,8 +830,8 @@ class AutopoieticAttention(nn.Module):
                 am = am.view(b, 1, am.size(-2), am.size(-1)).contiguous()
             composed_mask = am if composed_mask is None else (composed_mask | am)
 
-        # SDPA fast path
-        if hasattr(F, "scaled_dot_product_attention"):
+        # SDPA fast path (临时禁用，绕过 stride 对齐问题)
+        if False and hasattr(F, "scaled_dot_product_attention"):
             # dropout only during training
             dropout_p = self.dropout if self.training else 0.0
             attn_out = F.scaled_dot_product_attention(
