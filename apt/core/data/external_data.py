@@ -72,10 +72,10 @@ def _load_md_file(file_path: str, max_samples: Optional[int] = None) -> List[str
         re.compile(r'^\s*[-*+]\s+', re.M),
         re.compile(r'^\s*\d+\.\s+', re.M),
         re.compile(r'\*{1,3}([^*]+)\*{1,3}'),
-        re.compile(r'_{1,3}([^_]+)_{1,3}'),
+        re.compile(r'(?<!\w)_{1,3}([^_\n]+)_{1,3}(?!\w)'),
         re.compile(r'^>\s+', re.M),
         re.compile(r'^---+$', re.M),
-        re.compile(r'\|.*?\|'),
+        re.compile(r'^\|.*$', re.M),
         re.compile(r'<!--[\s\S]*?-->'),
         re.compile(r'<[^>]+>'),
     ]

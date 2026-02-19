@@ -53,10 +53,10 @@ _MD_PATTERNS = [
     re.compile(r'^\s*[-*+]\s+', re.M),      # 无序列表标记
     re.compile(r'^\s*\d+\.\s+', re.M),      # 有序列表标记
     re.compile(r'\*{1,3}([^*]+)\*{1,3}'),  # 粗体/斜体 → 保留文字
-    re.compile(r'_{1,3}([^_]+)_{1,3}'),    # 下划线强调 → 保留文字
+    re.compile(r'(?<!\w)_{1,3}([^_\n]+)_{1,3}(?!\w)'),  # 下划线强调 → 保留文字（不匹配 snake_case）
     re.compile(r'^>\s+', re.M),             # 引用块标记
     re.compile(r'^---+$', re.M),            # 分割线
-    re.compile(r'\|.*?\|'),                 # 表格行（粗略去除）
+    re.compile(r'^\|.*$', re.M),            # 表格行（整行去除）
     re.compile(r'<!--[\s\S]*?-->'),         # HTML 注释
     re.compile(r'<[^>]+>'),                 # HTML 标签
 ]
