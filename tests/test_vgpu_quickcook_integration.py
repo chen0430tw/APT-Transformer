@@ -205,8 +205,12 @@ def test_vb_plus_vram():
 # ─────────────────────────────────────────────
 
 def test_virtual_a100():
+    # va100/ 目录在项目根下，quickcook 也是动态加路径后直接 import
+    va100_path = os.path.join(ROOT, "va100")
+    if va100_path not in sys.path:
+        sys.path.insert(0, va100_path)
     try:
-        from apt.vgpu.runtime.virtual_a100 import VirtualVRAMBackend, VA100SignalCollector
+        from virtual_a100 import VirtualVRAMBackend, VA100SignalCollector
     except ImportError as e:
         return f"跳过 (不可用: {e})"
 
@@ -223,14 +227,16 @@ def test_virtual_a100():
     keys = [str(uuid.uuid4()) for _ in test_tensors]
 
     for k, t in zip(keys, test_tensors):
-        tier.put(k, t, priority=2)
+        tier.store(k, t, tier='hot')
 
-    retrieved = [tier.get(k) for k in keys]
+    retrieved = [tier.fetch(k) for k in keys]
     assert all(r is not None for r in retrieved), "三层显存读取失败"
 
-    stats = tier.stats
-    return (f"hot={stats.hot.count}块, warm={stats.warm.count}块, "
-            f"cold={stats.cold.count}块")
+    summary = tier.tier_summary()
+    hot_count  = summary.get('hot',  {}).get('count', 0)
+    warm_count = summary.get('warm', {}).get('count', 0)
+    cold_count = summary.get('cold', {}).get('count', 0)
+    return (f"hot={hot_count}块, warm={warm_count}块, cold={cold_count}块")
 
 
 # ─────────────────────────────────────────────
