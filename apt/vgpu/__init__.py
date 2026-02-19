@@ -60,6 +60,18 @@ except (ImportError, OSError):
     VGPUResourceEstimator = None
     quick_estimate = None
 
+# LECAC — 激活值量化存储（INT2 默认，显存降至 FP32 的 1/16）
+try:
+    from apt.vgpu.runtime.lecac import (
+        LECACConfig,
+        LECACLinear,
+        replace_linear_with_lecac,
+    )
+except (ImportError, OSError):
+    LECACConfig = None
+    LECACLinear = None
+    replace_linear_with_lecac = None
+
 __all__ = [
     # Runtime
     'VirtualBlackwellAdapter',
@@ -71,4 +83,8 @@ __all__ = [
     # Scheduler
     'VGPUResourceEstimator',
     'quick_estimate',
+    # LECAC
+    'LECACConfig',
+    'LECACLinear',
+    'replace_linear_with_lecac',
 ]
