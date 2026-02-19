@@ -825,9 +825,9 @@ class AutopoieticAttention(nn.Module):
                 am = am.bool()
             # broadcast to (B,1,T,T)
             if am.dim() == 2:
-                am = am.view(1, 1, am.size(0), am.size(1)).expand(b, 1, -1, -1)
+                am = am.view(1, 1, am.size(0), am.size(1)).expand(b, 1, -1, -1).contiguous()
             elif am.dim() == 3:
-                am = am.view(b, 1, am.size(-2), am.size(-1))
+                am = am.view(b, 1, am.size(-2), am.size(-1)).contiguous()
             composed_mask = am if composed_mask is None else (composed_mask | am)
 
         # SDPA fast path
