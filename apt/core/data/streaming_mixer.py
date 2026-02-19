@@ -292,11 +292,29 @@ def _prolong_mds_generator(
     """
     try:
         from streaming import LocalDataset as _MDSLocalDataset
+        from streaming.base.compression import decompress as _mds_decompress
     except ImportError:
         logger.error(
             "ProLong-TextFull 需要 mosaicml-streaming: pip install mosaicml-streaming"
         )
         return
+
+    def _decompress_shard_dir(shard_dir: str) -> None:
+        """将目录内所有 .mds.zstd 解压为 .mds（LocalDataset 只读未压缩版本）。"""
+        for fname in os.listdir(shard_dir):
+            if fname.endswith('.mds.zstd'):
+                src = os.path.join(shard_dir, fname)
+                dst = os.path.join(shard_dir, fname[:-len('.zstd')])
+                if os.path.exists(dst):
+                    continue
+                try:
+                    with open(src, 'rb') as f:
+                        raw = _mds_decompress('zstd', f.read())
+                    with open(dst, 'wb') as f:
+                        f.write(raw)
+                    logger.debug(f"[ProLong] 解压: {fname} ({len(raw)} bytes)")
+                except Exception as exc:
+                    logger.warning(f"[ProLong] 解压 {fname} 失败: {exc}")
 
     import random as _random
     _rng = _random.Random(seed)
@@ -385,6 +403,9 @@ def _prolong_mds_generator(
                     logger.warning(f"[ProLong] {subset}/{sg} 部分文件下载失败，跳过该 shard")
                     continue
 
+                # 解压 .mds.zstd → .mds（LocalDataset 只读未压缩版本）
+                _decompress_shard_dir(sg_local)
+
                 # 读取该 shard 组
                 try:
                     ds = _MDSLocalDataset(local=sg_local)
@@ -424,6 +445,8 @@ def _prolong_mds_generator(
 
             for sg in shard_groups:
                 sg_path = os.path.join(subset_dir, sg)
+                # 解压 .mds.zstd → .mds（LocalDataset 只读未压缩版本）
+                _decompress_shard_dir(sg_path)
                 try:
                     ds = _MDSLocalDataset(local=sg_path)
                     logger.info(f"[ProLong] {subset}/{sg}: {len(ds)} 个样本")
