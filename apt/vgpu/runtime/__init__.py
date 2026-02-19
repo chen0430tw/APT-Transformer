@@ -95,6 +95,30 @@ except (ImportError, OSError):
     TieredStorageConfig = None
     estimate_tiered_memory = None
 
+# LECAC — 激活值量化存储（INT2 默认）
+try:
+    from apt.vgpu.runtime.lecac import (
+        quantize_int2_symmetric,
+        dequantize_int2_symmetric,
+        quantize_int4_symmetric,
+        dequantize_int4_symmetric,
+        LECACLinearFunction,
+        OrthogonalLECACLinearFunction,
+        LECACConfig,
+        LECACLinear,
+        replace_linear_with_lecac,
+    )
+except (ImportError, OSError):
+    quantize_int2_symmetric = None
+    dequantize_int2_symmetric = None
+    quantize_int4_symmetric = None
+    dequantize_int4_symmetric = None
+    LECACLinearFunction = None
+    OrthogonalLECACLinearFunction = None
+    LECACConfig = None
+    LECACLinear = None
+    replace_linear_with_lecac = None
+
 __all__ = [
     # Virtual Blackwell
     'VirtualBlackwellAdapter',
@@ -123,4 +147,14 @@ __all__ = [
     'TieredProjectionKernel',
     'TieredStorageConfig',
     'estimate_tiered_memory',
+    # LECAC (INT2 默认激活值量化)
+    'quantize_int2_symmetric',
+    'dequantize_int2_symmetric',
+    'quantize_int4_symmetric',
+    'dequantize_int4_symmetric',
+    'LECACLinearFunction',
+    'OrthogonalLECACLinearFunction',
+    'LECACConfig',
+    'LECACLinear',
+    'replace_linear_with_lecac',
 ]
