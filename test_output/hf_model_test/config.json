@@ -1,0 +1,35 @@
+{
+  "activation": "gelu",
+  "architectures": [
+    "APTForCausalLM"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration_apt.APTConfig",
+    "AutoModelForCausalLM": "modeling_apt.APTForCausalLM",
+    "AutoModelForSeq2SeqLM": "modeling_apt.APTForSeq2SeqLM"
+  },
+  "bos_token_id": 2,
+  "d_ff": 1024,
+  "d_model": 256,
+  "decoder_layers": 3,
+  "dropout": 0.5,
+  "dtype": "float32",
+  "eos_token_id": 3,
+  "hidden_size": 256,
+  "intermediate_size": 1024,
+  "max_position_embeddings": 64,
+  "max_seq_len": 64,
+  "model_type": "apt",
+  "num_attention_heads": 8,
+  "num_decoder_layers": 3,
+  "num_encoder_layers": 3,
+  "num_heads": 8,
+  "num_hidden_layers": 3,
+  "pad_token_id": 0,
+  "transformers_version": "4.57.3",
+  "use_autopoietic": true,
+  "use_dbc_dac": true,
+  "use_rmsnorm": false,
+  "use_swiglu": false,
+  "vocab_size": 5000
+}

@@ -13,7 +13,7 @@ from apt.core.fake_torch import get_torch
 torch = get_torch()
 autocast = torch.cuda.amp.autocast
 GradScaler = torch.cuda.amp.GradScaler
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, Iterable
 import logging
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ class MixedPrecisionManager:
     def step_optimizer(
         self,
         optimizer: torch.optim.Optimizer,
-        parameters: Optional[torch.nn.parameter.Parameter] = None,
+        parameters: Optional[Iterable[torch.nn.Parameter]] = None,
         max_grad_norm: Optional[float] = None,
     ) -> bool:
         """执行优化器步进（处理梯度缩放和裁剪）
@@ -176,7 +176,7 @@ class MixedPrecisionManager:
         self,
         loss: torch.Tensor,
         optimizer: torch.optim.Optimizer,
-        parameters: Optional[torch.nn.parameter.Parameter] = None,
+        parameters: Optional[Iterable[torch.nn.Parameter]] = None,
         max_grad_norm: Optional[float] = None,
         retain_graph: bool = False,
     ) -> bool:
