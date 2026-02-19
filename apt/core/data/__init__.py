@@ -31,6 +31,8 @@ from .streaming_mixer import (
     make_mixed_hf_iterable,
     create_mixed_iterable,
     MixedStreamDataset,
+    make_url_iterable_dataset,
+    make_prolong_mds_iterable,
 )
 
 # Define module exports
@@ -52,6 +54,8 @@ __all__ = [
     'make_mixed_hf_iterable',
     'create_mixed_iterable',
     'MixedStreamDataset',
+    'make_url_iterable_dataset',
+    'make_prolong_mds_iterable',
     # Multimodal
     'MultimodalDataset',
     'MultimodalCollator',
