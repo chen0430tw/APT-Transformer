@@ -23,6 +23,16 @@ from .multimodal_dataset import (
     AudioOnlyDataset
 )
 
+# Export 多语言流式混合器
+from .streaming_mixer import (
+    MULTILINGUAL_BASE_MIX,
+    make_multi_source_iterable,
+    create_multilingual_base_iterable,
+    make_mixed_hf_iterable,
+    create_mixed_iterable,
+    MixedStreamDataset,
+)
+
 # Define module exports
 __all__ = [
     # Legacy functions
@@ -35,6 +45,13 @@ __all__ = [
     'DataProcessor',
     'DataPipeline',
     'quick_load',
+    # 多语言流式混合器
+    'MULTILINGUAL_BASE_MIX',
+    'make_multi_source_iterable',
+    'create_multilingual_base_iterable',
+    'make_mixed_hf_iterable',
+    'create_mixed_iterable',
+    'MixedStreamDataset',
     # Multimodal
     'MultimodalDataset',
     'MultimodalCollator',
