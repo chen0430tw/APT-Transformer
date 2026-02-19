@@ -133,6 +133,246 @@ def make_md_iterable_dataset(
 
 
 # ============================================================================
+# 远程 URL 流式读取（HTTP/HTTPS、GitHub raw URL）
+# ============================================================================
+
+def _url_text_generator(
+    url: str,
+    text_column: Optional[str] = None,
+    min_chars: int = 50,
+    encoding: str = 'utf-8',
+    timeout: int = 30,
+) -> Generator[dict, None, None]:
+    """
+    从远程 HTTP/HTTPS URL 流式逐行读取文本。
+
+    支持格式（由 URL 后缀自动判断）:
+        - .txt / .md 及其他纯文本：每个非空行作为一个样本
+        - .jsonl / .ndjson：每行解析 JSON，取 text_column 字段（None 则自动检测）
+        - GitHub blob URL：自动转换为 raw.githubusercontent.com URL
+
+    参数:
+        url:         HTTP(S) 地址
+        text_column: JSONL 文本字段名，None 则按 text/content/passage/abstract 顺序检测
+        min_chars:   样本最小字符数
+        encoding:    文本编码（默认 utf-8）
+        timeout:     请求超时秒数
+    """
+    import urllib.request
+    import json as _json
+
+    # GitHub blob URL 自动转换为 raw URL
+    if 'github.com' in url and '/blob/' in url:
+        url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+        logger.info(f"GitHub blob → raw URL: {url}")
+
+    url_path = url.split('?')[0].lower()
+    is_jsonl = url_path.endswith('.jsonl') or url_path.endswith('.ndjson')
+
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'APT-Transformer/1.0',
+        'Accept': 'text/plain, application/x-ndjson, */*',
+    })
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    except Exception as exc:
+        logger.warning(f"URL 连接失败 {url}: {exc}")
+        return
+
+    _candidates = ['text', 'content', 'passage', 'abstract', 'body']
+    with resp:
+        for raw_line in resp:
+            line = raw_line.decode(encoding, errors='ignore').rstrip('\r\n')
+            if not line.strip():
+                continue
+
+            if is_jsonl:
+                try:
+                    obj = _json.loads(line)
+                    if text_column:
+                        text = str(obj.get(text_column, ''))
+                    else:
+                        text = next(
+                            (str(obj[c]) for c in _candidates
+                             if isinstance(obj.get(c), str) and obj[c].strip()),
+                            '',
+                        )
+                except Exception:
+                    text = line
+            else:
+                text = line
+
+            if len(text) >= min_chars:
+                yield {'text': text}
+
+
+def make_url_iterable_dataset(
+    url: str,
+    text_column: Optional[str] = None,
+    min_chars: int = 50,
+    encoding: str = 'utf-8',
+    timeout: int = 30,
+) -> 'IterableDataset':
+    """
+    将远程 HTTP/HTTPS URL 包装成 HuggingFace IterableDataset。
+
+    支持 .txt / .md / .jsonl 文件及 GitHub raw URL（自动转换 blob 链接）。
+
+    参数:
+        url:         HTTP(S) 地址
+        text_column: JSONL 文本字段名，None 自动检测
+        min_chars:   最小字符数
+        encoding:    文本编码
+        timeout:     请求超时秒数（默认 30s）
+    返回:
+        datasets.IterableDataset，字段为 {'text': str}
+
+    使用示例::
+
+        # GitHub raw 文本文件
+        ds = make_url_iterable_dataset(
+            "https://github.com/owner/repo/blob/main/data.txt"
+        )
+        # JSONL 文件（自动检测 text 字段）
+        ds = make_url_iterable_dataset(
+            "https://example.com/data.jsonl", text_column="content"
+        )
+    """
+    if not DATASETS_AVAILABLE:
+        raise ImportError("请安装 datasets 库: pip install datasets")
+    return IterableDataset.from_generator(
+        _url_text_generator,
+        gen_kwargs={
+            'url': url,
+            'text_column': text_column,
+            'min_chars': min_chars,
+            'encoding': encoding,
+            'timeout': timeout,
+        },
+    )
+
+
+# ============================================================================
+# ProLong-TextFull MDS 格式读取（本地下载后使用）
+# ============================================================================
+
+def _prolong_mds_generator(
+    local_path: str,
+    subsets: Optional[List[str]] = None,
+    min_chars: int = 50,
+) -> Generator[dict, None, None]:
+    """
+    从本地 MDS 格式的 ProLong-TextFull 数据集流式生成文本样本。
+
+    ProLong-TextFull (orionweller/ProLong-TextFull) 使用 MosaicML Streaming
+    MDS 格式存储，包含 arxiv + books + openwebmath 三个子集。
+
+    使用前需要:
+      1. 下载数据集::
+
+           huggingface-cli download orionweller/ProLong-TextFull \\
+               --repo-type dataset --local-dir ./prolong_textfull
+
+      2. 安装 mosaicml-streaming::
+
+           pip install mosaicml-streaming
+
+    目录结构（每个子集下有多个 shard 组）::
+
+        <local_path>/
+            arxiv/
+                1-2/  (index.json + *.mds.zstd)
+                1-7/
+            books/
+                3-9/
+            openwebmath/
+                0-7/
+
+    参数:
+        local_path: ProLong-TextFull 根目录路径
+        subsets:    子集列表，默认 ["arxiv", "books", "openwebmath"]
+        min_chars:  最小字符数
+    """
+    try:
+        from streaming import LocalDataset as _MDSLocalDataset
+    except ImportError:
+        logger.error(
+            "ProLong-TextFull 需要 mosaicml-streaming: pip install mosaicml-streaming"
+        )
+        return
+
+    if not os.path.isdir(local_path):
+        logger.warning(f"ProLong 本地路径不存在: {local_path}")
+        return
+
+    _subsets = subsets or ['arxiv', 'books', 'openwebmath']
+    for subset in _subsets:
+        subset_dir = os.path.join(local_path, subset)
+        if not os.path.isdir(subset_dir):
+            logger.warning(f"ProLong 子集目录不存在，跳过: {subset_dir}")
+            continue
+
+        shard_groups = sorted([
+            d for d in os.listdir(subset_dir)
+            if os.path.isdir(os.path.join(subset_dir, d))
+        ])
+        if not shard_groups:
+            logger.warning(f"ProLong {subset}: 未找到 shard 子目录")
+            continue
+
+        for sg in shard_groups:
+            sg_path = os.path.join(subset_dir, sg)
+            try:
+                ds = _MDSLocalDataset(local=sg_path)
+                logger.info(f"ProLong {subset}/{sg}: {len(ds)} 个样本")
+                for i in range(len(ds)):
+                    sample = ds[i]
+                    text = (
+                        sample.get('text')
+                        or sample.get('content')
+                        or sample.get('raw_content')
+                        or ''
+                    )
+                    if text and len(text) >= min_chars:
+                        yield {'text': text}
+            except Exception as exc:
+                logger.warning(f"ProLong MDS 读取失败 {sg_path}: {exc}")
+
+
+def make_prolong_mds_iterable(
+    local_path: str,
+    subsets: Optional[List[str]] = None,
+    min_chars: int = 50,
+) -> 'IterableDataset':
+    """
+    将本地 ProLong-TextFull MDS 数据集包装成 HuggingFace IterableDataset。
+
+    下载命令::
+
+        huggingface-cli download orionweller/ProLong-TextFull \\
+            --repo-type dataset --local-dir ./prolong_textfull
+        pip install mosaicml-streaming
+
+    参数:
+        local_path: ProLong-TextFull 根目录路径
+        subsets:    子集列表（默认 ["arxiv", "books", "openwebmath"]）
+        min_chars:  最小字符数
+    返回:
+        datasets.IterableDataset，字段为 {'text': str}
+    """
+    if not DATASETS_AVAILABLE:
+        raise ImportError("请安装 datasets 库: pip install datasets")
+    return IterableDataset.from_generator(
+        _prolong_mds_generator,
+        gen_kwargs={
+            'local_path': local_path,
+            'subsets': subsets,
+            'min_chars': min_chars,
+        },
+    )
+
+
+# ============================================================================
 # 混合流：.md + HuggingFace
 # ============================================================================
 
@@ -385,7 +625,7 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "dataset": "HuggingFaceFW/fineweb-2",
         "config":  "eng_Latn",
         "column":  "text",
-        "weight":  0.36,
+        "weight":  0.31,
         "lang":    "en",
         "note":    "英语 Web 文本 — FineWeb-2 质量过滤版（CommonCrawl 96 快照）",
     },
@@ -442,7 +682,7 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "dataset": "codeparrot/github-code-clean",
         "config":  None,
         "column":  "code",
-        "weight":  0.10,
+        "weight":  0.08,
         "lang":    "code",
         "note":    "多语言代码 — GitHub 去重版（Python/JS/Java/C++ 等 30+ 语言）",
     },
@@ -454,6 +694,28 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "weight":  0.05,
         "lang":    "math",
         "note":    "网络数学内容 — CommonCrawl 数学页面提取，14.7B tokens",
+    },
+    # ── 书籍（提升叙事理解与长文本建模能力）──────────────────────────────────
+    {
+        "dataset": "rojagtap/bookcorpus",
+        "config":  None,
+        "column":  "text",
+        "weight":  0.03,
+        "lang":    "books",
+        "note":    "英文书籍 — BookCorpus 7185 本，MIT 许可，提升叙事/长文本理解",
+    },
+    # ── ProLong-TextFull（arxiv+books+openwebmath 长上下文混合，MDS 格式）────
+    # local_path 默认 None，跳过；提前下载后设置路径即可启用：
+    #   huggingface-cli download orionweller/ProLong-TextFull \
+    #       --repo-type dataset --local-dir ./prolong_textfull
+    #   pip install mosaicml-streaming
+    {
+        "source_type": "prolong_mds",
+        "local_path":  None,
+        "subsets":     ["arxiv", "books", "openwebmath"],
+        "weight":      0.04,
+        "lang":        "prolong",
+        "note":        "ProLong-TextFull (orionweller) — 长上下文 arxiv+books+openwebmath",
     },
     # ── Wikipedia（高质量知识锚点，小权重上采样，参考 LLaMA-3 处理方式）──
     {
@@ -489,7 +751,9 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "note":    "韩文维基百科 2023-11 快照",
     },
 ]
-# 合计权重 = 0.36+0.18+0.08+0.05+0.04+0.04+0.04+0.10+0.05+0.02+0.02+0.01+0.01 = 1.00
+# 合计权重（ProLong local_path=None 时跳过，其余归一化）:
+# 0.31+0.18+0.08+0.05+0.04+0.04+0.04+0.08+0.05+0.03+(0.04)+0.02+0.02+0.01+0.01 = 1.00
+# 不含 prolong: 0.96（自动归一化）；含 prolong: 1.00
 
 
 # ============================================================================
@@ -544,13 +808,65 @@ def make_multi_source_iterable(
     weights: List[float] = []
     lang_labels: List[str] = []
 
-    # — 逐一加载各 HuggingFace 数据流 —
+    # — 逐一加载各数据流（支持 source_type: hf / prolong_mds / url）—
     for src in sources:
-        ds_name  = src['dataset']
-        cfg      = src.get('config')
+        src_type = src.get('source_type', 'hf').lower()
         col      = src.get('column', 'text')
         w        = float(src.get('weight', 1.0))
-        lang_tag = src.get('lang', ds_name.split('/')[-1])
+        lang_tag = src.get('lang', 'unknown')
+
+        # ── ProLong-TextFull MDS 格式（本地路径）──────────────────────────
+        if src_type == 'prolong_mds':
+            local_path = src.get('local_path')
+            if not local_path:
+                logger.debug(
+                    f"[{lang_tag}] ProLong-TextFull local_path 未设置，跳过"
+                    "（下载后在 MULTILINGUAL_BASE_MIX 中设置 local_path 即可启用）"
+                )
+                continue
+            try:
+                ds = make_prolong_mds_iterable(
+                    local_path, subsets=src.get('subsets'), min_chars=min_chars
+                )
+            except Exception as exc:
+                logger.warning(f"[{lang_tag}] ProLong MDS 加载失败，跳过: {exc}")
+                continue
+            streams.append(ds)
+            weights.append(w)
+            lang_labels.append(lang_tag)
+            logger.info(f"[{lang_tag}] 已添加 ProLong-TextFull MDS: {local_path} (权重={w})")
+            continue
+
+        # ── 远程 URL（HTTP/HTTPS，GitHub raw 等）────────────────────────────
+        if src_type == 'url':
+            url = src.get('url')
+            if not url:
+                logger.warning(f"[{lang_tag}] URL 源缺少 'url' 字段，跳过")
+                continue
+            try:
+                ds = make_url_iterable_dataset(
+                    url=url, text_column=(col if col != 'text' else None),
+                    min_chars=min_chars,
+                )
+            except Exception as exc:
+                logger.warning(f"[{lang_tag}] URL 数据源加载失败，跳过: {exc}")
+                continue
+            streams.append(ds)
+            weights.append(w)
+            lang_labels.append(lang_tag)
+            logger.info(f"[{lang_tag}] 已添加 URL 流: {url} (权重={w})")
+            continue
+
+        # ── HuggingFace 流式数据集（默认路径）──────────────────────────────
+        ds_name = src.get('dataset')
+        if not ds_name:
+            logger.warning(f"[{lang_tag}] HF 源缺少 'dataset' 字段，跳过")
+            continue
+
+        cfg = src.get('config')
+        # 从 lang_tag 没有 dataset 时更新一下
+        if lang_tag == 'unknown':
+            lang_tag = ds_name.split('/')[-1]
 
         load_kwargs: Dict[str, Any] = {
             'split': split,
