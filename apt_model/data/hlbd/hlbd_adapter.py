@@ -82,26 +82,22 @@ class HLBDDataProcessor:
         try:
             with open(data_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            
-            # 提取samples部分并解析JSON
-            samples_match = re.search(r'samples\s*=\s*(\[.*?\])(?=\s*$)', content, re.DOTALL)
-            if samples_match:
-                samples_text = samples_match.group(1)
-                samples = json.loads(samples_text)
+
+            # 解析JSON（HLBD_Full_V2.json 格式为 {"metadata":..., "samples":[...]}）
+            data = json.loads(content)
+            if isinstance(data, list):
+                logger.info(f"成功从{data_path}加载了{len(data)}个HLBD样本")
+                return data
+            if isinstance(data, dict) and "samples" in data:
+                samples = data["samples"]
                 logger.info(f"成功从{data_path}加载了{len(samples)}个HLBD样本")
                 return samples
-            else:
-                # 尝试将整个文件作为JSON加载
-                try:
-                    samples = json.loads(content)
-                    if isinstance(samples, list):
-                        logger.info(f"成功从{data_path}加载了{len(samples)}个HLBD样本")
-                        return samples
-                except json.JSONDecodeError:
-                    pass
-                
-                logger.error(f"在{data_path}中未找到有效的HLBD样本")
-                return []
+
+            logger.error(f"在{data_path}中未找到有效的HLBD样本（顶层既不是列表也没有samples键）")
+            return []
+        except json.JSONDecodeError as e:
+            logger.error(f"HLBD文件JSON解析失败: {data_path}: {e}")
+            return []
         except Exception as e:
             logger.error(f"加载HLBD数据时出错: {e}\n{traceback.format_exc()}")
             return []
