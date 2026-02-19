@@ -830,8 +830,8 @@ class AutopoieticAttention(nn.Module):
                 am = am.view(b, 1, am.size(-2), am.size(-1)).contiguous()
             composed_mask = am if composed_mask is None else (composed_mask | am)
 
-        # SDPA fast path (临时禁用，绕过 stride 对齐问题)
-        if False and hasattr(F, "scaled_dot_product_attention"):
+        # SDPA fast path
+        if hasattr(F, "scaled_dot_product_attention"):
             # dropout only during training
             dropout_p = self.dropout if self.training else 0.0
             attn_out = F.scaled_dot_product_attention(
@@ -983,15 +983,15 @@ class APTEncoderLayer(nn.Module):
         # 🚀 左旋平滑残差连接（替换传统泰勒展开）
         if use_left_spin:
             self.left_spin_attn = LeftSpinResidual(
-                alpha=left_spin_alpha,
-                tau=left_spin_tau,
+                alpha=alpha,  # 修复：使用与 AutopoieticAttention 一致的 alpha
+                tau=init_tau,  # 修复：使用与 AutopoieticAttention 一致的 init_tau
                 beta=left_spin_beta,
                 gate_type='normalized',
                 adaptive=True
             )
             self.left_spin_ffn = LeftSpinResidual(
-                alpha=left_spin_alpha,
-                tau=left_spin_tau,
+                alpha=alpha,  # 修复：使用与 AutopoieticAttention 一致的 alpha
+                tau=init_tau,  # 修复：使用与 AutopoieticAttention 一致的 init_tau
                 beta=left_spin_beta,
                 gate_type='normalized',
                 adaptive=True
@@ -1181,22 +1181,22 @@ class APTDecoderLayer(nn.Module):
         # 🚀 左旋平滑残差连接（3个子层）
         if use_left_spin:
             self.left_spin_self_attn = LeftSpinResidual(
-                alpha=left_spin_alpha,
-                tau=left_spin_tau,
+                alpha=alpha,  # 修复：使用与 AutopoieticAttention 一致的 alpha
+                tau=init_tau,  # 修复：使用与 AutopoieticAttention 一致的 init_tau
                 beta=left_spin_beta,
                 gate_type='normalized',
                 adaptive=True
             )
             self.left_spin_cross_attn = LeftSpinResidual(
-                alpha=left_spin_alpha,
-                tau=left_spin_tau,
+                alpha=alpha,  # 修复：使用与 AutopoieticAttention 一致的 alpha
+                tau=init_tau,  # 修复：使用与 AutopoieticAttention 一致的 init_tau
                 beta=left_spin_beta,
                 gate_type='normalized',
                 adaptive=True
             )
             self.left_spin_ffn = LeftSpinResidual(
-                alpha=left_spin_alpha,
-                tau=left_spin_tau,
+                alpha=alpha,  # 修复：使用与 AutopoieticAttention 一致的 alpha
+                tau=init_tau,  # 修复：使用与 AutopoieticAttention 一致的 init_tau
                 beta=left_spin_beta,
                 gate_type='normalized',
                 adaptive=True
