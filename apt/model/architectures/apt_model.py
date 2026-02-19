@@ -7,6 +7,7 @@ APT核心模型集成实现
 """
 
 import os
+import contextlib as _ctxlib
 # 检查是否应该屏蔽自创生变换器的警告
 SUPPRESS_APT_WARNINGS = os.environ.get('SUPPRESS_APT_WARNINGS', 'False').lower() in ('true', '1', 'yes')
 from apt.core.fake_torch import get_torch
@@ -17,6 +18,25 @@ import math
 import warnings
 import sys
 from typing import Optional, Tuple, List, Dict, Union
+
+# SDPA MATH backend context manager
+# 当 attn_mask 的 stride(1) 不是 4 的倍数时（如 seq_len 奇数），
+# efficient/flash backend 会报 "attn_bias is not correctly aligned (strideH)"，
+# 需要降级到无对齐要求的 MATH backend。
+# 优先 PyTorch 2.1+ 的 torch.nn.attention.sdpa_kernel，
+# 回落到 PyTorch 2.0 的 torch.backends.cuda.sdp_kernel。
+_SDPA_MATH_CTX_FACTORY = None
+try:
+    from torch.nn.attention import sdpa_kernel as _sdpa_kernel_fn, SDPBackend as _SDPBackend
+    _SDPA_MATH_CTX_FACTORY = lambda: _sdpa_kernel_fn([_SDPBackend.MATH])
+except ImportError:
+    try:
+        _sdp_kernel_mod = torch.backends.cuda.sdp_kernel  # PyTorch 2.0
+        _SDPA_MATH_CTX_FACTORY = lambda: _sdp_kernel_mod(
+            enable_flash=False, enable_math=True, enable_mem_efficient=False
+        )
+    except AttributeError:
+        pass  # 不支持，回落到手动 softmax
 
 # 导入左旋平滑模块
 from apt.model.layers.left_spin_smooth import (
@@ -834,12 +854,50 @@ class AutopoieticAttention(nn.Module):
         if hasattr(F, "scaled_dot_product_attention"):
             # dropout only during training
             dropout_p = self.dropout if self.training else 0.0
-            attn_out = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=composed_mask,
-                dropout_p=dropout_p,
-                is_causal=is_causal
-            )  # (B,H,T,D)
+
+            # 检测 attn_mask 是否会触发 efficient/flash backend 的 stride 对齐错误。
+            # 根本原因：am.view(1,1,T,T).expand(b,1,-1,-1) 产生 stride(1)=T*T；
+            # 当 T 为奇数时 T*T%4≠0，EFFICIENT backend 报
+            # "attn_bias is not correctly aligned (strideH)"。
+            # .contiguous() 无效 —— 形状不变，连续 tensor 的 stride(1) 依然是 T*T。
+            # 解决：stride 不对齐时切换到无此要求的 MATH backend。
+            _need_math = (
+                composed_mask is not None
+                and composed_mask.dim() == 4
+                and composed_mask.stride(1) % 4 != 0
+            )
+
+            if _need_math and _SDPA_MATH_CTX_FACTORY is not None:
+                # 有 context manager：精准降级，仅影响 seq_len 为奇数的 batch
+                with _SDPA_MATH_CTX_FACTORY():
+                    attn_out = F.scaled_dot_product_attention(
+                        q, k, v,
+                        attn_mask=composed_mask,
+                        dropout_p=dropout_p,
+                        is_causal=is_causal,
+                    )
+            elif _need_math:
+                # 无 context manager（旧版 PyTorch），手动 softmax 兜底
+                # 仅在 stride 不对齐时触发，不影响正常序列长度的性能
+                scale = 1.0 / math.sqrt(self.head_dim)
+                scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+                if composed_mask is not None:
+                    scores = scores.masked_fill(composed_mask, float("-inf"))
+                if is_causal:
+                    _causal = torch.triu(
+                        torch.ones(t, t, device=scores.device, dtype=torch.bool), diagonal=1
+                    )
+                    scores = scores.masked_fill(_causal.view(1, 1, t, t), float("-inf"))
+                attn = torch.softmax(scores, dim=-1)
+                attn = self.dropout_layer(attn)
+                attn_out = torch.matmul(attn, v)
+            else:
+                attn_out = F.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=composed_mask,
+                    dropout_p=dropout_p,
+                    is_causal=is_causal,
+                )
             attn_weights = None
         else:
             # fallback: explicit softmax
@@ -902,8 +960,8 @@ class APTEncoderLayer(nn.Module):
         dbc_iterations: int = 1,
         # 左旋平滑参数
         use_left_spin: bool = True,
-        left_spin_alpha: float = 0.5,
-        left_spin_tau: float = 0.3,
+        left_spin_alpha: float = 0.1,   # 0.5→0.1：减小缓冲角幅度，防止过度压制残差
+        left_spin_tau: float = 1.0,     # 0.3→1.0：提高激活门槛，仅真正极端尖点才触发
         left_spin_beta: float = 0.7,
         # 现代化组件开关
         use_rmsnorm: bool = True,
@@ -1077,8 +1135,8 @@ class APTDecoderLayer(nn.Module):
         dbc_iterations: int = 1,
         # 左旋平滑参数
         use_left_spin: bool = True,
-        left_spin_alpha: float = 0.5,
-        left_spin_tau: float = 0.3,
+        left_spin_alpha: float = 0.1,   # 0.5→0.1：减小缓冲角幅度，防止过度压制残差
+        left_spin_tau: float = 1.0,     # 0.3→1.0：提高激活门槛，仅真正极端尖点才触发
         left_spin_beta: float = 0.7,
         # 现代化组件开关
         use_rmsnorm: bool = True,
@@ -1316,8 +1374,8 @@ class APTModelConfiguration:
         dbc_iterations: int = 1,  # DAC迭代次数
         # 🚀 左旋平滑相关参数（替换泰勒展开）
         use_left_spin: bool = True,  # 是否使用左旋平滑残差
-        left_spin_alpha: float = 0.5,  # 缓冲强度系数
-        left_spin_tau: float = 0.3,  # 尖点阈值
+        left_spin_alpha: float = 0.1,  # 缓冲强度系数（0.5→0.1：减小缓冲角幅度）
+        left_spin_tau: float = 1.0,  # 尖点阈值（0.3→1.0：提高激活门槛）
         left_spin_beta: float = 0.7,  # 惯性系数
         # GPT-only 开关（旁路式，保留 Encoder 结构不删除）
         decoder_only: bool = True,   # True=GPT-only forward；False=seq2seq forward
@@ -1462,8 +1520,8 @@ class APTModel(nn.Module):
 
         # 🚀 左旋平滑参数
         use_left_spin = getattr(config, "use_left_spin", True)
-        left_spin_alpha = getattr(config, "left_spin_alpha", 0.5)
-        left_spin_tau = getattr(config, "left_spin_tau", 0.3)
+        left_spin_alpha = getattr(config, "left_spin_alpha", 0.1)
+        left_spin_tau = getattr(config, "left_spin_tau", 1.0)
         left_spin_beta = getattr(config, "left_spin_beta", 0.7)
 
         # GPT-only 开关
