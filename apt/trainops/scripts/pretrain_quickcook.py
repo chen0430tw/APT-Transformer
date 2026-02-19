@@ -1133,6 +1133,13 @@ def quickcook_collate_fn(
     labels_list = [item["labels"] for item in batch]
 
     max_len = max(t.size(0) for t in input_ids_list)
+    # 将 max_len 向上对齐到 16 的倍数。
+    # 原因：SDPA memory-efficient / flash backend 要求 attn_mask 的 stride(1) 为 4 的倍数。
+    # 4D mask [B,1,T,T] 的 stride(1)=T²；T²%4=0 当且仅当 T 为偶数。
+    # 对齐到 16 可确保 T%16=0 → T²%256=0，覆盖所有 backend 的对齐要求。
+    # 额外 padding 位置在 attention_mask 中标 0（pad token），不计入 loss（labels=-100）。
+    _SDPA_ALIGN = 16
+    max_len = (max_len + _SDPA_ALIGN - 1) // _SDPA_ALIGN * _SDPA_ALIGN
 
     padded_input_ids = []
     padded_labels = []
