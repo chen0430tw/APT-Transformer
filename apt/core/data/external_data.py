@@ -46,8 +46,10 @@ def load_external_data(file_path: str, max_samples: Optional[int] = None) -> Lis
             texts = _load_jsonl_file(file_path, max_samples)
         elif file_extension in ['.xlsx', '.xls']:
             texts = _load_excel_file(file_path, max_samples)
+        elif file_extension == '.md':
+            texts = _load_md_file(file_path, max_samples)
         else:
-            supported_formats = ['.txt', '.csv', '.json', '.jsonl', '.ndjson', '.xlsx', '.xls']
+            supported_formats = ['.txt', '.csv', '.json', '.jsonl', '.ndjson', '.xlsx', '.xls', '.md']
             raise ValueError(f"Unsupported file format: {file_extension}. "
                            f"Supported formats are: {', '.join(supported_formats)}")
         
@@ -57,6 +59,36 @@ def load_external_data(file_path: str, max_samples: Optional[int] = None) -> Lis
     except Exception as e:
         logger.error(f"Error loading data from {file_path}: {e}")
         raise
+
+def _load_md_file(file_path: str, max_samples: Optional[int] = None) -> List[str]:
+    """将 Markdown 文件按段落加载为纯文本列表。"""
+    import re
+    _MD_PATTERNS = [
+        re.compile(r'```[\s\S]*?```'),
+        re.compile(r'`[^`]+`'),
+        re.compile(r'!\[.*?\]\(.*?\)'),
+        re.compile(r'\[([^\]]+)\]\([^\)]+\)'),
+        re.compile(r'^#{1,6}\s+', re.M),
+        re.compile(r'^\s*[-*+]\s+', re.M),
+        re.compile(r'^\s*\d+\.\s+', re.M),
+        re.compile(r'\*{1,3}([^*]+)\*{1,3}'),
+        re.compile(r'_{1,3}([^_]+)_{1,3}'),
+        re.compile(r'^>\s+', re.M),
+        re.compile(r'^---+$', re.M),
+        re.compile(r'\|.*?\|'),
+        re.compile(r'<!--[\s\S]*?-->'),
+        re.compile(r'<[^>]+>'),
+    ]
+    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        raw = f.read()
+    for pat in _MD_PATTERNS:
+        raw = pat.sub(lambda m: m.group(1) if m.lastindex else ' ', raw)
+    paragraphs = re.split(r'\n{2,}', raw)
+    texts = [p.strip() for p in paragraphs if len(p.strip()) >= 20]
+    if max_samples:
+        texts = texts[:max_samples]
+    return texts
+
 
 def _load_txt_file(file_path: str, max_samples: Optional[int] = None) -> List[str]:
     """Load text data from a plain text file, one sample per line."""
