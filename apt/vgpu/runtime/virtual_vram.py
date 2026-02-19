@@ -90,9 +90,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         requires_grad = bool(t.requires_grad)
 
         # 关键：不要让 offload 进入 autograd 图（不可微搬运）
+        # .contiguous() 确保 stride 布局标准化为行主序，
+        # 避免非连续 tensor（expand/slice/transpose 产生的异常 stride）
+        # 恢复到 CUDA 后触发 FlexAttention / SDPA 的 stride 4-对齐检查失败
         try:
             with torch.no_grad():
-                cpu_tensor = t.detach().to("cpu")
+                cpu_tensor = t.detach().contiguous().to("cpu")
         except Exception as e:
             # 转移失败，返回原始 tensor
             if cfg.verbose:
