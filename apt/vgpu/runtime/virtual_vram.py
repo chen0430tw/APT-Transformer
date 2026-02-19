@@ -32,13 +32,14 @@ Usage:
 
 from __future__ import annotations
 
-import uuid
-import tempfile
+import math
 from dataclasses import dataclass
 from contextlib import contextmanager
-from typing import Any, Tuple
 
 import torch
+
+# 自然平衡常数：4/e ≈ 1.4715，用于 LECaC 量化补偿
+NATURAL_EQUILIBRIUM_CONSTANT: float = 4.0 / math.e
 
 
 @dataclass
@@ -115,8 +116,22 @@ def virtual_vram(cfg: VirtualVRAMConfig):
 
         # 从 CPU 恢复到 CUDA（同样不进入 autograd 图）
         try:
+            # 关键：backward 与 forward 可能跑在不同的 CUDA stream 上。
+            # 如果不同步，backward stream 可能读到 forward stream 尚未写完/已释放的
+            # CUDA 内存，触发 "CUDA illegal memory access"（cudaErrorIllegalAddress）。
+            # synchronize() 保证所有待处理的 CUDA 操作在恢复前全部完成。
+            if torch.cuda.is_available():
+                torch.cuda.synchronize(packed.device)
+
             with torch.no_grad():
-                restored = packed.cpu_tensor.to(device=packed.device, dtype=packed.dtype)
+                # non_blocking=False（默认）：同步 CPU→CUDA 传输，避免竞争
+                # .contiguous() 确保 CPU tensor 连续布局，防止非连续 tensor 在
+                # 跨设备拷贝时触发 stride 相关的非法访问
+                restored = packed.cpu_tensor.contiguous().to(
+                    device=packed.device,
+                    dtype=packed.dtype,
+                    non_blocking=False,
+                )
             # 保持原有的 requires_grad 设置
             restored.requires_grad_(packed.requires_grad)
             if cfg.verbose:
