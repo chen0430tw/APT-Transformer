@@ -253,43 +253,42 @@ def make_url_iterable_dataset(
 
 
 # ============================================================================
-# ProLong-TextFull MDS 格式读取（本地下载后使用）
+# ProLong-TextFull MDS 格式读取（支持自动按需下载 shard）
 # ============================================================================
 
 def _prolong_mds_generator(
-    local_path: str,
+    local_path: Optional[str] = None,
     subsets: Optional[List[str]] = None,
     min_chars: int = 50,
+    max_shards_per_subset: int = 3,
+    cache_dir: Optional[str] = None,
+    seed: int = 42,
 ) -> Generator[dict, None, None]:
     """
-    从本地 MDS 格式的 ProLong-TextFull 数据集流式生成文本样本。
+    从 ProLong-TextFull 数据集流式生成文本样本，支持两种模式：
 
-    ProLong-TextFull (orionweller/ProLong-TextFull) 使用 MosaicML Streaming
-    MDS 格式存储，包含 arxiv + books + openwebmath 三个子集。
+    **自动模式**（local_path=None，默认）：
+        通过 huggingface_hub 随机下载 max_shards_per_subset 个 MDS shard 到缓存目录，
+        首次运行时自动下载，后续命中缓存直接读取。
+        适合底噪训练场景——只需少量书籍长文本，无需提前下载全量数据。
+        依赖: pip install mosaicml-streaming huggingface_hub
 
-    注意：本项目仅使用 books 子集（默认），arxiv/openwebmath 改由
-    EleutherAI/proof-pile-2 提供（保留真实 LaTeX 源，质量更高）。
+    **本地模式**（local_path 指向预下载目录）：
+        从本地完整数据集读取所有 shard，适合需要全量数据的场景。
+        预下载命令::
 
-    使用前需要:
-      1. 下载数据集::
-
-           huggingface-cli download orionweller/ProLong-TextFull \\
-               --repo-type dataset --local-dir ./prolong_textfull
-
-      2. 安装 mosaicml-streaming::
-
-           pip install mosaicml-streaming
-
-    目录结构（每个子集下有多个 shard 组）::
-
-        <local_path>/
-            books/
-                3-9/
+            huggingface-cli download orionweller/ProLong-TextFull \\
+                --repo-type dataset --local-dir ./prolong_textfull \\
+                --include "books/*"
+            pip install mosaicml-streaming
 
     参数:
-        local_path: ProLong-TextFull 根目录路径
-        subsets:    子集列表，默认 ["books"]（arxiv/openwebmath 由 proof-pile-2 替代）
-        min_chars:  最小字符数
+        local_path:             本地目录路径（None = 自动下载模式）
+        subsets:                子集列表，默认 ["books"]
+        min_chars:              最小字符数
+        max_shards_per_subset:  自动模式下每个子集随机下载的 shard 组数（默认 3）
+        cache_dir:              自动模式缓存目录（默认 ~/.cache/huggingface/prolong_textfull）
+        seed:                   随机选 shard 的种子
     """
     try:
         from streaming import LocalDataset as _MDSLocalDataset
@@ -299,62 +298,170 @@ def _prolong_mds_generator(
         )
         return
 
-    if not os.path.isdir(local_path):
-        logger.warning(f"ProLong 本地路径不存在: {local_path}")
-        return
-
+    import random as _random
+    _rng = _random.Random(seed)
     _subsets = subsets or ['books']
-    for subset in _subsets:
-        subset_dir = os.path.join(local_path, subset)
-        if not os.path.isdir(subset_dir):
-            logger.warning(f"ProLong 子集目录不存在，跳过: {subset_dir}")
-            continue
 
-        shard_groups = sorted([
-            d for d in os.listdir(subset_dir)
-            if os.path.isdir(os.path.join(subset_dir, d))
-        ])
-        if not shard_groups:
-            logger.warning(f"ProLong {subset}: 未找到 shard 子目录")
-            continue
+    # ── 自动模式：按需从 HF Hub 随机下载少量 shard ──────────────────────────
+    if local_path is None:
+        try:
+            from huggingface_hub import list_repo_files as _list_files
+            from huggingface_hub import hf_hub_download as _hf_download
+        except ImportError:
+            logger.error(
+                "自动下载模式需要 huggingface_hub: pip install huggingface_hub"
+            )
+            return
 
-        for sg in shard_groups:
-            sg_path = os.path.join(subset_dir, sg)
-            try:
-                ds = _MDSLocalDataset(local=sg_path)
-                logger.info(f"ProLong {subset}/{sg}: {len(ds)} 个样本")
-                for i in range(len(ds)):
-                    sample = ds[i]
-                    text = (
-                        sample.get('text')
-                        or sample.get('content')
-                        or sample.get('raw_content')
-                        or ''
-                    )
-                    if text and len(text) >= min_chars:
-                        yield {'text': text}
-            except Exception as exc:
-                logger.warning(f"ProLong MDS 读取失败 {sg_path}: {exc}")
+        _cache = cache_dir or os.path.join(
+            os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')),
+            'prolong_textfull',
+        )
+        os.makedirs(_cache, exist_ok=True)
+
+        # 列举 HF repo 中的所有文件（只需一次网络请求）
+        try:
+            all_repo_files = list(_list_files(
+                "orionweller/ProLong-TextFull",
+                repo_type="dataset",
+            ))
+        except Exception as exc:
+            logger.warning(f"[ProLong] 无法列举 HF 文件，跳过: {exc}")
+            return
+
+        for subset in _subsets:
+            prefix = f"{subset}/"
+            subset_files = [f for f in all_repo_files if f.startswith(prefix)]
+            if not subset_files:
+                logger.warning(f"[ProLong] {subset}: HF 上未找到文件，跳过")
+                continue
+
+            # 找出所有 shard 组目录（如 books/3-9/）
+            shard_groups = sorted({
+                f.split('/')[1]
+                for f in subset_files
+                if len(f.split('/')) >= 3
+            })
+            if not shard_groups:
+                logger.warning(f"[ProLong] {subset}: 未找到 shard 子目录")
+                continue
+
+            # 随机选 max_shards_per_subset 个组（底噪不需要全量）
+            selected = _rng.sample(
+                shard_groups,
+                min(max_shards_per_subset, len(shard_groups)),
+            )
+            logger.info(
+                f"[ProLong] {subset}: 随机选取 {len(selected)}/{len(shard_groups)} 个 shard 组"
+                f" {selected}"
+            )
+
+            for sg in selected:
+                sg_local = os.path.join(_cache, subset, sg)
+                os.makedirs(sg_local, exist_ok=True)
+
+                # 下载该 shard 组的所有文件（index.json + *.mds.zstd）
+                sg_prefix = f"{subset}/{sg}/"
+                sg_files = [f for f in subset_files if f.startswith(sg_prefix)]
+
+                all_ok = True
+                for hf_path in sg_files:
+                    local_file = os.path.join(_cache, hf_path)
+                    if os.path.exists(local_file):
+                        continue  # 已缓存，跳过
+                    try:
+                        _hf_download(
+                            repo_id="orionweller/ProLong-TextFull",
+                            filename=hf_path,
+                            repo_type="dataset",
+                            local_dir=_cache,
+                        )
+                        logger.debug(f"[ProLong] 已下载: {hf_path}")
+                    except Exception as exc:
+                        logger.warning(f"[ProLong] 下载 {hf_path} 失败: {exc}")
+                        all_ok = False
+
+                if not all_ok:
+                    logger.warning(f"[ProLong] {subset}/{sg} 部分文件下载失败，跳过该 shard")
+                    continue
+
+                # 读取该 shard 组
+                try:
+                    ds = _MDSLocalDataset(local=sg_local)
+                    logger.info(f"[ProLong] {subset}/{sg}: {len(ds)} 个样本")
+                    for i in range(len(ds)):
+                        sample = ds[i]
+                        text = (
+                            sample.get('text')
+                            or sample.get('content')
+                            or sample.get('raw_content')
+                            or ''
+                        )
+                        if text and len(text) >= min_chars:
+                            yield {'text': text}
+                except Exception as exc:
+                    logger.warning(f"[ProLong] MDS 读取失败 {sg_local}: {exc}")
+
+    # ── 本地模式：从预下载完整目录读取所有 shard ────────────────────────────
+    else:
+        if not os.path.isdir(local_path):
+            logger.warning(f"[ProLong] 本地路径不存在: {local_path}")
+            return
+
+        for subset in _subsets:
+            subset_dir = os.path.join(local_path, subset)
+            if not os.path.isdir(subset_dir):
+                logger.warning(f"[ProLong] 子集目录不存在，跳过: {subset_dir}")
+                continue
+
+            shard_groups = sorted([
+                d for d in os.listdir(subset_dir)
+                if os.path.isdir(os.path.join(subset_dir, d))
+            ])
+            if not shard_groups:
+                logger.warning(f"[ProLong] {subset}: 未找到 shard 子目录")
+                continue
+
+            for sg in shard_groups:
+                sg_path = os.path.join(subset_dir, sg)
+                try:
+                    ds = _MDSLocalDataset(local=sg_path)
+                    logger.info(f"[ProLong] {subset}/{sg}: {len(ds)} 个样本")
+                    for i in range(len(ds)):
+                        sample = ds[i]
+                        text = (
+                            sample.get('text')
+                            or sample.get('content')
+                            or sample.get('raw_content')
+                            or ''
+                        )
+                        if text and len(text) >= min_chars:
+                            yield {'text': text}
+                except Exception as exc:
+                    logger.warning(f"[ProLong] MDS 读取失败 {sg_path}: {exc}")
 
 
 def make_prolong_mds_iterable(
-    local_path: str,
+    local_path: Optional[str] = None,
     subsets: Optional[List[str]] = None,
     min_chars: int = 50,
+    max_shards_per_subset: int = 3,
+    cache_dir: Optional[str] = None,
+    seed: int = 42,
 ) -> 'IterableDataset':
     """
-    将本地 ProLong-TextFull MDS 数据集包装成 HuggingFace IterableDataset。
+    将 ProLong-TextFull MDS 数据集包装成 HuggingFace IterableDataset。
 
-    下载命令::
-
-        huggingface-cli download orionweller/ProLong-TextFull \\
-            --repo-type dataset --local-dir ./prolong_textfull
-        pip install mosaicml-streaming
+    local_path=None（默认）时自动从 HF Hub 按需随机下载少量 shard，
+    无需提前手动下载全量数据。
 
     参数:
-        local_path: ProLong-TextFull 根目录路径
-        subsets:    子集列表（默认 ["books"]，arxiv/openwebmath 由 proof-pile-2 替代）
-        min_chars:  最小字符数
+        local_path:             本地目录路径（None = 自动下载 max_shards_per_subset 个 shard）
+        subsets:                子集列表（默认 ["books"]）
+        min_chars:              最小字符数
+        max_shards_per_subset:  自动模式下每个子集随机下载的 shard 组数（默认 3）
+        cache_dir:              缓存目录（默认 ~/.cache/huggingface/prolong_textfull）
+        seed:                   随机种子
     返回:
         datasets.IterableDataset，字段为 {'text': str}
     """
@@ -366,6 +473,9 @@ def make_prolong_mds_iterable(
             'local_path': local_path,
             'subsets': subsets,
             'min_chars': min_chars,
+            'max_shards_per_subset': max_shards_per_subset,
+            'cache_dir': cache_dir,
+            'seed': seed,
         },
     )
 
@@ -710,18 +820,15 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "lang":    "books",
         "note":    "英文书籍 — BookCorpus 7185 本，MIT 许可，提升叙事/长文本理解",
     },
-    # ── ProLong-TextFull（只用 books 子集，arxiv/openwebmath 由 proof-pile-2 替代）────
-    # local_path 默认 None，跳过；提前下载后设置路径即可启用：
-    #   huggingface-cli download orionweller/ProLong-TextFull \
-    #       --repo-type dataset --local-dir ./prolong_textfull
-    #   pip install mosaicml-streaming
+    # ── 长文本书籍（ProLong-TextFull books，自动按需下载 shard）────────────
     {
-        "source_type": "prolong_mds",
-        "local_path":  None,
-        "subsets":     ["books"],
-        "weight":      0.04,
-        "lang":        "prolong-books",
-        "note":        "ProLong-TextFull books 子集（长上下文书籍，MDS 格式，arxiv/openwebmath 由 proof-pile-2 替代）",
+        "source_type":            "prolong_mds",
+        "local_path":             None,       # None = 自动从 HF Hub 下载随机 shard
+        "subsets":                ["books"],
+        "max_shards_per_subset":  3,          # 底噪只需 3 个 shard 组
+        "weight":                 0.04,
+        "lang":                   "prolong-books",
+        "note":                   "ProLong-TextFull books 子集 — 首次运行自动下载 3 个 shard 到缓存，无需手动准备",
     },
     # ── Wikipedia（高质量知识锚点，小权重上采样，参考 LLaMA-3 处理方式）──
     {
@@ -757,10 +864,9 @@ MULTILINGUAL_BASE_MIX: List[Dict[str, Any]] = [
         "note":    "韩文维基百科 2023-11 快照",
     },
 ]
-# 合计权重（ProLong local_path=None 时跳过，其余自动归一化）:
-# 0.31+0.18+0.05+0.08+0.05+0.04+0.04+0.04+0.08+0.05+0.03+(0.04)+0.02+0.02+0.01+0.01 = 1.05
+# 合计权重（全部自动归一化，prolong_mds 首次运行时自动下载 shard）:
+# 0.31+0.18+0.05+0.08+0.05+0.04+0.04+0.04+0.08+0.05+0.03+0.04+0.02+0.02+0.01+0.01 = 1.05
 # 权重总和 > 1 时由 interleave_datasets 自动归一化为概率分布
-# 不含 prolong: 1.01（自动归一化）；含 prolong books: 1.05（自动归一化）
 
 # ── Stage 1 alias ──────────────────────────────────────────────────────────────
 #: MULTILINGUAL_BASE_MIX 即 Stage 1 通用预训练底噪
@@ -782,11 +888,10 @@ STAGE_1_MIX: List[Dict[str, Any]] = MULTILINGUAL_BASE_MIX
 #:        LLaMA-3.1-70B 打分 4-5 分的高质量数学解题步骤网页，9.6B tokens
 #:        GSM8k/MATH benchmark SOTA（2024）
 #:   5. 新增 cosmopedia/auto_math_text 5%：合成数学教科书，10.3B tokens
-#:   6. ProLong-TextFull 仍只用 books 子集（长文本能力保持）
+#:   6. ProLong-TextFull books 子集（首次自动下载 3 个 shard，长文本能力保持）
 #:
-#: 有效权重合计（不含 ProLong 本地路径时）:
-#:   0.18+0.10+0.03+0.03+0.12+0.15+0.10+0.05+0.03+0.02+0.02+0.03 = 0.86 → 自动归一化
-#:   含 ProLong books: +0.04 → 0.90 → 自动归一化
+#: 有效权重合计（prolong_mds 自动下载，全部源均参与）:
+#:   0.18+0.10+0.03+0.03+0.12+0.15+0.10+0.05+0.04+0.03+0.02+0.02 = 0.87 → 自动归一化
 STAGE_2_MIX: List[Dict[str, Any]] = [
     # ── 通用 Web（缩减至约 31%，保留多语言基础）───────────────────────────────
     {
@@ -859,14 +964,15 @@ STAGE_2_MIX: List[Dict[str, Any]] = [
         "lang":    "cosmopedia-math",
         "note":    "Cosmopedia auto_math_text：数学网站合成教科书，10.3B tokens，Apache 2.0",
     },
-    # ── 书籍长文本（ProLong books + BookCorpus，维持长上下文能力）───────────
+    # ── 长文本书籍（ProLong-TextFull books，自动按需下载 shard）────────────
     {
-        "source_type": "prolong_mds",
-        "local_path":  None,
-        "subsets":     ["books"],
-        "weight":      0.04,
-        "lang":        "prolong-books",
-        "note":        "ProLong-TextFull books 子集（长上下文书籍，MDS 格式，需本地下载）",
+        "source_type":            "prolong_mds",
+        "local_path":             None,       # None = 自动从 HF Hub 下载随机 shard
+        "subsets":                ["books"],
+        "max_shards_per_subset":  3,
+        "weight":                 0.04,
+        "lang":                   "prolong-books",
+        "note":                   "ProLong-TextFull books 子集 — 首次运行自动下载 3 个 shard 到缓存，无需手动准备",
     },
     {
         "dataset": "rojagtap/bookcorpus",
@@ -955,18 +1061,17 @@ def make_multi_source_iterable(
         w        = float(src.get('weight', 1.0))
         lang_tag = src.get('lang', 'unknown')
 
-        # ── ProLong-TextFull MDS 格式（本地路径）──────────────────────────
+        # ── ProLong-TextFull MDS（自动按需下载 shard，或读取本地目录）─────
         if src_type == 'prolong_mds':
-            local_path = src.get('local_path')
-            if not local_path:
-                logger.debug(
-                    f"[{lang_tag}] ProLong-TextFull local_path 未设置，跳过"
-                    "（下载后在 MULTILINGUAL_BASE_MIX 中设置 local_path 即可启用）"
-                )
-                continue
+            _lp = src.get('local_path')  # None = 自动下载模式
             try:
                 ds = make_prolong_mds_iterable(
-                    local_path, subsets=src.get('subsets'), min_chars=min_chars
+                    local_path=_lp,
+                    subsets=src.get('subsets'),
+                    min_chars=min_chars,
+                    max_shards_per_subset=src.get('max_shards_per_subset', 3),
+                    cache_dir=src.get('cache_dir'),
+                    seed=seed,
                 )
             except Exception as exc:
                 logger.warning(f"[{lang_tag}] ProLong MDS 加载失败，跳过: {exc}")
@@ -974,7 +1079,8 @@ def make_multi_source_iterable(
             streams.append(ds)
             weights.append(w)
             lang_labels.append(lang_tag)
-            logger.info(f"[{lang_tag}] 已添加 ProLong-TextFull MDS: {local_path} (权重={w})")
+            mode = f"本地: {_lp}" if _lp else "自动下载 shard"
+            logger.info(f"[{lang_tag}] 已添加 ProLong-TextFull MDS ({mode}, 权重={w})")
             continue
 
         # ── 远程 URL（HTTP/HTTPS，GitHub raw 等）────────────────────────────
