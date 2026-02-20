@@ -134,7 +134,12 @@ class LeftSpinStep(nn.Module):
         phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
 
         # 更新历史
-        self.phi_prev = phi.detach()
+        # 关键：必须用 .detach().clone() 而非 .detach()
+        # .detach() 创建共享 storage 的 tensor；Virtual VRAM 的 pack_hook 会把
+        # phi 的 CUDA storage 释放回分配器，下一批序列长度变化后该地址被重用，
+        # backward 恢复时 phi_prev 持有的"原地址"已是非法内存 → CUDA illegal access
+        # .clone() 切断 storage 共享，phi_prev 持有独立副本，phi 的 storage 可安全释放
+        self.phi_prev = phi.detach().clone()
 
         # 确保非负
         phi = torch.clamp(phi, min=0.0)
@@ -211,7 +216,9 @@ class LeftSpinStep(nn.Module):
         u_next = u + delta_u_eff
 
         # 5. 更新历史
-        self.delta_prev = delta_u.detach()
+        # 同理：.clone() 切断 storage 共享，防止 Virtual VRAM 释放 delta_u 后
+        # delta_prev 持有悬空的 CUDA 地址
+        self.delta_prev = delta_u.detach().clone()
 
         # 6. 统计信息
         stats = {
@@ -475,7 +482,8 @@ class AdaptiveLeftSpinStep(LeftSpinStep):
             self.phi_prev = torch.zeros_like(phi_raw)
 
         phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
-        self.phi_prev = phi.detach()
+        # 同 LeftSpinStep：.clone() 切断 storage 共享
+        self.phi_prev = phi.detach().clone()
 
         return torch.clamp(phi, min=0.0)
 

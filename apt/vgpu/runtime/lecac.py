@@ -134,7 +134,7 @@ class LECACLinearFunction(torch.autograd.Function):
         x_q, scale, weight, bias = ctx.saved_tensors
         bits = ctx.bits
 
-        # 反量化恢复激活值 [M, K]
+        # 反量化恢复激活值 [M, K]（dequantize 返回 float32，后续需对齐 weight.dtype）
         if bits == 2:
             x_recon = dequantize_int2_symmetric(x_q, scale)
         else:
@@ -147,6 +147,10 @@ class LECACLinearFunction(torch.autograd.Function):
                 noise = torch.randn_like(x_recon) * ctx.alpha
                 compensation = (ctx.error_std / dimension_balance) * noise
             x_recon = x_recon + compensation
+
+        # 对齐 dtype：BF16 训练时 grad_output/weight 为 BF16，x_recon 为 float32
+        # mm() 要求两个操作数 dtype 完全一致，否则抛 "mat1 and mat2 must have same dtype"
+        x_recon = x_recon.to(weight.dtype)
 
         # 梯度计算（标准 Linear backward），统一在 2D 做 matmul
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])  # [M, N]
@@ -235,6 +239,9 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
                 # 逐行做正交投影（grad_output 的每行作为方向基）
                 orth = _orthogonal_projection(x_recon_fp, grad_output_2d)
                 x_recon_fp = x_recon_fp + orth * 0.5
+
+        # 对齐 dtype：BF16 训练时 grad_output/weight 为 BF16，x_recon_fp 为 float32
+        x_recon_fp = x_recon_fp.to(weight.dtype)
 
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])
 
