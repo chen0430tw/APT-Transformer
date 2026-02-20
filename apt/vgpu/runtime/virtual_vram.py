@@ -116,17 +116,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
 
         # 从 CPU 恢复到 CUDA（同样不进入 autograd 图）
         try:
-            # 关键：backward 与 forward 可能跑在不同的 CUDA stream 上。
-            # 如果不同步，backward stream 可能读到 forward stream 尚未写完/已释放的
-            # CUDA 内存，触发 "CUDA illegal memory access"（cudaErrorIllegalAddress）。
-            # synchronize() 保证所有待处理的 CUDA 操作在恢复前全部完成。
-            if torch.cuda.is_available():
-                torch.cuda.synchronize(packed.device)
-
             with torch.no_grad():
-                # non_blocking=False（默认）：同步 CPU→CUDA 传输，避免竞争
-                # .contiguous() 确保 CPU tensor 连续布局，防止非连续 tensor 在
-                # 跨设备拷贝时触发 stride 相关的非法访问
+                # non_blocking=False（默认）：同步 CPU→CUDA 传输
+                # .contiguous() 确保 CPU tensor 连续布局，防止非连续 tensor 跨设备拷贝时异常
                 restored = packed.cpu_tensor.contiguous().to(
                     device=packed.device,
                     dtype=packed.dtype,
