@@ -120,8 +120,10 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             )
 
             if copy_stream is not None:
-                # 在 copy_stream 上做异步 D2H
-                # copy_stream 会等待 default stream 上 t 写完后再开始拷贝
+                # 关键：让 copy_stream 等待 default stream 当前队列中的所有工作
+                # PyTorch 切换流时不自动插入跨流依赖！不加这行，copy_stream
+                # 可能在 compute kernel 还未写完 t 时就开始 D2H → 读到 NaN
+                copy_stream.wait_stream(torch.cuda.current_stream())
                 with torch.cuda.stream(copy_stream):
                     cpu_tensor.copy_(t, non_blocking=True)
                 event = copy_stream.record_event()
