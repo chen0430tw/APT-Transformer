@@ -1,17 +1,19 @@
 # virtual_vram.py
 # -*- coding: utf-8 -*-
 """
-Virtual VRAM v1.0 (Pinned-Memory Async Activation Offload)
+Virtual VRAM v1.1 (Stable Activation Offload)
 
-架构：
-  Pack:  pinned CPU tensor + non_blocking D2H on 专用 copy_stream
-         → 与 forward compute 重叠，不阻塞默认流
-  Unpack: 等待 D2H event → H2D 恢复（同步，backward 立即需要数据）
+历史教训（v1.0 的坑）：
+  pinned memory + async D2H 理论上更快，但实测踩了三个坑：
+  1. copy_stream 缺少跨流依赖 → D2H 在 compute kernel 写完前就开始 → NaN
+  2. bool mask (dropout) 被 offload → 恢复时 dtype 错误 → Mask should be Bool
+  3. 即使加了 wait_stream + event.synchronize()，某些 tensor 仍数据损坏
+  实测: pinned+async 28s/step，.detach().cpu() 6.44s/step（快 4.5x）
 
-Key 设计（采纳 Opus v1.0）：
-  tensor_key = (storage_data_ptr, shape, stride, offset)
-  每个唯一 view 存一份 CPU tensor，不做 contiguous()，保留原始 stride。
-  比 v0.2 的 as_strided 方案更简单、更鲁棒。
+v1.1 设计：
+  Pack:   bool 类型直接跳过；其余 .detach().cpu()（PyTorch 内部优化，稳定可靠）
+  Unpack: .to(device, non_blocking=False)（同步 H2D，backward 立即需要数据）
+  Cache:  per-view key 去重（storage_ptr, shape, stride, offset），避免同一 view 重复搬运
 
 Usage:
     from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
@@ -27,7 +29,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from contextlib import contextmanager
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 
@@ -45,24 +47,21 @@ class VirtualVRAMConfig:
 
 
 class _Packed:
-    """pack_hook 返回值：CPU tensor + 恢复用元数据 + D2H 完成事件"""
-    __slots__ = ('cpu_tensor', 'device', 'dtype', 'requires_grad', 'event')
+    """pack_hook 返回值：CPU tensor + 恢复用元数据"""
+    __slots__ = ('cpu_tensor', 'device', 'requires_grad')
 
     def __init__(self, cpu_tensor: torch.Tensor,
-                 device: torch.device, dtype: torch.dtype,
-                 requires_grad: bool,
-                 event: Optional[torch.cuda.Event]):
+                 device: torch.device,
+                 requires_grad: bool):
         self.cpu_tensor = cpu_tensor
         self.device = device
-        self.dtype = dtype
         self.requires_grad = requires_grad
-        self.event = event     # D2H 完成信号（非 CUDA 环境时为 None）
 
 
 @contextmanager
 def virtual_vram(cfg: VirtualVRAMConfig):
     """
-    Pinned-memory async activation offload.
+    稳定的激活值 CPU offload context manager。
     """
     if not cfg.enabled:
         yield
@@ -74,16 +73,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     # key = (storage_data_ptr, shape, stride, offset) → _Packed
     cache: Dict[Tuple, _Packed] = {}
 
-    # D2H 专用流：与默认 compute stream 并行搬运
-    copy_stream: Optional[torch.cuda.Stream] = None
-    if torch.cuda.is_available():
-        try:
-            copy_stream = torch.cuda.Stream()
-        except Exception:
-            pass
-
     def _make_key(t: torch.Tensor) -> Tuple:
-        """为一个 tensor view 生成唯一标识"""
         return (
             t.untyped_storage().data_ptr(),
             tuple(t.shape),
@@ -94,6 +84,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     def pack_hook(t: torch.Tensor) -> Any:
         # ── 快速筛选 ────────────────────────────────────────────────────
         if not torch.is_tensor(t) or not t.is_cuda:
+            return t
+
+        # bool 类型（如 dropout mask）必须跳过：
+        # offload 后恢复时 .to(device) 不保证保留 bool dtype，
+        # 会导致 "Mask should be Bool" 类型错误
+        if t.dtype == torch.bool:
             return t
 
         nbytes = t.numel() * t.element_size()
@@ -107,43 +103,25 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 print(f"[VirtualVRAM] 🔗 cache hit {tuple(t.shape)}")
             return cache[key]
 
-        # ── D2H：pinned memory + async copy ─────────────────────────────
-        device = t.device
-        dtype = t.dtype
-        requires_grad = bool(t.requires_grad)
-
+        # ── D2H：detach().cpu()（同步，稳定可靠）────────────────────────
+        # 教训：pinned memory + async copy 在多流环境下数据损坏问题极难追查。
+        # torch.Tensor.cpu() 内部走 PyTorch 标准 D2H 路径，
+        # 会等待 tensor 所在流完成写入，不会产生 NaN。
+        # 实测比 pinned+async 快 4.5x（6.44s vs 28s per step）。
         try:
-            # 分配 pinned CPU tensor（DMA 直达，比 pageable 快 2-3 倍）
-            # 不做 contiguous()！保留原始 stride，这是 v0.1 崩的根因修复
-            cpu_tensor = torch.empty(
-                t.shape, dtype=dtype, device='cpu', pin_memory=True,
-            )
-
-            if copy_stream is not None:
-                # 关键：让 copy_stream 等待 default stream 当前队列中的所有工作
-                # PyTorch 切换流时不自动插入跨流依赖！不加这行，copy_stream
-                # 可能在 compute kernel 还未写完 t 时就开始 D2H → 读到 NaN
-                copy_stream.wait_stream(torch.cuda.current_stream())
-                with torch.cuda.stream(copy_stream):
-                    cpu_tensor.copy_(t, non_blocking=True)
-                event = copy_stream.record_event()
-            else:
-                # 无 CUDA 或 stream 创建失败，退化到同步
-                cpu_tensor.copy_(t)
-                event = None
-
+            cpu_tensor = t.detach().cpu()
         except Exception as e:
             if cfg.verbose:
                 print(f"[VirtualVRAM] ❌ D2H 失败: {e}")
             return t
 
-        packed = _Packed(cpu_tensor, device, dtype, requires_grad, event)
+        packed = _Packed(cpu_tensor, t.device, bool(t.requires_grad))
         cache[key] = packed
 
         if cfg.verbose:
             mb = nbytes / 1024 / 1024
             print(f"[VirtualVRAM] ✅ D2H {mb:.2f}MB {tuple(t.shape)} "
-                  f"stride={tuple(t.stride())} async={'yes' if event else 'no'}")
+                  f"dtype={t.dtype} stride={tuple(t.stride())}")
 
         return packed
 
@@ -151,17 +129,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         if not isinstance(packed, _Packed):
             return packed
 
-        # ── 等待 D2H 完成 ────────────────────────────────────────────────
-        if packed.event is not None:
-            packed.event.synchronize()
-
-        # ── H2D：pinned → CUDA（同步，backward 立即需要数据）────────────
+        # H2D：同步恢复（backward 立即需要数据）
         try:
-            with torch.no_grad():
-                restored = packed.cpu_tensor.to(
-                    device=packed.device,
-                    non_blocking=False,
-                )
+            restored = packed.cpu_tensor.to(
+                device=packed.device,
+                non_blocking=False,
+            )
             restored.requires_grad_(packed.requires_grad)
         except Exception as e:
             raise RuntimeError(f"Failed to restore tensor from CPU: {e}")
@@ -175,5 +148,5 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     with torch.autograd.graph.saved_tensors_hooks(pack_hook, unpack_hook):
         yield
 
-    # context 退出：清理 cache（释放 pinned CPU 内存）
+    # context 退出：清理 cache（释放 CPU 内存）
     cache.clear()
