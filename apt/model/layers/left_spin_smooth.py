@@ -133,13 +133,10 @@ class LeftSpinStep(nn.Module):
 
         phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
 
-        # 更新历史
-        # 关键：必须用 .detach().clone() 而非 .detach()
-        # .detach() 创建共享 storage 的 tensor；Virtual VRAM 的 pack_hook 会把
-        # phi 的 CUDA storage 释放回分配器，下一批序列长度变化后该地址被重用，
-        # backward 恢复时 phi_prev 持有的"原地址"已是非法内存 → CUDA illegal access
-        # .clone() 切断 storage 共享，phi_prev 持有独立副本，phi 的 storage 可安全释放
-        self.phi_prev = phi.detach().clone()
+        # 更新历史（in-place copy 避免每步分配新 tensor）
+        # shapes 在上面 init check (line 129-132) 后保证匹配
+        # copy_() 写入已有 buffer，phi_prev 与 phi 无 storage 共享（phi 是计算结果）
+        self.phi_prev.copy_(phi.detach())
 
         # 确保非负
         phi = torch.clamp(phi, min=0.0)
@@ -215,10 +212,14 @@ class LeftSpinStep(nn.Module):
         delta_u_eff = g_expanded * delta_u
         u_next = u + delta_u_eff
 
-        # 5. 更新历史
-        # 同理：.clone() 切断 storage 共享，防止 Virtual VRAM 释放 delta_u 后
-        # delta_prev 持有悬空的 CUDA 地址
-        self.delta_prev = delta_u.detach().clone()
+        # 5. 更新历史（in-place reuse buffer 当 shape 不变时）
+        # delta_prev 是 [B, T, D]，可能很大（如 4×2048×1024 = 32MB BF16）
+        # 当 batch/seq_len 稳定时用 copy_() 避免每步分配+释放
+        _detached_du = delta_u.detach()
+        if self.delta_prev is not None and self.delta_prev.shape == _detached_du.shape:
+            self.delta_prev.copy_(_detached_du)
+        else:
+            self.delta_prev = _detached_du.clone()
 
         # 6. 统计信息
         stats = {
@@ -478,12 +479,12 @@ class AdaptiveLeftSpinStep(LeftSpinStep):
 
         phi_raw = alpha_constrained * F.softplus(s - tau_constrained)
 
-        if self.phi_prev.numel() == 1:
+        if self.phi_prev.numel() == 1 or self.phi_prev.shape != phi_raw.shape:
             self.phi_prev = torch.zeros_like(phi_raw)
 
         phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
-        # 同 LeftSpinStep：.clone() 切断 storage 共享
-        self.phi_prev = phi.detach().clone()
+        # in-place copy：shapes 在上面 init check 后保证匹配
+        self.phi_prev.copy_(phi.detach())
 
         return torch.clamp(phi, min=0.0)
 
