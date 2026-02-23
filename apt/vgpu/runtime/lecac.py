@@ -155,6 +155,7 @@ class LECACLinearFunction(torch.autograd.Function):
         # 梯度计算（标准 Linear backward），统一在 2D 做 matmul
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])  # [M, N]
 
+        grad_output_2d = grad_output_2d.to(weight.dtype)  # 对齐 dtype
         grad_input = grad_output_2d.mm(weight).view(ctx.original_shape)   # [..., K]
         grad_weight = grad_output_2d.t().mm(x_recon)                       # [N, K]
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
@@ -388,12 +389,87 @@ def replace_linear_with_lecac(
 # 公共导出
 # ============================================================================
 
+# ============================================================================
+# Virtual VRAM wrapper 函数（用于 v1.6 嵌套架构）
+# ============================================================================
+
+def lecac_quantize(x: torch.Tensor, bits: int = 8, constant: float = _ALPHA_4_OVER_E) -> torch.Tensor:
+    """
+    Virtual VRAM 使用的 LECaC 量化 wrapper
+
+    Args:
+        x: 输入张量
+        bits: 量化位数（2/4/8），默认 8
+        constant: LECaC 补偿常数（未使用，保持接口兼容）
+
+    Returns:
+        量化后的张量（scale 作为附加属性保存）
+    """
+    if bits == 2:
+        x_int, scale = quantize_int2_symmetric(x)
+        # 将scale作为属性保存到tensor中
+        x_int.scale = scale.item() if isinstance(scale, torch.Tensor) else scale
+        return x_int
+    elif bits == 4:
+        x_int, scale = quantize_int4_symmetric(x)
+        x_int.scale = scale.item() if isinstance(scale, torch.Tensor) else scale
+        return x_int
+    else:
+        # bits=8 或其他，使用 INT8 量化
+        with torch.no_grad():
+            amax = x.abs().max()
+            scale = torch.clamp(amax / 127.0, min=1e-6)
+            x_int = (x / scale).round().clamp(-128, 127).to(torch.int8)
+        x_int.scale = scale.item() if isinstance(scale, torch.Tensor) else scale
+        return x_int
+
+
+def lecac_dequantize(
+    x_int: torch.Tensor,
+    bits: int = 8,
+    original_shape: tuple = (),
+    original_dtype: torch.dtype = torch.float32,
+    constant: float = _ALPHA_4_OVER_E
+) -> torch.Tensor:
+    """
+    Virtual VRAM 使用的 LECaC 反量化 wrapper
+
+    Args:
+        x_int: 量化后的整数张量（scale 作为属性保存）
+        bits: 量化位数（2/4/8），默认 8
+        original_shape: 原始形状（未使用，保持接口兼容）
+        original_dtype: 原始数据类型
+        constant: LECaC 补偿常数（未使用，保持接口兼容）
+
+    Returns:
+        反量化后的张量
+    """
+    # 从tensor属性获取scale
+    if hasattr(x_int, 'scale'):
+        scale = x_int.scale
+    else:
+        # 如果没有scale属性，使用默认值
+        scale = 1.0
+
+    # 反量化
+    x_dequant = x_int.float() * scale
+
+    # 转换回原始dtype
+    if original_dtype != torch.float32:
+        x_dequant = x_dequant.to(original_dtype)
+
+    return x_dequant
+
+
 __all__ = [
     # 量化原语
     "quantize_int2_symmetric",
     "dequantize_int2_symmetric",
     "quantize_int4_symmetric",
     "dequantize_int4_symmetric",
+    # Virtual VRAM wrapper
+    "lecac_quantize",
+    "lecac_dequantize",
     # autograd Functions
     "LECACLinearFunction",
     "OrthogonalLECACLinearFunction",

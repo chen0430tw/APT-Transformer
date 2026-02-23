@@ -2228,8 +2228,10 @@ def collect_tokenizer_corpus(
     try:
         from datasets import load_dataset
         logger.info(f"从 FineWeb 采样 {per_source} 条...")
+        logger.info(f"  正在尝试查找 FineWeb 配置文件（若出现404为正常，将使用默认配置）...")
         ds = load_dataset("HuggingFaceFW/fineweb", streaming=True, split="train",
                           trust_remote_code=True)
+        logger.info(f"  FineWeb 配置加载完成（使用默认或远程配置）")
         count = 0
         for example in ds:
             if "text" in example and len(example["text"].strip()) > 50:
@@ -2434,10 +2436,40 @@ def parse_args():
     # Virtual VRAM: 激活值 offload 到 CPU, 降低显存峰值
     vgpu_group.add_argument("--use-virtual-vram", action="store_true",
                             help="启用 Virtual VRAM (激活值自动 offload 到 CPU, 降低显存峰值)")
-    vgpu_group.add_argument("--vram-min-tensor-bytes", type=int, default=1 << 20,
-                            help="Virtual VRAM: 仅 offload >= 此大小的张量 (默认 1MB)")
+    vgpu_group.add_argument("--vram-min-tensor-bytes", type=int, default=20 << 20,
+                            help="Virtual VRAM: 仅 offload >= 此大小的张量 (默认 20MB)")
     vgpu_group.add_argument("--vram-verbose", action="store_true",
                             help="Virtual VRAM: 打印每次 offload/restore 的详细日志")
+    vgpu_group.add_argument("--vram-max-tensor-bytes", type=int, default=50 << 20,
+                            help="Virtual VRAM v1.2: 仅 offload <= 此大小的张量 (默认 50MB)")
+    vgpu_group.add_argument("--vram-enable-block-offload", action="store_true",
+                            help="Virtual VRAM v1.3: 启用分块 offload (沿第一维切分)")
+    vgpu_group.add_argument("--vram-block-size", type=int, default=64,
+                            help="Virtual VRAM v1.3: 分块大小 (默认 64)")
+    vgpu_group.add_argument("--vram-enable-prefetch", action="store_true",
+                            help="Virtual VRAM v1.3: 启用异步预取")
+    vgpu_group.add_argument("--vram-prefetch-cache-size", type=int, default=5,
+                            help="Virtual VRAM v1.3: 预取缓存大小")
+    vgpu_group.add_argument("--vram-enable-quantization", action="store_true",
+                            help="Virtual VRAM v1.2: 启用 LECaC 量化")
+    vgpu_group.add_argument("--vram-quantization-bits", type=int, default=8,
+                            help="Virtual VRAM v1.2: 量化位数")
+    vgpu_group.add_argument("--vram-enable-paged-memory", action="store_true",
+                            help="Virtual VRAM v1.4: 启用分页内存管理（PagedAttention 风格）")
+    vgpu_group.add_argument("--vram-page-size", type=int, default=2 << 20,
+                            help="Virtual VRAM v1.4: 页大小（默认 2MB）")
+    vgpu_group.add_argument("--vram-max-pages", type=int, default=1000,
+                            help="Virtual VRAM v1.4: 最大页数（默认 1000）")
+    vgpu_group.add_argument("--vram-enable-arc-memory", action="store_true",
+                            help="Virtual VRAM v1.5: 启用 Rust 风格 Arc 引用计数")
+    vgpu_group.add_argument("--vram-enable-weak-refs", action="store_true",
+                            help="Virtual VRAM v1.5: 启用弱引用（允许 GC 回收）")
+    vgpu_group.add_argument("--vram-enable-nested-v16", action="store_true",
+                            help="Virtual VRAM v1.6: 启用线性缩放嵌套架构 (LECaC→Page→Block→Arc)")
+    vgpu_group.add_argument("--vram-nested-block-size", type=int, default=64,
+                            help="Virtual VRAM v1.6: 嵌套块大小（默认 64）")
+    vgpu_group.add_argument("--vram-nested-quantization-bits", type=int, default=8,
+                            help="Virtual VRAM v1.6: 嵌套量化位数（默认 8）")
 
     # Virtual Blackwell: 对 nn.Linear 做脉冲式量化感知优化
     vgpu_group.add_argument("--use-virtual-blackwell", action="store_true",
@@ -2710,13 +2742,41 @@ def main():
             vram_cfg = VirtualVRAMConfig(
                 enabled=True,
                 min_tensor_bytes=args.vram_min_tensor_bytes,
+                min_storage_bytes=0,  # v1.1 已废弃，保留向后兼容
                 verbose=args.vram_verbose,
+                max_tensor_bytes=args.vram_max_tensor_bytes,
+                enable_block_offload=args.vram_enable_block_offload,
+                block_size=args.vram_block_size,
+                enable_prefetch=args.vram_enable_prefetch,
+                prefetch_cache_size=args.vram_prefetch_cache_size,
+                enable_quantization=args.vram_enable_quantization,
+                quantization_bits=args.vram_quantization_bits,
+                enable_paged_memory=args.vram_enable_paged_memory,
+                page_size=args.vram_page_size,
+                max_pages=args.vram_max_pages,
+                enable_arc_memory=args.vram_enable_arc_memory,
+                enable_weak_refs=args.vram_enable_weak_refs,
+                enable_nested_v16=args.vram_enable_nested_v16,
+                nested_block_size=args.vram_nested_block_size,
+                nested_quantization_bits=args.vram_nested_quantization_bits,
             )
             if rank == 0:
                 min_mb = args.vram_min_tensor_bytes / (1 << 20)
                 logger.info(
                     f"[Virtual VRAM] 已配置: min_tensor={min_mb:.0f}MB, "
-                    f"verbose={args.vram_verbose}"
+                    f"verbose={args.vram_verbose}, "
+                    f"max_tensor={args.vram_max_tensor_bytes/(1<<20):.0f}MB, "
+                    f"block_offload={args.vram_enable_block_offload}, "
+                    f"prefetch={args.vram_enable_prefetch}, "
+                    f"quantization={args.vram_enable_quantization}, "
+                    f"paged_memory={args.vram_enable_paged_memory}, "
+                    f"page_size={args.vram_page_size/(1<<20):.0f}MB, "
+                    f"max_pages={args.vram_max_pages}, "
+                    f"arc_memory={args.vram_enable_arc_memory}, "
+                    f"weak_refs={args.vram_enable_weak_refs}, "
+                    f"nested_v16={args.vram_enable_nested_v16}, "
+                    f"nested_block_size={args.vram_nested_block_size}, "
+                    f"nested_quant_bits={args.vram_nested_quantization_bits}"
                 )
 
     # --- Virtual A100: 三层虚拟显存 + 信号采集 ---
