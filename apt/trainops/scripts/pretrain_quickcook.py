@@ -148,15 +148,27 @@ except Exception:
 
 # --- LECAC: 激活值量化存储 + 梯度补偿 ---
 _LECAC_AVAILABLE = False
+_LECAC_WARMUP_AVAILABLE = False
 try:
     from apt.vgpu.runtime.lecac import (
         replace_linear_with_lecac,
         LECACConfig,
     )
     _LECAC_AVAILABLE = True
+    try:
+        from apt.vgpu.runtime.lecac_warmup import (
+            LECACAlphaScheduler,
+            update_lecac_alpha,
+        )
+        _LECAC_WARMUP_AVAILABLE = True
+    except Exception:
+        LECACAlphaScheduler = None  # type: ignore[assignment,misc]
+        update_lecac_alpha = None  # type: ignore[assignment]
 except Exception:
     replace_linear_with_lecac = None  # type: ignore[assignment]
     LECACConfig = None  # type: ignore[assignment,misc]
+    LECACAlphaScheduler = None  # type: ignore[assignment,misc]
+    update_lecac_alpha = None  # type: ignore[assignment]
 
 # --- mosaicml-streaming: ProLong-TextFull MDS 格式读取 ---
 _MOSAICML_STREAMING_AVAILABLE = False
@@ -1707,6 +1719,11 @@ class QuickCookTrainer:
         va100_signal_collector: Optional[Any] = None,     # VA100SignalCollector
         # 模型配置 (保存到 checkpoint 以便恢复)
         model_config: Optional[Dict[str, Any]] = None,
+        # LECaC Alpha Warmup (v2.0)
+        lecac_alpha_warmup: bool = False,
+        lecac_warmup_steps: Optional[int] = None,
+        lecac_warmup_multiplier: float = 3.0,
+        lecac_warmup_schedule: str = "cosine",
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -1735,6 +1752,12 @@ class QuickCookTrainer:
         self._vb_adapter = vb_adapter
         self._va100_tier = va100_tier_manager
         self._va100_signal = va100_signal_collector
+
+        # LECaC Alpha Warmup (v2.0)
+        self.lecac_alpha_warmup = lecac_alpha_warmup
+        self.lecac_warmup_steps = lecac_warmup_steps
+        self.lecac_warmup_multiplier = lecac_warmup_multiplier
+        self.lecac_warmup_schedule = lecac_warmup_schedule
 
         self.global_step = 0
         self.best_loss = float("inf")
@@ -1847,6 +1870,28 @@ class QuickCookTrainer:
         # 标准训练路径 (DDP / FSDP / 单机)
         optimizer, scheduler = self._create_optimizer_and_scheduler(total_steps)
 
+        # LECaC Alpha Warmup调度器 (v2.0)
+        alpha_scheduler = None
+        if self.lecac_alpha_warmup and _LECAC_WARMUP_AVAILABLE:
+            # 默认warmup步数与学习率warmup对齐
+            warmup_steps_lecac = self.lecac_warmup_steps
+            if warmup_steps_lecac is None:
+                # 自动对齐到学习率warmup步数 (10%)
+                warmup_steps_lecac = max(int(total_steps * 0.1), 100)
+
+            alpha_scheduler = LECACAlphaScheduler(
+                warmup_steps=warmup_steps_lecac,
+                warmup_multiplier=self.lecac_warmup_multiplier,
+                schedule=self.lecac_warmup_schedule
+            )
+            if self.rank == 0:
+                logger.info(
+                    f"[LECAC Alpha Warmup] 已启用: "
+                    f"warmup_steps={warmup_steps_lecac}, "
+                    f"multiplier={self.lecac_warmup_multiplier:.1f}, "
+                    f"schedule={self.lecac_warmup_schedule}"
+                )
+
         # 混合精度
         scaler = None
         autocast_ctx = None
@@ -1929,6 +1974,11 @@ class QuickCookTrainer:
 
                     scheduler.step()
                     optimizer.zero_grad()
+
+                    # LECaC Alpha Warmup 更新 (v2.0)
+                    if alpha_scheduler is not None and update_lecac_alpha is not None:
+                        current_alpha = alpha_scheduler.get_alpha(self.global_step)
+                        update_lecac_alpha(self.model, current_alpha)
 
                     self.global_step += 1
                     step_in_accum = 0
@@ -2503,6 +2553,17 @@ def parse_args():
     vgpu_group.add_argument("--lecac-skip-names", type=str, nargs="+", default=[],
                             help="LECAC: 跳过的子模块名称前缀 (如 lm_head embed, 默认空)")
 
+    # LECAC Alpha Warmup: 解决低学习率不稳定问题
+    vgpu_group.add_argument("--lecac-alpha-warmup", action="store_true",
+                            help="启用 LECAC Alpha Warmup (解决低学习率warmup期间Loss=NaN, 默认关闭)")
+    vgpu_group.add_argument("--lecac-warmup-steps", type=int, default=None,
+                            help="LECAC Alpha Warmup步数 (默认与学习率warmup对齐)")
+    vgpu_group.add_argument("--lecac-warmup-multiplier", type=float, default=3.0,
+                            help="LECAC Alpha Warmup倍数 (默认3.0, 推荐范围2-4)")
+    vgpu_group.add_argument("--lecac-warmup-schedule", type=str, default="cosine",
+                            choices=["linear", "cosine", "exponential"],
+                            help="LECAC Alpha Warmup调度类型 (默认cosine)")
+
     # DeepSpeed 会注入自己的 argparse 参数
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="(DeepSpeed 自动注入)")
@@ -2730,6 +2791,15 @@ def main():
                     f"orthogonal={args.lecac_orthogonal}"
                 )
 
+                # 🔑 重要提示：推荐启用Alpha Warmup避免NaN
+                if not args.lecac_alpha_warmup and _LECAC_WARMUP_AVAILABLE:
+                    logger.warning(
+                        "⚠️  [LECAC] 检测到未启用 Alpha Warmup！\n"
+                        "   低学习率warmup期间可能出现Loss=NaN。\n"
+                        "   推荐添加参数：--lecac-alpha-warmup\n"
+                        "   详见文档: docs/QUICKSTART_WARMUP.md"
+                    )
+
     # --- Virtual VRAM: 激活值 offload 配置 (不修改模型, 训练时用 context) ---
     if args.use_virtual_vram:
         if not _VIRTUAL_VRAM_AVAILABLE:
@@ -2879,6 +2949,11 @@ def main():
             "num_layers": args.num_layers,
             "max_seq_len": args.max_seq_len,
         },
+        # LECaC Alpha Warmup (v2.0)
+        lecac_alpha_warmup=args.lecac_alpha_warmup,
+        lecac_warmup_steps=args.lecac_warmup_steps,
+        lecac_warmup_multiplier=args.lecac_warmup_multiplier,
+        lecac_warmup_schedule=args.lecac_warmup_schedule,
     )
 
     try:

@@ -50,6 +50,12 @@
 - [VGPU 快速开始](performance/VGPU_QUICK_START.md) - vGPU 入门
 - [VGPU Stack 架构](performance/VGPU_STACK_ARCHITECTURE.md) - vGPU 技术架构
 
+**Virtual VRAM 优化** ⭐ NEW (v2.0)
+- [Virtual VRAM 优化指南](VRAM_OPTIMIZATION_GUIDE.md) - 完整技术文档（推荐）
+- [快速开始：解决低学习率NaN](QUICKSTART_WARMUP.md) - 5分钟快速开始
+- [优化方案对比](OPTIMIZATION_COMPARISON.md) - 技术选择和配置推荐
+- [更新日志](CHANGELOG_VRAM.md) - 版本历史和Bug修复
+
 **训练后端**
 - [训练后端使用指南](performance/TRAINING_BACKENDS.md) - 多后端支持
 - [极限优化指南](performance/EXTREME_OPTIMIZATIONS_GUIDE.md) - 性能优化技巧

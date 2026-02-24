@@ -1,0 +1,7 @@
+/var/spool/slurmd/job00002/slurm_script: line 25: module: command not found
+/var/spool/slurmd/job00002/slurm_script: line 28: cd: /work/twsuday816/APT-Transformer: No such file or directory
+/var/spool/slurmd/job00002/slurm_script: line 31: /home/chen0430tw/miniconda3/bin/activate: No such file or directory
+Traceback (most recent call last):
+  File "/tmp/vvram_cluster_test.py", line 20, in <module>
+    from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
+ModuleNotFoundError: No module named 'apt.vgpu'
