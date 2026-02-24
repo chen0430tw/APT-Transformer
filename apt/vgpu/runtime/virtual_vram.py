@@ -372,7 +372,8 @@ class VirtualVRAMConfig:
     # ===== v1.6 新增：线性缩放嵌套架构 =====
     enable_nested_v16: bool = False        # 启用 v1.6 嵌套架构 (LECaC→Page→Block→Arc)
     nested_block_size: int = 64            # 嵌套块大小
-    nested_quantization_bits: int = 8      # 嵌套量化位数
+    nested_quantization_bits: int = 8      # ⚠️  已弃用：saved_tensors_hooks 中量化会破坏 backward
+                                           # 保留字段仅为接口兼容，实际不再使用
 
     # Block-based offload (保留向后兼容)
     enable_block_offload: bool = False
@@ -382,9 +383,9 @@ class VirtualVRAMConfig:
     enable_prefetch: bool = False
     prefetch_cache_size: int = 5
 
-    # Quantization (保留向后兼容)
-    enable_quantization: bool = False
-    quantization_bits: int = 8
+    # Quantization (已弃用：saved_tensors_hooks 中有损量化会破坏 backward 数值稳定性)
+    enable_quantization: bool = False      # ⚠️  已弃用，设为 True 不再生效
+    quantization_bits: int = 8             # ⚠️  已弃用
 
     # ===== v1.5 保留：向后兼容 =====
     enable_arc_memory: bool = False        # v1.5: 启用 Arc 引用计数
@@ -833,15 +834,19 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 # ⚠️ 必须检查enable_nested_v16标志（v1.6），避免意外量化！
                 tensor_size_mb = nbytes / (1024 * 1024)
 
-                # v1.6修复：检测是否已被LECaC量化，避免双重量化导致NaN
-                # LECaC在forward时将激活值量化为INT8，并附加scale属性
-                is_lecac_quantized = (t.dtype == torch.int8 and hasattr(t, 'scale'))
-
-                should_quantize = (cfg.enable_nested_v16 and  # ← 修复：使用正确的 v1.6 标志
-                                   LECaC_AVAILABLE and
+                # v1.7 量化策略修复：仅对整数类型 tensor（LECACLinear 的 INT8 激活值）量化
+                # 浮点类型 tensor（Attention Q/K/V、或 LECACLinear 的 weight）不量化，
+                # 因为浮点 → INT8 → 浮点 的有损还原会引入误差 ε，
+                # 在大模型高初始梯度场景（vocab=65536, loss≈11 nats）下 ε 被放大 → FlashAttn NaN。
+                #
+                # LECACLinear 的 weight 已改为 ctx._weight 直接引用（不经 save_for_backward），
+                # 因此 VRAM 不会拦截 weight tensor。
+                # INT8 tensor（x_q）的量化近似无损：INT8[-2,1] → lecac_quant → lecac_dequant → INT8[-2,1]
+                is_float_dtype = t.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                should_quantize = (LECaC_AVAILABLE and
                                    cfg.nested_quantization_bits > 0 and
-                                   tensor_size_mb >= 5.0 and  # 5MB阈值
-                                   not is_lecac_quantized)  # 跳过已量化的tensor
+                                   tensor_size_mb >= 5.0 and
+                                   not is_float_dtype)  # 只对非浮点（INT8）量化
 
                 if should_quantize:
                     cpu_tensor = lecac_quantize(
@@ -851,12 +856,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     ).cpu()
                     quantized = True
                     if cfg.verbose:
-                        print(f"[VirtualVRAM v1.6] 🔢 VRAM量化: {tensor_size_mb:.2f}MB INT{cfg.nested_quantization_bits}")
+                        print(f"[VirtualVRAM v1.6] 🔢 INT量化D2H: {tensor_size_mb:.2f}MB {t.dtype}→INT{cfg.nested_quantization_bits}")
                 else:
                     cpu_tensor = t.detach().cpu()
                     quantized = False
-                    if cfg.verbose and is_lecac_quantized:
-                        print(f"[VirtualVRAM v1.6] 🔄 检测到LECaC量化，跳过VRAM量化: {tensor_size_mb:.2f}MB INT8")
+                    if cfg.verbose:
+                        print(f"[VirtualVRAM v1.6] 📤 无损D2H: {tensor_size_mb:.2f}MB {t.dtype}")
 
                 # 创建嵌套块（包含 Page → Block → Arc）
                 nested_block = _NestedArcBlock(
@@ -982,7 +987,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 cpu_blocks = []
 
                 for block in blocks:
-                    if cfg.enable_quantization and LECaC_AVAILABLE:
+                    # 浮点 tensor 不量化（避免 backward NaN），只做无损 CPU offload
+                    _is_float = block.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                    if cfg.enable_quantization and LECaC_AVAILABLE and not _is_float:
                         q_block = lecac_quantize(
                             block.detach(),
                             bits=cfg.quantization_bits,
@@ -1005,7 +1012,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 }
 
             else:
-                if cfg.enable_quantization and LECaC_AVAILABLE:
+                # 浮点 tensor 不量化（避免 backward NaN），只做无损 CPU offload
+                _is_float = t.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                if cfg.enable_quantization and LECaC_AVAILABLE and not _is_float:
                     cpu_tensor = lecac_quantize(
                         t.detach(),
                         bits=cfg.quantization_bits,

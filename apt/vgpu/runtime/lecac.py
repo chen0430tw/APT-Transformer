@@ -119,8 +119,15 @@ class LECACLinearFunction(torch.autograd.Function):
 
             error_std = (input_2d - x_recon).std()
 
-        # 保存量化后的 INT8 tensor（而非 FP32），显著降低显存
-        ctx.save_for_backward(x_q, scale, weight, bias)
+        # 关键设计：weight 和 bias 不通过 save_for_backward 保存，
+        # 而是作为 ctx 直接属性引用（不经过 saved_tensors_hooks 拦截）。
+        # 原因：weight 是 nn.Parameter，已在 GPU 上；若通过 save_for_backward，
+        # Virtual VRAM 的 pack_hook 会对其做 INT8 有损量化，
+        # 导致 backward 中 grad_input = grad_output.mm(weight+ε) 精度错误，
+        # 在大模型（vocab=65536，高初始梯度）时 ε 被放大 → FlashAttn NaN。
+        ctx.save_for_backward(x_q, scale)   # 只保存 INT8 激活值（可被 VRAM 无损 offload）
+        ctx._weight = weight                 # 直接引用，不经 hooks，保持精度
+        ctx._bias = bias
         ctx.bits = bits
         ctx.alpha = alpha
         ctx.error_std = error_std
@@ -131,7 +138,9 @@ class LECACLinearFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        x_q, scale, weight, bias = ctx.saved_tensors
+        x_q, scale = ctx.saved_tensors
+        weight = ctx._weight               # 直接取引用，精度完整
+        bias = ctx._bias
         bits = ctx.bits
 
         # 反量化恢复激活值 [M, K]（dequantize 返回 float32，后续需对齐 weight.dtype）
@@ -204,8 +213,11 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
             error_std = (input_2d - x_recon).std()
 
-        # 额外保存 x_recon 供正交投影使用
-        ctx.save_for_backward(x_q, scale, weight, bias, x_recon)
+        # weight/bias 不经 save_for_backward（同 LECACLinearFunction，避免 VRAM 量化引入 ε）
+        # x_recon 是浮点 tensor，VRAM 只做无损 CPU offload（浮点不量化）
+        ctx.save_for_backward(x_q, scale, x_recon)  # 只保存 INT8 激活 + 正交投影用的 x_recon
+        ctx._weight = weight                          # 直接引用，不经 hooks
+        ctx._bias = bias
         ctx.bits = bits
         ctx.alpha = alpha
         ctx.error_std = error_std
@@ -216,7 +228,9 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        x_q, scale, weight, bias, x_recon = ctx.saved_tensors
+        x_q, scale, x_recon = ctx.saved_tensors
+        weight = ctx._weight               # 直接取引用，精度完整
+        bias = ctx._bias
         bits = ctx.bits
 
         # 🔍 Debug: 检查grad_output是否有NaN
