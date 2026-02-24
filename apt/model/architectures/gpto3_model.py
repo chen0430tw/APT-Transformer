@@ -265,9 +265,9 @@ class TriVeinAttention(nn.Module):
             # Take first head in each group
             k_small = k_reshaped[:, :, 0, :, :]
             v_small = v_reshaped[:, :, 0, :, :]
-            # Repeat to full head count
-            k = k_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
-            v = v_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
+            # expand（无内存复制）→ reshape（单次 contiguous）替代 repeat
+            k = k_small.unsqueeze(2).expand(-1, -1, group_size, -1, -1).reshape(B, self.n_heads, T, self.head_dim)
+            v = v_small.unsqueeze(2).expand(-1, -1, group_size, -1, -1).reshape(B, self.n_heads, T, self.head_dim)
 
         # Project into low‑rank subspace
         zq = self.subspace.project(q)

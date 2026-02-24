@@ -19,24 +19,29 @@ import warnings
 import sys
 from typing import Optional, Tuple, List, Dict, Union
 
-# SDPA MATH backend context manager
-# 当 attn_mask 的 stride(1) 不是 4 的倍数时（如 seq_len 奇数），
-# efficient/flash backend 会报 "attn_bias is not correctly aligned (strideH)"，
-# 需要降级到无对齐要求的 MATH backend。
-# 优先 PyTorch 2.1+ 的 torch.nn.attention.sdpa_kernel，
-# 回落到 PyTorch 2.0 的 torch.backends.cuda.sdp_kernel。
-_SDPA_MATH_CTX_FACTORY = None
-try:
-    from torch.nn.attention import sdpa_kernel as _sdpa_kernel_fn, SDPBackend as _SDPBackend
-    _SDPA_MATH_CTX_FACTORY = lambda: _sdpa_kernel_fn([_SDPBackend.MATH])
-except ImportError:
+# _sdpa_flash: 优先使用 FlashAttention / Efficient-Attention kernel；
+# 条件不满足（float32、CPU、head_dim 不对齐等）时自动降级到任意可用 backend。
+def _sdpa_flash(
+    q: "torch.Tensor", k: "torch.Tensor", v: "torch.Tensor",
+    attn_mask=None, dropout_p: float = 0.0, is_causal: bool = False,
+) -> "torch.Tensor":
+    """SDPA with FlashAttention/Efficient-Attention priority; auto-falls back.
+
+    优先使用 FlashAttention（要求 fp16/bf16 + CUDA + head_dim≤256）
+    或 Efficient Attention（支持更多场景），排除慢速纯 MATH backend。
+    任何条件不满足时自动降级到默认 SDPA（允许 MATH backend）。
+    """
     try:
-        _sdp_kernel_mod = torch.backends.cuda.sdp_kernel  # PyTorch 2.0
-        _SDPA_MATH_CTX_FACTORY = lambda: _sdp_kernel_mod(
-            enable_flash=False, enable_math=True, enable_mem_efficient=False
-        )
-    except AttributeError:
-        pass  # 不支持，回落到手动 softmax
+        from torch.nn.attention import sdpa_kernel, SDPBackend  # PyTorch 2.2+
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+            )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return F.scaled_dot_product_attention(
+        q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+    )
 
 # 导入左旋平滑模块
 from apt.model.layers.left_spin_smooth import (
@@ -874,54 +879,15 @@ class AutopoieticAttention(nn.Module):
                 am = am.view(b, 1, am.size(-2), am.size(-1)).contiguous()
             composed_mask = am if composed_mask is None else (composed_mask | am)
 
-        # SDPA fast path
+        # SDPA fast path（FlashAttention → Efficient → Math 自动降级）
         if hasattr(F, "scaled_dot_product_attention"):
-            # dropout only during training
             dropout_p = self.dropout if self.training else 0.0
-
-            # 检测 attn_mask 是否会触发 efficient/flash backend 的 stride 对齐错误。
-            # 根本原因：am.view(1,1,T,T).expand(b,1,-1,-1) 产生 stride(1)=T*T；
-            # 当 T 为奇数时 T*T%4≠0，EFFICIENT backend 报
-            # "attn_bias is not correctly aligned (strideH)"。
-            # .contiguous() 无效 —— 形状不变，连续 tensor 的 stride(1) 依然是 T*T。
-            # 解决：stride 不对齐时切换到无此要求的 MATH backend。
-            _need_math = (
-                composed_mask is not None
-                and composed_mask.dim() == 4
-                and composed_mask.stride(1) % 4 != 0
+            attn_out = _sdpa_flash(
+                q, k, v,
+                attn_mask=composed_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
             )
-
-            if _need_math and _SDPA_MATH_CTX_FACTORY is not None:
-                # 有 context manager：精准降级，仅影响 seq_len 为奇数的 batch
-                with _SDPA_MATH_CTX_FACTORY():
-                    attn_out = F.scaled_dot_product_attention(
-                        q, k, v,
-                        attn_mask=composed_mask,
-                        dropout_p=dropout_p,
-                        is_causal=is_causal,
-                    )
-            elif _need_math:
-                # 无 context manager（旧版 PyTorch），手动 softmax 兜底
-                # 仅在 stride 不对齐时触发，不影响正常序列长度的性能
-                scale = 1.0 / math.sqrt(self.head_dim)
-                scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-                if composed_mask is not None:
-                    scores = scores.masked_fill(composed_mask, float("-inf"))
-                if is_causal:
-                    _causal = torch.triu(
-                        torch.ones(t, t, device=scores.device, dtype=torch.bool), diagonal=1
-                    )
-                    scores = scores.masked_fill(_causal.view(1, 1, t, t), float("-inf"))
-                attn = torch.softmax(scores, dim=-1)
-                attn = self.dropout_layer(attn)
-                attn_out = torch.matmul(attn, v)
-            else:
-                attn_out = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=composed_mask,
-                    dropout_p=dropout_p,
-                    is_causal=is_causal,
-                )
             attn_weights = None
         else:
             # fallback: explicit softmax

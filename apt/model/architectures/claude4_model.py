@@ -41,6 +41,29 @@ def _has_rmsnorm() -> bool:
     return hasattr(nn, "RMSNorm")
 
 
+def _sdpa_flash(
+    q: "torch.Tensor", k: "torch.Tensor", v: "torch.Tensor",
+    attn_mask=None, dropout_p: float = 0.0, is_causal: bool = False,
+) -> "torch.Tensor":
+    """SDPA with FlashAttention/Efficient-Attention priority; auto-falls back.
+
+    优先使用 FlashAttention（要求 fp16/bf16 + CUDA + head_dim≤256）
+    或 Efficient Attention，排除纯 MATH backend。
+    任何条件不满足时自动降级到默认 SDPA。
+    """
+    try:
+        from torch.nn.attention import sdpa_kernel, SDPBackend  # PyTorch 2.2+
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+            )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return F.scaled_dot_product_attention(
+        q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+    )
+
+
 class RMSNorm(nn.Module):
     """RMSNorm wrapper with LayerNorm fallback."""
     def __init__(self, d: int, eps: float = 1e-6):
@@ -123,7 +146,7 @@ class MultiHeadAttention(nn.Module):
         # SDPA expects [B, H, S, Hd]
         # If torch<2.0 or SDPA missing, fall back to manual attention.
         if hasattr(F, "scaled_dot_product_attention"):
-            out = F.scaled_dot_product_attention(
+            out = _sdpa_flash(
                 q, k, v,
                 attn_mask=attn_mask,
                 dropout_p=self.dropout if self.training else 0.0,

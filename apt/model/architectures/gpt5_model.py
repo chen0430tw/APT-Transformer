@@ -31,6 +31,29 @@ torch = get_torch()
 nn = torch.nn
 F = torch.nn.functional
 
+
+def _sdpa_flash(
+    q: "torch.Tensor", k: "torch.Tensor", v: "torch.Tensor",
+    attn_mask=None, dropout_p: float = 0.0, is_causal: bool = False,
+) -> "torch.Tensor":
+    """SDPA with FlashAttention/Efficient-Attention priority; auto-falls back.
+
+    优先使用 FlashAttention（要求 fp16/bf16 + CUDA + head_dim≤256）
+    或 Efficient Attention，排除纯 MATH backend。
+    任何条件不满足时自动降级到默认 SDPA。
+    """
+    try:
+        from torch.nn.attention import sdpa_kernel, SDPBackend  # PyTorch 2.2+
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+            )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return F.scaled_dot_product_attention(
+        q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+    )
+
 # Use refactored VeinProjector from blocks module
 # Try to import the VeinProjector from the external apt package.  If
 # that fails (for example, in environments where the apt package is
@@ -500,9 +523,9 @@ class GPT5Attention(nn.Module):
             # Take the first head in each group as the shared KV head
             k_small = k_reshaped[:, :, 0, :, :]
             v_small = v_reshaped[:, :, 0, :, :]
-            # Broadcast back to full head count
-            k = k_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, H, T, hd)
-            v = v_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, H, T, hd)
+            # expand（无内存复制）→ reshape（单次 contiguous）替代 repeat（提前复制）
+            k = k_small.unsqueeze(2).expand(-1, -1, group_size, -1, -1).reshape(B, H, T, hd)
+            v = v_small.unsqueeze(2).expand(-1, -1, group_size, -1, -1).reshape(B, H, T, hd)
         # SDPA 路径（FlashAttention / Mem-Efficient kernel）
         if hasattr(F, "scaled_dot_product_attention"):
             if self.window_size and self.window_size > 0:
@@ -515,7 +538,8 @@ class GPT5Attention(nn.Module):
                 additive = additive.masked_fill(window_m, float('-inf'))
                 y = F.scaled_dot_product_attention(q, k, v, attn_mask=additive)
             else:
-                y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+                # 纯 causal：is_causal=True 触发 FlashAttention kernel
+                y = _sdpa_flash(q, k, v, is_causal=True)
         else:
             # Fallback: 手动 softmax
             att = (q @ k.transpose(-2, -1)) / math.sqrt(max(hd, 1))

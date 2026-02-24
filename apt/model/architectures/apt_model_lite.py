@@ -29,6 +29,28 @@ from apt.model.layers.left_spin_smooth import (
 # APT-Lite additions
 # =========================
 
+def _sdpa_flash(
+    q: "torch.Tensor", k: "torch.Tensor", v: "torch.Tensor",
+    attn_mask=None, dropout_p: float = 0.0, is_causal: bool = False,
+) -> "torch.Tensor":
+    """SDPA with FlashAttention/Efficient-Attention priority; auto-falls back.
+
+    优先使用 FlashAttention（要求 fp16/bf16 + CUDA + head_dim≤256）
+    或 Efficient Attention，排除纯 MATH backend。
+    任何条件不满足时自动降级到默认 SDPA。
+    """
+    try:
+        from torch.nn.attention import sdpa_kernel, SDPBackend  # PyTorch 2.2+
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+            )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return F.scaled_dot_product_attention(
+        q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+    )
+
 class RMSNorm(nn.Module):
     """RMSNorm (轻量稳定)"""
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -138,30 +160,27 @@ class LiteSelfAttention(nn.Module):
         # build additive mask if needed
         # attn_mask expected broadcastable to (B,h,T,S) or (T,S)
         # key_padding_mask: (B,T) where True means masked
-        if key_padding_mask is not None:
-            # convert to additive mask
-            kp = key_padding_mask.view(B, 1, 1, T).to(dtype=x.dtype)
-            # use large negative for masked positions (avoid per-forward tensor alloc)
-            kp = torch.where(kp > 0, x.new_full((), -1e9), torch.zeros_like(kp))
-        else:
-            kp = None
+        # bool mask：True = 被遮蔽位置（FlashAttention 友好，PyTorch 2.2+ 可走 FA kernel）
+        kp = key_padding_mask.view(B, 1, 1, T).bool() if key_padding_mask is not None else None
 
-        # use PyTorch SDPA if available
-        sdpa = getattr(F, "scaled_dot_product_attention", None)
-        if callable(sdpa):
-            # F.scaled_dot_product_attention expects (B,h,T,hd)
-            # It supports attn_mask as float/bool. Combine masks if both.
-            merged = attn_mask
+        # SDPA fast path（FlashAttention → Efficient → Math 自动降级）
+        if hasattr(F, "scaled_dot_product_attention"):
+            merged: "Optional[torch.Tensor]" = None
+            if attn_mask is not None:
+                merged = attn_mask if attn_mask.dtype == torch.bool else attn_mask.bool()
             if kp is not None:
-                merged = kp if merged is None else (merged + kp)
-            out = sdpa(q, k, v, attn_mask=merged, dropout_p=self.drop.p if self.training else 0.0, is_causal=is_causal)
+                merged = kp if merged is None else (merged | kp)
+            out = _sdpa_flash(q, k, v, attn_mask=merged,
+                              dropout_p=self.drop.p if self.training else 0.0,
+                              is_causal=is_causal)
         else:
-            # manual attention
+            # manual attention（旧版 PyTorch 无 SDPA）
             scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # (B,h,T,T)
             if attn_mask is not None:
-                scores = scores + attn_mask
+                am = attn_mask if attn_mask.dtype == torch.bool else attn_mask.bool()
+                scores = scores.masked_fill(am, float('-inf'))
             if kp is not None:
-                scores = scores + kp
+                scores = scores.masked_fill(kp, float('-inf'))
             attn = torch.softmax(scores, dim=-1)
             attn = self.drop(attn)
             out = torch.matmul(attn, v)  # (B,h,T,hd)
