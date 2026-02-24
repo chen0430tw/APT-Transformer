@@ -247,6 +247,7 @@ class Claude4Model(nn.Module):
         self.d_model = d_model
         self.num_layers = num_layers
         self.max_seq_len = max_seq_len
+        self.use_rope = use_rope  # 记录 RoPE 开关，用于门控 pos_emb
 
         self.tok_emb = nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
@@ -272,9 +273,11 @@ class Claude4Model(nn.Module):
     def forward(self, input_ids, return_reflection: bool = False):
         # input_ids: [B, S]
         B, S = input_ids.shape
-        pos = torch.arange(S, device=input_ids.device).unsqueeze(0).expand(B, S)
-
-        x = self.tok_emb(input_ids) + self.pos_emb(pos)
+        x = self.tok_emb(input_ids)
+        if not self.use_rope:
+            # RoPE 开启时位置由注意力层编码，不叠加绝对位置嵌入
+            pos = torch.arange(S, device=input_ids.device).unsqueeze(0).expand(B, S)
+            x = x + self.pos_emb(pos)
 
         refl_all: List[Dict[str, Any]] = []
         for blk in self.blocks:

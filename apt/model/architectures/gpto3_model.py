@@ -76,6 +76,55 @@ class SwiGLU(nn.Module):
 
 
 # ----------------------------------------------------------
+# Sparse top-k MoE FFN (替代 dense HybridFFN)
+# ----------------------------------------------------------
+
+class SparseMoEFFN(nn.Module):
+    """Sparse top-k SwiGLU MoE：每次推理只激活 top_k 个 expert。
+    与 dense soft-MoE 相比：
+      - FLOP ≈ top_k/num_experts 倍（稀疏计算）
+      - Expert 有机会真正专门化
+      - 接口与单 SwiGLU 完全相同：forward(x) -> out
+    """
+    def __init__(self, d_model: int, d_ff: int, num_experts: int = 8,
+                 top_k: int = 2, dropout: float = 0.0):
+        super().__init__()
+        assert top_k <= num_experts
+        self.num_experts = int(num_experts)
+        self.top_k = int(top_k)
+        self.experts = nn.ModuleList([
+            SwiGLU(d_model, d_ff, dropout=0.0)
+            for _ in range(num_experts)
+        ])
+        self.gate = nn.Linear(d_model, num_experts, bias=False)
+        _init_linear(self.gate)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, D = x.shape
+        probs = F.softmax(self.gate(x), dim=-1)          # [B,T,E]
+        topv, topi = probs.topk(self.top_k, dim=-1)      # [B,T,K]
+        # Renormalize so top-k weights sum to 1
+        topv = topv / topv.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+
+        x_flat = x.view(B * T, D)
+        out = torch.zeros_like(x_flat)
+        topi_flat = topi.view(B * T, self.top_k)          # [N, K]
+        topv_flat = topv.view(B * T, self.top_k)          # [N, K]
+
+        for k in range(self.top_k):
+            idx_k = topi_flat[:, k]                        # [N]
+            w_k   = topv_flat[:, k:k + 1]                 # [N, 1]
+            for e_id, expert in enumerate(self.experts):
+                # bool 索引：M 可为 0，无 .any() → 无隐式 device sync
+                mask = (idx_k == e_id)                     # [N] bool
+                x_sel = x_flat[mask]                       # [M, D]
+                out[mask] = out[mask] + w_k[mask] * expert(x_sel)
+
+        return self.drop(out.view(B, T, D))
+
+
+# ----------------------------------------------------------
 # Dynamic τ Gating (from 4o)
 # ----------------------------------------------------------
 
@@ -269,26 +318,7 @@ class TriVeinAttention(nn.Module):
 # Hybrid FeedForward (Mini‑MoE) (from 4o)
 # ----------------------------------------------------------
 
-class HybridFFN(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, num_experts: int = 4, dropout: float = 0.0):
-        super().__init__()
-        self.num_experts = num_experts
-        # SwiGLU experts replace Sequential(Linear, SiLU, Linear)
-        self.experts = nn.ModuleList([
-            SwiGLU(d_model, d_ff, dropout=0.0)
-            for _ in range(num_experts)
-        ])
-        self.gate = nn.Linear(d_model, num_experts, bias=False)
-        _init_linear(self.gate)
-        self.drop = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        probs = F.softmax(self.gate(x), dim=-1)  # [B,T,E]
-        out = 0.0
-        for i, expert in enumerate(self.experts):
-            w = probs[..., i:i+1]               # [B,T,1]
-            out = out + w * expert(x)
-        return self.drop(out)
+# HybridFFN 已移除（dense soft-MoE）→ 改用上方的 SparseMoEFFN
 
 
 # ----------------------------------------------------------
@@ -344,7 +374,7 @@ class GPT4oBlock(nn.Module):
                                      num_kv_heads=num_kv_heads,
                                      use_rope=use_rope)
         self.norm2 = RMSNorm(d_model)
-        self.ffn = HybridFFN(d_model, d_ff, dropout=dropout)
+        self.ffn = SparseMoEFFN(d_model, d_ff, num_experts=8, top_k=2, dropout=dropout)
 
     def forward(self, x: torch.Tensor, load_factor: float = 1.0):
         x = x + self.attn(self.norm1(x), load_factor=load_factor)
@@ -550,8 +580,9 @@ class GPTo3Model(nn.Module):
                  topk_experts: int = 2):
         super().__init__()
         # Encoder for text/image/audio with the specified vocabulary size
+        self.use_rope = use_rope  # 用于门控 pos_emb
         self.encoder = OmniInputEncoder(d_model, vocab_size=vocab_size)
-        # Learned positional embeddings (OmniInputEncoder does not add position info)
+        # Learned positional embeddings（use_rope=True 时门控关闭）
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
         nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
         # Adaptive τ scheduler
@@ -594,8 +625,10 @@ class GPTo3Model(nn.Module):
     def forward(self, text_ids=None, image_feat=None, audio_feat=None, load_factor: float = 1.0):
         x = self.encoder(text_ids, image_feat, audio_feat)              # [B,T,D]
         B, T, _ = x.shape
-        pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
-        x = x + self.pos_emb(pos_ids)
+        if not self.use_rope:
+            # RoPE 开启时位置由注意力层编码，不叠加绝对位置嵌入
+            pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+            x = x + self.pos_emb(pos_ids)
         for blk in self.blocks:
             x = blk(x, load_factor=load_factor)
         x = self.norm(x)

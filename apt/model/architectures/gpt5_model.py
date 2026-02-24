@@ -125,7 +125,9 @@ class CodebookRouter(nn.Module):
 class MiniExpert(nn.Module):
     def __init__(self, d_in: int, d_h: int, d_out: int):
         super().__init__()
-        self.ff = nn.Sequential(nn.Linear(d_in, d_h), nn.SiLU(), nn.Linear(d_h, d_out))
+        # SwiGLU 替代 Sequential(Linear, SiLU, Linear)
+        # 假设 d_in == d_out（expert 保持维度不变）
+        self.ff = SwiGLU(d_in, d_h)
 
     def forward(self, x):  # [B,T,D] -> [B,T,D]
         return self.ff(x)
@@ -153,22 +155,24 @@ class MoELayer(nn.Module):
         self.num_skills = int(num_skills)
         self.d_hidden = int(d_hidden) if d_hidden is not None else int(4 * d_model)
 
-        # Expert weights packed as tensors:
-        # W1: [E, D, H], b1: [E, H], W2: [E, H, D], b2: [E, D]
-        self.W1 = nn.Parameter(torch.empty(self.num_skills, self.d_model, self.d_hidden))
-        self.b1 = nn.Parameter(torch.zeros(self.num_skills, self.d_hidden))
-        self.W2 = nn.Parameter(torch.empty(self.num_skills, self.d_hidden, self.d_model))
-        self.b2 = nn.Parameter(torch.zeros(self.num_skills, self.d_model))
+        # Expert weights packed as tensors (SwiGLU: W1=gate, W_gate=value, W2=proj):
+        # W1:     [E, D, H]  — silu gate branch
+        # W_gate: [E, D, H]  — linear gate branch (SwiGLU: silu(W1·x) * W_gate·x)
+        # b1:     [E, H]
+        # W2:     [E, H, D]  — output projection
+        # b2:     [E, D]
+        self.W1     = nn.Parameter(torch.empty(self.num_skills, self.d_model, self.d_hidden))
+        self.W_gate = nn.Parameter(torch.empty(self.num_skills, self.d_model, self.d_hidden))
+        self.b1     = nn.Parameter(torch.zeros(self.num_skills, self.d_hidden))
+        self.W2     = nn.Parameter(torch.empty(self.num_skills, self.d_hidden, self.d_model))
+        self.b2     = nn.Parameter(torch.zeros(self.num_skills, self.d_model))
 
-        # Shared expert path (always applied)
-        self.shared = nn.Sequential(
-            nn.Linear(self.d_model, self.d_hidden),
-            nn.GELU(),
-            nn.Linear(self.d_hidden, self.d_model),
-        )
+        # Shared expert path (always applied) — also SwiGLU
+        self.shared = SwiGLU(self.d_model, self.d_hidden)
 
         if init_method == "xavier":
             nn.init.xavier_uniform_(self.W1)
+            nn.init.xavier_uniform_(self.W_gate)
             nn.init.xavier_uniform_(self.W2)
 
         self._compiled = None  # lazy torch.compile cache
@@ -190,12 +194,12 @@ class MoELayer(nn.Module):
         W2_g = self.W2[topi]                                 # [B,T,K,H,D]
         b2_g = self.b2[topi]                                 # [B,T,K,D]
 
-        # Compute expert outputs:
-        # h: [B,T,D] -> [B,T,1,D,1] for matmul with [B,T,K,D,H]
-        pre = torch.einsum('btd,btkdh->btkh', h, W1_g)  # [B,T,K,H]
-        pre = pre + b1_g
-        act = torch.nn.functional.gelu(pre)
-        out = torch.einsum('btkh,btkhd->btkd', act, W2_g) + b2_g  # [B,T,K,D]
+        # Compute expert outputs (SwiGLU: silu(W1·h) * (W_gate·h) → W2):
+        W_gate_g = self.W_gate[topi]                                  # [B,T,K,D,H]
+        pre      = torch.einsum('btd,btkdh->btkh', h, W1_g) + b1_g  # [B,T,K,H]
+        gate_v   = torch.einsum('btd,btkdh->btkh', h, W_gate_g)      # [B,T,K,H]
+        act      = torch.nn.functional.silu(pre) * gate_v             # SwiGLU gate
+        out      = torch.einsum('btkh,btkhd->btkd', act, W2_g) + b2_g  # [B,T,K,D]
 
         # Weighted sum of top-k experts
         mix = (out * topv.unsqueeze(-1)).sum(dim=2)           # [B,T,D]

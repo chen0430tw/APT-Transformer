@@ -133,26 +133,8 @@ class FastPathScheduler:
 # Hybrid FeedForward (Mini-MoE)
 # ----------------------------------------------------------
 
-class HybridFFN(nn.Module):
-    """Mini-MoE：每个 expert 改用 SwiGLU，取代 Linear+GELU+Linear。"""
-    def __init__(self, d_model, d_ff, num_experts=4, dropout=0.1):
-        super().__init__()
-        self.num_experts = num_experts
-        # 每个 expert 用 SwiGLU 替代 GELU Linear
-        self.experts = nn.ModuleList([
-            SwiGLU(d_model, d_ff, dropout=dropout)
-            for _ in range(num_experts)
-        ])
-        self.gate = nn.Linear(d_model, num_experts, bias=False)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        gate_weights = F.softmax(self.gate(x), dim=-1)  # [B,T,num_experts]
-        outputs = torch.zeros_like(x)
-        for i, expert in enumerate(self.experts):
-            w = gate_weights[..., i:i+1]  # [B,T,1]
-            outputs = outputs + w * expert(x)
-        return self.dropout(outputs)
+# HybridFFN 已移除（dense soft-MoE，参数×N 却无稀疏收益）
+# GPT4oBlock 直接使用单 SwiGLU
 
 # ----------------------------------------------------------
 # Tri-Vein Attention
@@ -403,7 +385,7 @@ class GPT4oBlock(nn.Module):
     def __init__(self, d_model: int, n_heads: int, d_ff: int, rank: int, tau_module: DynamicTau,
                  window_size: int = 0, num_kv_heads: Optional[int] = None, use_rope: bool = False):
         """
-        A GPT‑4o block consisting of a single TriVeinAttention followed by a HybridFFN.
+        A GPT‑4o block consisting of a single TriVeinAttention followed by SwiGLU FFN.
 
         Args:
             d_model: hidden dimension
@@ -422,7 +404,7 @@ class GPT4oBlock(nn.Module):
                                      num_kv_heads=num_kv_heads,
                                      use_rope=use_rope)
         self.norm2 = RMSNorm(d_model)
-        self.ffn = HybridFFN(d_model, d_ff)
+        self.ffn = SwiGLU(d_model, d_ff)  # 单 SwiGLU，替代 dense soft-MoE
 
     def forward(self, x: torch.Tensor, load_factor: float = 1.0) -> torch.Tensor:
         # Apply layer normalisation before attention
@@ -457,14 +439,15 @@ class GPT4oModel(nn.Module):
             use_rope: whether to enable rotary positional embeddings for Q/K
         """
         super().__init__()
+        self.use_rope = use_rope  # 用于门控 pos_emb
         # Token/text encoder
         self.encoder = OmniInputEncoder(d_model, vocab_size=vocab_size)
         # Adaptive τ scheduler
         self.tau_module = DynamicTau()
-        # Learned positional embeddings
+        # Learned positional embeddings（use_rope=True 时门控关闭）
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
         nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
-        # Transformer blocks with TriVein attention and HybridFFN
+        # Transformer blocks with TriVein attention and SwiGLU FFN
         self.blocks = nn.ModuleList([
             GPT4oBlock(d_model, n_heads, d_ff, rank, self.tau_module,
                        window_size=window_size,
@@ -472,7 +455,7 @@ class GPT4oModel(nn.Module):
                        use_rope=use_rope)
             for _ in range(num_layers)
         ])
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = RMSNorm(d_model)
         # Output projection to vocabulary
         self.output_head = nn.Linear(d_model, vocab_size, bias=False)
 
@@ -488,8 +471,10 @@ class GPT4oModel(nn.Module):
         max_pos = self.pos_emb.num_embeddings
         if T > max_pos:
             raise ValueError(f"Sequence length {T} exceeds max_seq_len {max_pos}")
-        pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
-        x = x + self.pos_emb(pos_ids)
+        if not self.use_rope:
+            # RoPE 开启时位置由注意力层中 Q/K 旋转编码，不叠加绝对位置嵌入
+            pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+            x = x + self.pos_emb(pos_ids)
         # Pass through transformer blocks
         for blk in self.blocks:
             x = blk(x, load_factor=load_factor)

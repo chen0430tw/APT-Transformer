@@ -1177,19 +1177,14 @@ class APTEncoderLayer(nn.Module):
             dbc_iterations=dbc_iterations
         )
 
-        # 前馈网络
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        # 前馈网络：SwiGLU 替代 Linear+GELU+Linear
+        self.ffn = SwiGLU(d_model, dim_feedforward, dropout=0.0)
 
-        # 层归一化
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        # 层归一化：RMSNorm 替代 LayerNorm
+        self.norm1 = RMSNorm(d_model, eps=eps)
+        self.norm2 = RMSNorm(d_model, eps=eps)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-
-        # 激活函数
-        self.activation = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
@@ -1254,8 +1249,8 @@ class APTEncoderLayer(nn.Module):
 
         src = self.norm1(src)
 
-        # 🚀 前馈网络子层（左旋平滑残差连接）
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        # 🚀 前馈网络子层（SwiGLU + 左旋平滑残差连接）
+        src2 = self.ffn(src)
         src2_dropout = self.dropout2(src2)
 
         # 替换: src = src + src2  →  src = LeftSpin(src, src2)
@@ -1345,21 +1340,16 @@ class APTDecoderLayer(nn.Module):
             dbc_iterations=dbc_iterations
         )
 
-        # 前馈网络
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        # 前馈网络：SwiGLU 替代 Linear+GELU+Linear
+        self.ffn = SwiGLU(d_model, dim_feedforward, dropout=0.0)
 
-        # 层归一化
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
+        # 层归一化：RMSNorm 替代 LayerNorm
+        self.norm1 = RMSNorm(d_model, eps=eps)
+        self.norm2 = RMSNorm(d_model, eps=eps)
+        self.norm3 = RMSNorm(d_model, eps=eps)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
-
-        # 激活函数
-        self.activation = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
@@ -1456,8 +1446,8 @@ class APTDecoderLayer(nn.Module):
 
             tgt = self.norm2(tgt)
 
-        # 🚀 前馈网络子层（左旋平滑残差连接）
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        # 🚀 前馈网络子层（SwiGLU + 左旋平滑残差连接）
+        tgt2 = self.ffn(tgt)
         tgt2_dropout = self.dropout3(tgt2)
 
         if self.use_left_spin and self.left_spin_ffn is not None:
@@ -1705,9 +1695,9 @@ class APTModel(nn.Module):
         self.encoder_layers = nn.ModuleList(encoder_layers)
         self.decoder_layers = nn.ModuleList(decoder_layers)
         
-        # 最终层归一化
-        self.encoder_norm = nn.LayerNorm(config.d_model)
-        self.decoder_norm = nn.LayerNorm(config.d_model)
+        # 最终层归一化：RMSNorm 替代 LayerNorm
+        self.encoder_norm = RMSNorm(config.d_model)
+        self.decoder_norm = RMSNorm(config.d_model)
         
         # 输出投影
         self.output_projection = nn.Linear(config.d_model, config.vocab_size, bias=False)
