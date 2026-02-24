@@ -219,11 +219,19 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         x_q, scale, weight, bias, x_recon = ctx.saved_tensors
         bits = ctx.bits
 
+        # 🔍 Debug: 检查grad_output是否有NaN
+        if torch.isnan(grad_output).any():
+            print(f"[LECAC DEBUG] ❌ grad_output has NaN! shape={grad_output.shape}, alpha={ctx.alpha:.4f}, bits={bits}")
+
         # 反量化
         if bits == 2:
             x_recon_fp = dequantize_int2_symmetric(x_q, scale)
         else:
             x_recon_fp = dequantize_int4_symmetric(x_q, scale)
+
+        # 🔍 Debug: 检查反量化后是否有NaN
+        if torch.isnan(x_recon_fp).any():
+            print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after dequant! shape={x_recon_fp.shape}, alpha={ctx.alpha:.4f}")
 
         # LECAC 标准补偿
         if ctx.alpha > 0:
@@ -233,6 +241,10 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
                 compensation = (ctx.error_std / dimension_balance) * noise
             x_recon_fp = x_recon_fp + compensation
 
+            # 🔍 Debug: 检查补偿后是否有NaN
+            if torch.isnan(x_recon_fp).any():
+                print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after compensation! alpha={ctx.alpha:.4f}, error_std={ctx.error_std:.4f}")
+
         # 正交投影补偿：将补偿量投影到 grad_output 的正交补空间，保护梯度方向
         if ctx.alpha > 0:
             with torch.no_grad():
@@ -240,6 +252,10 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
                 # 逐行做正交投影（grad_output 的每行作为方向基）
                 orth = _orthogonal_projection(x_recon_fp, grad_output_2d)
                 x_recon_fp = x_recon_fp + orth * 0.5
+
+            # 🔍 Debug: 检查投影后是否有NaN
+            if torch.isnan(x_recon_fp).any():
+                print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after orthogonal projection! alpha={ctx.alpha:.4f}")
 
         # 对齐 dtype：BF16 训练时 grad_output/weight 为 BF16，x_recon_fp 为 float32
         x_recon_fp = x_recon_fp.to(weight.dtype)
@@ -250,6 +266,14 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         grad_weight = grad_output_2d.t().mm(x_recon_fp)
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
                      if bias is not None else None)
+
+        # 🔍 Debug: 检查梯度是否有NaN
+        if torch.isnan(grad_input).any():
+            print(f"[LECAC DEBUG] ❌ grad_input has NaN! shape={grad_input.shape}, alpha={ctx.alpha:.4f}")
+        if torch.isnan(grad_weight).any():
+            print(f"[LECAC DEBUG] ❌ grad_weight has NaN! shape={grad_weight.shape}, alpha={ctx.alpha:.4f}")
+        if grad_bias is not None and torch.isnan(grad_bias).any():
+            print(f"[LECAC DEBUG] ❌ grad_bias has NaN! alpha={ctx.alpha:.4f}")
 
         return grad_input, grad_weight, grad_bias, None, None
 
