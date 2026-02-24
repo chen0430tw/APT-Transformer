@@ -1060,6 +1060,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                         original_dtype=nested.dtype,
                         constant=NATURAL_EQUILIBRIUM_CONSTANT
                     )
+
+                    # 🔍 Debug: 检查去量化后的tensor是否有NaN
+                    if torch.isnan(restored).any():
+                        print(f"[VRAM DEBUG] ❌ restored tensor has NaN after lecac_dequantize!")
+                        print(f"  shape={restored.shape}, bits={nested.quantization_bits}, constant={NATURAL_EQUILIBRIUM_CONSTANT:.4f}")
+                        print(f"  cpu_tensor dtype={nested.cpu_tensor.dtype}, cpu_tensor has NaN={torch.isnan(nested.cpu_tensor).any()}")
                 else:
                     restored = nested.cpu_tensor
 
