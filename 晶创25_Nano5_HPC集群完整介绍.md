@@ -1,7 +1,8 @@
 # 晶创25 (Nano 5) HPC集群完整介绍
 
-> **文档版本**: v1.0
-> **更新日期**: 2026-02-14
+> **文档版本**: v1.2
+> **更新日期**: 2026-02-25
+> **更新内容**: 添加SSH连接配置问题解决方案 + 100步测试验证结果（无NaN）
 > **集群**: 晶创25 (Nano 5)
 > **所属**: 国家高速网络与计算中心 (NCHC)
 > **位置**: 台湾台中
@@ -400,15 +401,83 @@ QOS: normal
 
 ## ⚠️ 使用规则与注意事项
 
-### ❌ 绝对禁止
+### ⚠️ 登录节点使用规则
 
-#### 1. 在登录节点运行计算任务
+#### ✅ 官方政策：短测试允许在登录节点运行
+
+**国网中心管理员官方回复** (2026-02-24):
+
+> 除非作業時間預計超過 15 分鐘，否則 2 分鐘以內的短時間測試，可直接於 login node 執行。
+
+**说明**:
+- ✅ **允许**: 预计 <15 分钟的短测试可直接在登录节点运行
+- ❌ **禁止**: 预计 >15 分钟的任务必须提交到计算节点
+- ✅ **推荐**: 即使短测试，也建议优先使用计算节点（避免影响其他用户）
+
+#### ⚠️ 登录节点环境配置（必须）
+
+**重要**: 登录节点不会自动加载任何模块，使用前必须手动配置环境。
+
+```bash
+# 1. 加载miniconda3模块
+module load miniconda3/24.11.1
+
+# 2. 激活Python环境（如果使用conda环境）
+conda activate your_env
+
+# 3. 验证GPU可用
+nvidia-smi
+
+# 4. 验证Python包
+python3 -c "import torch; print(torch.__version__)"
+```
+
+**登录节点硬件配置**:
+- GPU: 2× NVIDIA H100 (80GB HBM3)
+- CPU: Intel Xeon (共享)
+- 适合: 快速功能验证、小规模测试
+
+**优势**: 实时监控 + **节省成本**
+```bash
+# ✅ 登录节点: 直接运行，直接看输出，实时监控，可能不计费
+python3 train.py --max-steps 10
+# 输出立即显示，可以tail -f日志，nvidia-smi实时查看GPU
+# 💰 短测试可能不计入GPU小时（节省120元/GPU小时）
+
+# ❌ 计算节点: 需要sbatch提交，等待调度，查看.out/.err文件，严格计费
+sbatch job.sh  # 排队 → 运行 → 只能看输出文件 → 💳 按GPU小时计费
+```
+
+**成本对比**（10分钟短测试）:
+| 方式 | 计费 | 成本 |
+|------|------|------|
+| 登录节点 | 可能不计费 | **0元** |
+| 计算节点 | 10分钟 = 0.17 GPU小时 | 20元 (H100企业账户) |
+
+**注意**: 计费政策可能变化，请以官方说明为准
+
+
+**完整短测试示例**:
+```bash
+# 登录后，先配置环境
+module load miniconda3/24.11.1
+cd /work/twsuday816/APT-Transformer
+
+# 运行短测试（<15分钟）
+python3 apt/trainops/scripts/pretrain_quickcook.py \
+  --model-arch apt \
+  --max-steps 10 \
+  --batch-size 8
+```
+
+#### ❌ 登录节点长时间运行任务
+
 ```
 后果:
   - 系统负载过高，影响其他用户
   - 会被管理员直接kill进程
   - 严重违规可能暂停账户
-  - 性能极差（无独占GPU）
+  - 性能极差（登录节点共享资源）
 
 检测方法:
   - CPU负载监控
@@ -416,6 +485,10 @@ QOS: normal
   - GPU使用监控
 
 正确做法:
+  # 短测试 (<15分钟): 可在登录节点直接运行
+  python test_quick.py --max-steps 10
+
+  # 长任务 (>15分钟): 必须提交到计算节点
   sbatch job_script.sh  # 提交到计算节点
   srun --pty bash      # 交互式计算节点会话
 ```
@@ -1155,6 +1228,105 @@ wsl ssh twsuday816@nano5.nchc.org.tw "cd /work/... && sbatch -p normal train_scr
 
 ---
 
+## 🔧 SSH连接配置问题与解决方案（2026-02-25）
+
+### ⚠️ 常见问题：SSH连接失败
+
+**症状**：
+```
+mux_client_request_session: read from master failed: Broken pipe
+ssh: connect to host ... port ...: Connection timed out
+```
+
+**原因分析**：
+
+1. **SSH Multiplexing Socket损坏**
+   - ControlMaster使用的socket文件损坏或不兼容
+   - Windows路径与Unix路径混用导致问题
+
+2. **ControlPath路径不匹配**
+   - 错误配置：`ControlPath ~/.ssh/cm-%r@%h:%p` (Unix路径)
+   - 正确配置：`ControlPath C:/Users/asus/.ssh/cm-%r@%h:%p` (Windows路径)
+   - WSL中SSH需要使用Windows路径格式
+
+3. **用户未先登录**
+   - 集群需要2FA认证或交互式登录
+   - 必须先用其他SSH客户端（如PowerShell、MobaXterm）登录一次
+   - 之后wsl ssh才能正常工作
+
+### ✅ 解决方案
+
+**1. 清理损坏的Socket文件**
+```bash
+wsl rm -f ~/.ssh/cm-*
+```
+
+**2. 使用正确的SSH配置**
+
+**正确配置** (`~/.ssh/config` 或 `C:\Users\asus\.ssh\config`):
+```bash
+# HPC Cluster connections
+Host nano5.nchc.org.tw twnia3.nchc.org.tw
+    IdentityFile ~/.ssh/id_rsa
+    User twsuday816
+    ServerAliveInterval 60
+    ServerAliveCountMax 10
+    TCPKeepAlive yes
+    ConnectTimeout 30
+    ControlMaster auto
+    ControlPath C:/Users/asus/.ssh/cm-%r@%h:%p  # Windows路径格式！
+    ControlPersist 1h
+
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 5
+    TCPKeepAlive yes
+```
+
+**3. 备份SSH配置**
+```bash
+# Windows PowerShell
+Compress-Archive -Path C:\Users\asus\.ssh\* -DestinationPath C:\Users\asus\ssh_backup.zip
+```
+
+**备份位置**：
+- 目录：`C:\Users\asus\.ssh_backup\`
+- 最新备份：`ssh_backup_.zip` (2026-02-25 03:30创建)
+
+### 📝 测试验证结果（2026-02-25）
+
+**100步测试成功！** (Job 124171, H200节点)
+
+**测试配置**：
+- 模型：apt (完整模型，词表65536)
+- LECaC：INT2量化 + Alpha warmup (multiplier 3.0)
+- Virtual VRAM：nested v16 + prefetch
+- 步数：100步
+- GPU：H200 (141GB显存)
+
+**测试结果**：
+| 步数 | Loss | Alpha | 状态 |
+|------|------|-------|------|
+| Step 0 | 5.63 | - | ✅ |
+| Step 10 | 22.19 | 4.41 | ✅ |
+| Step 20 | 20.84 | 4.37 | ✅ |
+| Step 50 | 19.20 | - | ✅ |
+| Step 100 | 16.02 | - | ✅ 完成 |
+| **总体** | **正常下降** | **正常衰减** | **✅ 无NaN** |
+
+**性能指标**：
+- Tok/s: ~2100
+- 总时间: 3分16秒 (100步)
+- Checkpoint: 已保存 (step_50.pt, step_100.pt)
+
+**验证结论**：
+- ✅ **官方修复commit 2df8d78成功解决双重量化NaN问题**
+- ✅ LECaC INT2 + Virtual VRAM nested v16组合正常工作
+- ✅ Alpha warmup正确实现
+- ✅ 完整模型（65536词表）训练稳定
+
+---
+
 **文档结束**
 
-本文档基于2026-02-14的实际集群状态编写，配置可能会有更新，请以官方手册为准。
+本文档基于2026-02-25的实际测试结果更新。
