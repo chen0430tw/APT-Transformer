@@ -1884,12 +1884,25 @@ class QuickCookTrainer:
                 warmup_multiplier=self.lecac_warmup_multiplier,
                 schedule=self.lecac_warmup_schedule
             )
+
+            # 🔑 关键：训练开始前就设置初始alpha（最高值）
+            if update_lecac_alpha is not None:
+                initial_alpha = alpha_scheduler.get_alpha(0)
+                num_layers = update_lecac_alpha(self.model, initial_alpha)
+                if self.rank == 0:
+                    logger.info(
+                        f"[LECAC Alpha Warmup] 已启用并初始化: "
+                        f"warmup_steps={warmup_steps_lecac}, "
+                        f"multiplier={self.lecac_warmup_multiplier:.1f}, "
+                        f"schedule={self.lecac_warmup_schedule}, "
+                        f"initial_alpha={initial_alpha:.4f}, "
+                        f"updated_layers={num_layers}"
+                    )
+        elif self.lecac_alpha_warmup and not _LECAC_WARMUP_AVAILABLE:
             if self.rank == 0:
-                logger.info(
-                    f"[LECAC Alpha Warmup] 已启用: "
-                    f"warmup_steps={warmup_steps_lecac}, "
-                    f"multiplier={self.lecac_warmup_multiplier:.1f}, "
-                    f"schedule={self.lecac_warmup_schedule}"
+                logger.error(
+                    "❌ [LECAC Alpha Warmup] 请求启用但模块不可用！\n"
+                    "   请确认 apt/vgpu/runtime/lecac_warmup.py 存在并可导入。"
                 )
 
         # 混合精度
@@ -1941,6 +1954,25 @@ class QuickCookTrainer:
                 input_ids = batch["input_ids"].to(self.device)
                 labels = batch["labels"].to(self.device)
 
+                # LECaC Alpha Warmup 更新 (v2.0) - 必须在forward之前！
+                if alpha_scheduler is not None and update_lecac_alpha is not None:
+                    current_alpha = alpha_scheduler.get_alpha(self.global_step)
+                    num_updated = update_lecac_alpha(self.model, current_alpha)
+
+                    # 🔍 前10步详细日志（每步都输出，不等梯度累积）
+                    if self.rank == 0 and self.global_step < 10:
+                        current_lr = scheduler.get_last_lr()[0] if scheduler else 0.0
+                        logger.info(
+                            f"[DEBUG Step {self.global_step}] Alpha={current_alpha:.4f}, "
+                            f"LR={current_lr:.2e}, Updated={num_updated} layers"
+                        )
+                    # 每100步输出一次调试信息
+                    elif self.rank == 0 and self.global_step % 100 == 0:
+                        logger.info(
+                            f"[LECAC Alpha Warmup] Step {self.global_step}: "
+                            f"Alpha={current_alpha:.4f}, Updated {num_updated} layers"
+                        )
+
                 # ── forward + backward (可选 virtual_vram 包裹) ──
                 if use_vram_ctx:
                     # Virtual VRAM: 激活值自动 offload 到 CPU, 降低显存峰值
@@ -1954,6 +1986,14 @@ class QuickCookTrainer:
                         input_ids, labels, autocast_ctx, scaler,
                         grad_accum, running_loss,
                     )
+
+                # 🔍 前10步输出实时loss（检测NaN）
+                if self.rank == 0 and self.global_step < 10 and alpha_scheduler is not None:
+                    loss_val = loss.item() if not torch.isnan(loss) else float('nan')
+                    if torch.isnan(loss):
+                        logger.error(f"[DEBUG Step {self.global_step}] ❌ Loss=NaN detected!")
+                    else:
+                        logger.info(f"[DEBUG Step {self.global_step}] Loss={loss_val:.4f}")
 
                 step_in_accum += 1
 
@@ -1975,11 +2015,6 @@ class QuickCookTrainer:
                     scheduler.step()
                     optimizer.zero_grad()
 
-                    # LECaC Alpha Warmup 更新 (v2.0)
-                    if alpha_scheduler is not None and update_lecac_alpha is not None:
-                        current_alpha = alpha_scheduler.get_alpha(self.global_step)
-                        update_lecac_alpha(self.model, current_alpha)
-
                     self.global_step += 1
                     step_in_accum = 0
 
@@ -1991,6 +2026,7 @@ class QuickCookTrainer:
                     cur_loss = running_loss / min(self.global_step, self.log_interval)
                     cur_lr = scheduler.get_last_lr()[0]
                     tokens_in_batch = input_ids.numel()
+
                     progress.update(
                         self.global_step, cur_loss, cur_lr,
                         tokens_in_batch=tokens_in_batch,
