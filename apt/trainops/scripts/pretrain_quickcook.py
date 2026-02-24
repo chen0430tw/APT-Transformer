@@ -2807,12 +2807,19 @@ def main():
                 )
         else:
             import math as _math
-            lecac_alpha = args.lecac_alpha if args.lecac_alpha is not None else 4.0 / _math.e
+            # 计算初始alpha：如果启用warmup，使用warmup起始值；否则使用基础值
+            base_lecac_alpha = args.lecac_alpha if args.lecac_alpha is not None else 4.0 / _math.e
+            if args.lecac_alpha_warmup:
+                # 使用warmup初始alpha创建层（multiplier * base_alpha）
+                initial_lecac_alpha = base_lecac_alpha * args.lecac_warmup_multiplier
+            else:
+                initial_lecac_alpha = base_lecac_alpha
+
             skip_names = tuple(args.lecac_skip_names) if args.lecac_skip_names else ()
             replace_linear_with_lecac(
                 model,
                 bits=args.lecac_bits,
-                alpha=lecac_alpha,
+                alpha=initial_lecac_alpha,
                 orthogonal=args.lecac_orthogonal,
                 skip_names=skip_names,
             )
@@ -2821,9 +2828,12 @@ def main():
                     1 for m in model.modules()
                     if type(m).__name__ == "LECACLinear"
                 )
+                alpha_info = f"alpha={initial_lecac_alpha:.4f}"
+                if args.lecac_alpha_warmup:
+                    alpha_info += f" (warmup: {initial_lecac_alpha:.4f} → {base_lecac_alpha:.4f})"
                 logger.info(
                     f"[LECAC] 已替换 {lecac_count} 个 nn.Linear, "
-                    f"bits={args.lecac_bits}, alpha={lecac_alpha:.4f}, "
+                    f"bits={args.lecac_bits}, {alpha_info}, "
                     f"orthogonal={args.lecac_orthogonal}"
                 )
 
