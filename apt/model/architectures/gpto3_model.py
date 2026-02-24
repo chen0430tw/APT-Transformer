@@ -46,6 +46,85 @@ def _init_linear(module: nn.Linear, std: float = 0.02):
 
 
 # ----------------------------------------------------------
+# RMSNorm + SwiGLU
+# ----------------------------------------------------------
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization."""
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(d))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        norm = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (x / norm) * self.weight
+
+
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: silu(xW1) * (xW2) -> W3"""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.0):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff)
+        self.w2 = nn.Linear(d_model, d_ff)
+        self.w3 = nn.Linear(d_ff, d_model)
+        self.drop = nn.Dropout(dropout)
+        _init_linear(self.w1); _init_linear(self.w2); _init_linear(self.w3)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(self.drop(F.silu(self.w1(x)) * self.w2(x)))
+
+
+# ----------------------------------------------------------
+# Sparse top-k MoE FFN (替代 dense HybridFFN)
+# ----------------------------------------------------------
+
+class SparseMoEFFN(nn.Module):
+    """Sparse top-k SwiGLU MoE：每次推理只激活 top_k 个 expert。
+    与 dense soft-MoE 相比：
+      - FLOP ≈ top_k/num_experts 倍（稀疏计算）
+      - Expert 有机会真正专门化
+      - 接口与单 SwiGLU 完全相同：forward(x) -> out
+    """
+    def __init__(self, d_model: int, d_ff: int, num_experts: int = 8,
+                 top_k: int = 2, dropout: float = 0.0):
+        super().__init__()
+        assert top_k <= num_experts
+        self.num_experts = int(num_experts)
+        self.top_k = int(top_k)
+        self.experts = nn.ModuleList([
+            SwiGLU(d_model, d_ff, dropout=0.0)
+            for _ in range(num_experts)
+        ])
+        self.gate = nn.Linear(d_model, num_experts, bias=False)
+        _init_linear(self.gate)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, D = x.shape
+        probs = F.softmax(self.gate(x), dim=-1)          # [B,T,E]
+        topv, topi = probs.topk(self.top_k, dim=-1)      # [B,T,K]
+        # Renormalize so top-k weights sum to 1
+        topv = topv / topv.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+
+        x_flat = x.view(B * T, D)
+        out = torch.zeros_like(x_flat)
+        topi_flat = topi.view(B * T, self.top_k)          # [N, K]
+        topv_flat = topv.view(B * T, self.top_k)          # [N, K]
+
+        for k in range(self.top_k):
+            idx_k = topi_flat[:, k]                        # [N]
+            w_k   = topv_flat[:, k:k + 1]                 # [N, 1]
+            for e_id, expert in enumerate(self.experts):
+                # bool 索引：M 可为 0，无 .any() → 无隐式 device sync
+                mask = (idx_k == e_id)                     # [N] bool
+                x_sel = x_flat[mask]                       # [M, D]
+                out[mask] = out[mask] + w_k[mask] * expert(x_sel)
+
+        return self.drop(out.view(B, T, D))
+
+
+# ----------------------------------------------------------
 # Dynamic τ Gating (from 4o)
 # ----------------------------------------------------------
 
@@ -186,36 +265,49 @@ class TriVeinAttention(nn.Module):
             # Take first head in each group
             k_small = k_reshaped[:, :, 0, :, :]
             v_small = v_reshaped[:, :, 0, :, :]
-            # Repeat to full head count
-            k = k_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
-            v = v_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, self.n_heads, T, self.head_dim)
+            # expand（无内存复制）→ reshape（单次 contiguous）替代 repeat
+            k = k_small.unsqueeze(2).expand(-1, -1, group_size, -1, -1).reshape(B, self.n_heads, T, self.head_dim)
+            v = v_small.unsqueeze(2).expand(-1, -1, group_size, -1, -1).reshape(B, self.n_heads, T, self.head_dim)
 
         # Project into low‑rank subspace
         zq = self.subspace.project(q)
         zk = self.subspace.project(k)
         zv = self.subspace.project(v)
 
-        # Compute attention in subspace
-        att = (zq @ zk.transpose(-2, -1)) / math.sqrt(max(self.rank, 1))
-
-        # Compose masks: causal + sliding window
-        mask = None
-        if is_causal:
-            causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
-            mask = causal
-        if self.window_size and self.window_size > 0:
-            i = torch.arange(T, device=att.device).view(T, 1)
-            j = torch.arange(T, device=att.device).view(1, T)
-            local = j < (i - (self.window_size - 1))
-            mask = local if mask is None else (mask | local)
-        if mask is not None:
-            att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-
-        # Softmax
-        att = F.softmax(att, dim=-1)
-
-        # Low‑rank output
-        y_sub = att @ zv
+        # Compute attention in subspace via SDPA (FlashAttention when available)
+        scale = 1.0 / math.sqrt(max(self.rank, 1))
+        need_window = bool(self.window_size and self.window_size > 0)
+        if hasattr(F, "scaled_dot_product_attention"):
+            if need_window or not is_causal:
+                # Build explicit float additive mask combining causal + window
+                additive = torch.zeros(T, T, device=zq.device, dtype=zq.dtype)
+                if is_causal:
+                    causal_m = torch.triu(torch.ones(T, T, dtype=torch.bool, device=zq.device), diagonal=1)
+                    additive = additive.masked_fill(causal_m, float('-inf'))
+                if need_window:
+                    _i = torch.arange(T, device=zq.device).view(T, 1)
+                    _j = torch.arange(T, device=zq.device).view(1, T)
+                    window_m = _j < (_i - (self.window_size - 1))
+                    additive = additive.masked_fill(window_m, float('-inf'))
+                y_sub = F.scaled_dot_product_attention(zq, zk, zv, attn_mask=additive, scale=scale)
+            else:
+                y_sub = F.scaled_dot_product_attention(zq, zk, zv, is_causal=True, scale=scale)
+        else:
+            # Fallback: manual softmax
+            att = (zq @ zk.transpose(-2, -1)) * scale
+            mask = None
+            if is_causal:
+                causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
+                mask = causal
+            if need_window:
+                _i = torch.arange(T, device=att.device).view(T, 1)
+                _j = torch.arange(T, device=att.device).view(1, T)
+                local = _j < (_i - (self.window_size - 1))
+                mask = local if mask is None else (mask | local)
+            if mask is not None:
+                att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+            att = F.softmax(att, dim=-1)
+            y_sub = att @ zv
         # Reconstruct to full dimension
         y = self.subspace.reconstruct(y_sub)
         y = y.transpose(1, 2).contiguous().view(B, T, D)
@@ -226,32 +318,7 @@ class TriVeinAttention(nn.Module):
 # Hybrid FeedForward (Mini‑MoE) (from 4o)
 # ----------------------------------------------------------
 
-class HybridFFN(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, num_experts: int = 4, dropout: float = 0.0):
-        super().__init__()
-        self.num_experts = num_experts
-        self.experts = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(d_model, d_ff),
-                nn.SiLU(),
-                nn.Linear(d_ff, d_model),
-            ) for _ in range(num_experts)
-        ])
-        for e in self.experts:
-            for m in e:
-                if isinstance(m, nn.Linear):
-                    _init_linear(m)
-        self.gate = nn.Linear(d_model, num_experts, bias=False)
-        _init_linear(self.gate)
-        self.drop = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        probs = F.softmax(self.gate(x), dim=-1)  # [B,T,E]
-        out = 0.0
-        for i, expert in enumerate(self.experts):
-            w = probs[..., i:i+1]               # [B,T,1]
-            out = out + w * expert(x)
-        return self.drop(out)
+# HybridFFN 已移除（dense soft-MoE）→ 改用上方的 SparseMoEFFN
 
 
 # ----------------------------------------------------------
@@ -301,13 +368,13 @@ class GPT4oBlock(nn.Module):
             dropout: feedforward dropout
         """
         super().__init__()
-        self.norm1 = nn.LayerNorm(d_model)
+        self.norm1 = RMSNorm(d_model)
         self.attn = TriVeinAttention(d_model, n_heads, rank,
                                      window_size=window_size,
                                      num_kv_heads=num_kv_heads,
                                      use_rope=use_rope)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.ffn = HybridFFN(d_model, d_ff, dropout=dropout)
+        self.norm2 = RMSNorm(d_model)
+        self.ffn = SparseMoEFFN(d_model, d_ff, num_experts=8, top_k=2, dropout=dropout)
 
     def forward(self, x: torch.Tensor, load_factor: float = 1.0):
         x = x + self.attn(self.norm1(x), load_factor=load_factor)
@@ -513,8 +580,9 @@ class GPTo3Model(nn.Module):
                  topk_experts: int = 2):
         super().__init__()
         # Encoder for text/image/audio with the specified vocabulary size
+        self.use_rope = use_rope  # 用于门控 pos_emb
         self.encoder = OmniInputEncoder(d_model, vocab_size=vocab_size)
-        # Learned positional embeddings (OmniInputEncoder does not add position info)
+        # Learned positional embeddings（use_rope=True 时门控关闭）
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
         nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
         # Adaptive τ scheduler
@@ -528,7 +596,7 @@ class GPTo3Model(nn.Module):
             for _ in range(num_layers)
         ])
         # Final normalisation and language head
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = RMSNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         _init_linear(self.lm_head, std=0.02)
 
@@ -557,8 +625,10 @@ class GPTo3Model(nn.Module):
     def forward(self, text_ids=None, image_feat=None, audio_feat=None, load_factor: float = 1.0):
         x = self.encoder(text_ids, image_feat, audio_feat)              # [B,T,D]
         B, T, _ = x.shape
-        pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
-        x = x + self.pos_emb(pos_ids)
+        if not self.use_rope:
+            # RoPE 开启时位置由注意力层编码，不叠加绝对位置嵌入
+            pos_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)
+            x = x + self.pos_emb(pos_ids)
         for blk in self.blocks:
             x = blk(x, load_factor=load_factor)
         x = self.norm(x)

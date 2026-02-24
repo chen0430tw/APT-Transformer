@@ -19,24 +19,29 @@ import warnings
 import sys
 from typing import Optional, Tuple, List, Dict, Union
 
-# SDPA MATH backend context manager
-# 当 attn_mask 的 stride(1) 不是 4 的倍数时（如 seq_len 奇数），
-# efficient/flash backend 会报 "attn_bias is not correctly aligned (strideH)"，
-# 需要降级到无对齐要求的 MATH backend。
-# 优先 PyTorch 2.1+ 的 torch.nn.attention.sdpa_kernel，
-# 回落到 PyTorch 2.0 的 torch.backends.cuda.sdp_kernel。
-_SDPA_MATH_CTX_FACTORY = None
-try:
-    from torch.nn.attention import sdpa_kernel as _sdpa_kernel_fn, SDPBackend as _SDPBackend
-    _SDPA_MATH_CTX_FACTORY = lambda: _sdpa_kernel_fn([_SDPBackend.MATH])
-except ImportError:
+# _sdpa_flash: 优先使用 FlashAttention / Efficient-Attention kernel；
+# 条件不满足（float32、CPU、head_dim 不对齐等）时自动降级到任意可用 backend。
+def _sdpa_flash(
+    q: "torch.Tensor", k: "torch.Tensor", v: "torch.Tensor",
+    attn_mask=None, dropout_p: float = 0.0, is_causal: bool = False,
+) -> "torch.Tensor":
+    """SDPA with FlashAttention/Efficient-Attention priority; auto-falls back.
+
+    优先使用 FlashAttention（要求 fp16/bf16 + CUDA + head_dim≤256）
+    或 Efficient Attention（支持更多场景），排除慢速纯 MATH backend。
+    任何条件不满足时自动降级到默认 SDPA（允许 MATH backend）。
+    """
     try:
-        _sdp_kernel_mod = torch.backends.cuda.sdp_kernel  # PyTorch 2.0
-        _SDPA_MATH_CTX_FACTORY = lambda: _sdp_kernel_mod(
-            enable_flash=False, enable_math=True, enable_mem_efficient=False
-        )
-    except AttributeError:
-        pass  # 不支持，回落到手动 softmax
+        from torch.nn.attention import sdpa_kernel, SDPBackend  # PyTorch 2.2+
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+            )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return F.scaled_dot_product_attention(
+        q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+    )
 
 # 导入左旋平滑模块
 from apt.model.layers.left_spin_smooth import (
@@ -737,6 +742,7 @@ class AutopoieticAttention(nn.Module):
         dbc_threshold: float = 1e-6,
         dbc_iterations: int = 1,
         use_fused_qkv: bool = True,
+        use_rope: bool = False,         # ← RoPE 开关
     ):
         super().__init__()
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
@@ -773,7 +779,25 @@ class AutopoieticAttention(nn.Module):
         self.auto_v = nn.Linear(r, embed_dim, bias=False)
         self.auto_gate = nn.Linear(embed_dim, num_heads, bias=True)
 
+        self.use_rope = bool(use_rope)
         self.dropout_layer = nn.Dropout(self.dropout)
+
+    def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
+        """对 [B,H,T,D] 的 q 或 k 施加旋转位置编码 (Standard RoPE)。"""
+        B, H, T, D = x.size()
+        orig_D = D
+        if orig_D % 2 != 0:
+            x = torch.cat([x, x.new_zeros(B, H, T, 1)], dim=-1)
+            D = orig_D + 1
+        half = D // 2
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, half, device=x.device, dtype=x.dtype) / float(half)))
+        sinusoid = pos.unsqueeze(1) * inv_freq.unsqueeze(0)       # [T, half]
+        sin = sinusoid.sin().unsqueeze(0).unsqueeze(0)            # [1,1,T,half]
+        cos = sinusoid.cos().unsqueeze(0).unsqueeze(0)            # [1,1,T,half]
+        x1, x2 = x[..., :half], x[..., half:half * 2]
+        x_rot = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+        return x_rot[..., :orig_D]
 
     def _shape(self, x: torch.Tensor) -> torch.Tensor:
         # (B,T,C) -> (B,H,T,D)
@@ -827,6 +851,11 @@ class AutopoieticAttention(nn.Module):
         k = self._shape(k)
         v = self._shape(v)
 
+        # RoPE: 施加旋转位置编码到 Q / K
+        if self.use_rope:
+            q = self._apply_rope(q)
+            k = self._apply_rope(k)
+
         # key_padding_mask: (B,T) -> (B,1,1,T) additive mask for SDPA when needed
         # SDPA in PyTorch supports attn_mask; we compose a boolean mask if possible.
         composed_mask = None
@@ -850,54 +879,15 @@ class AutopoieticAttention(nn.Module):
                 am = am.view(b, 1, am.size(-2), am.size(-1)).contiguous()
             composed_mask = am if composed_mask is None else (composed_mask | am)
 
-        # SDPA fast path
+        # SDPA fast path（FlashAttention → Efficient → Math 自动降级）
         if hasattr(F, "scaled_dot_product_attention"):
-            # dropout only during training
             dropout_p = self.dropout if self.training else 0.0
-
-            # 检测 attn_mask 是否会触发 efficient/flash backend 的 stride 对齐错误。
-            # 根本原因：am.view(1,1,T,T).expand(b,1,-1,-1) 产生 stride(1)=T*T；
-            # 当 T 为奇数时 T*T%4≠0，EFFICIENT backend 报
-            # "attn_bias is not correctly aligned (strideH)"。
-            # .contiguous() 无效 —— 形状不变，连续 tensor 的 stride(1) 依然是 T*T。
-            # 解决：stride 不对齐时切换到无此要求的 MATH backend。
-            _need_math = (
-                composed_mask is not None
-                and composed_mask.dim() == 4
-                and composed_mask.stride(1) % 4 != 0
+            attn_out = _sdpa_flash(
+                q, k, v,
+                attn_mask=composed_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
             )
-
-            if _need_math and _SDPA_MATH_CTX_FACTORY is not None:
-                # 有 context manager：精准降级，仅影响 seq_len 为奇数的 batch
-                with _SDPA_MATH_CTX_FACTORY():
-                    attn_out = F.scaled_dot_product_attention(
-                        q, k, v,
-                        attn_mask=composed_mask,
-                        dropout_p=dropout_p,
-                        is_causal=is_causal,
-                    )
-            elif _need_math:
-                # 无 context manager（旧版 PyTorch），手动 softmax 兜底
-                # 仅在 stride 不对齐时触发，不影响正常序列长度的性能
-                scale = 1.0 / math.sqrt(self.head_dim)
-                scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-                if composed_mask is not None:
-                    scores = scores.masked_fill(composed_mask, float("-inf"))
-                if is_causal:
-                    _causal = torch.triu(
-                        torch.ones(t, t, device=scores.device, dtype=torch.bool), diagonal=1
-                    )
-                    scores = scores.masked_fill(_causal.view(1, 1, t, t), float("-inf"))
-                attn = torch.softmax(scores, dim=-1)
-                attn = self.dropout_layer(attn)
-                attn_out = torch.matmul(attn, v)
-            else:
-                attn_out = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=composed_mask,
-                    dropout_p=dropout_p,
-                    is_causal=is_causal,
-                )
             attn_weights = None
         else:
             # fallback: explicit softmax
@@ -966,6 +956,7 @@ class APTEncoderLayer(nn.Module):
         # 现代化组件开关
         use_rmsnorm: bool = True,
         use_swiglu: bool = True,
+        use_rope: bool = False,         # ← RoPE 开关
         # FFN 扩展倍率（Phi-3 风格）
         ffn_ratio: Optional[float] = None,
         # MoE 参数（默认全关闭，不影响现有训练）
@@ -999,7 +990,8 @@ class APTEncoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations
+            dbc_iterations=dbc_iterations,
+            use_rope=use_rope,
         )
 
         # 前馈网络：统一走 MoEFFN (Dense / MoE 可切换)
@@ -1141,6 +1133,7 @@ class APTDecoderLayer(nn.Module):
         # 现代化组件开关
         use_rmsnorm: bool = True,
         use_swiglu: bool = True,
+        use_rope: bool = False,         # ← RoPE 开关
         # GPT-only 开关：False 时 cross-attn 被旁路
         use_cross_attn: bool = True,
         # FFN 扩展倍率（Phi-3 风格）
@@ -1177,10 +1170,11 @@ class APTDecoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations
+            dbc_iterations=dbc_iterations,
+            use_rope=use_rope,
         )
 
-        # 编码器-解码器注意力层
+        # 编码器-解码器注意力层（cross-attn 不加 RoPE，位置已由 self-attn 编码）
         self.multihead_attn = AutopoieticAttention(
             embed_dim=d_model,
             num_heads=nhead,
@@ -1195,7 +1189,8 @@ class APTDecoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations
+            dbc_iterations=dbc_iterations,
+            use_rope=False,  # cross-attn 不加 RoPE
         )
 
         # 前馈网络：统一走 MoEFFN (Dense / MoE 可切换)

@@ -29,6 +29,28 @@ from apt.model.layers.left_spin_smooth import (
 # APT-Lite additions
 # =========================
 
+def _sdpa_flash(
+    q: "torch.Tensor", k: "torch.Tensor", v: "torch.Tensor",
+    attn_mask=None, dropout_p: float = 0.0, is_causal: bool = False,
+) -> "torch.Tensor":
+    """SDPA with FlashAttention/Efficient-Attention priority; auto-falls back.
+
+    优先使用 FlashAttention（要求 fp16/bf16 + CUDA + head_dim≤256）
+    或 Efficient Attention，排除纯 MATH backend。
+    任何条件不满足时自动降级到默认 SDPA。
+    """
+    try:
+        from torch.nn.attention import sdpa_kernel, SDPBackend  # PyTorch 2.2+
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+            )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return F.scaled_dot_product_attention(
+        q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal,
+    )
+
 class RMSNorm(nn.Module):
     """RMSNorm (轻量稳定)"""
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -81,9 +103,10 @@ class AutopoieticGate(nn.Module):
 class LiteSelfAttention(nn.Module):
     """
     轻量自注意力：优先走 scaled_dot_product_attention（若可用），否则回退到显式 softmax。
-    与 APT-Lite 的门控结合使用。
+    与 APT-Lite 的门控结合使用。支持 RoPE。
     """
-    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0, batch_first: bool = True):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0,
+                 batch_first: bool = True, use_rope: bool = False):
         super().__init__()
         assert d_model % nhead == 0, "d_model must be divisible by nhead"
         self.d_model = d_model
@@ -91,10 +114,28 @@ class LiteSelfAttention(nn.Module):
         self.head_dim = d_model // nhead
         self.scale = self.head_dim ** -0.5
         self.batch_first = batch_first
+        self.use_rope = bool(use_rope)
         # fused qkv projection
         self.w_qkv = nn.Linear(d_model, 3 * d_model)
         self.w_o = nn.Linear(d_model, d_model)
         self.drop = nn.Dropout(dropout)
+
+    def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
+        """对 [B,H,T,D] 的 q 或 k 施加旋转位置编码 (Standard RoPE)。"""
+        B, H, T, D = x.size()
+        orig_D = D
+        if orig_D % 2 != 0:
+            x = torch.cat([x, x.new_zeros(B, H, T, 1)], dim=-1)
+            D = orig_D + 1
+        half = D // 2
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, half, device=x.device, dtype=x.dtype) / float(half)))
+        sinusoid = pos.unsqueeze(1) * inv_freq.unsqueeze(0)
+        sin = sinusoid.sin().unsqueeze(0).unsqueeze(0)
+        cos = sinusoid.cos().unsqueeze(0).unsqueeze(0)
+        x1, x2 = x[..., :half], x[..., half:half * 2]
+        x_rot = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+        return x_rot[..., :orig_D]
 
     def forward(self, x, attn_mask=None, key_padding_mask=None, is_causal: bool = False):
         # x: (B,T,C) if batch_first
@@ -111,33 +152,35 @@ class LiteSelfAttention(nn.Module):
         k = reshape(k)
         v = reshape(v)
 
+        # RoPE: 施加旋转位置编码到 Q / K
+        if self.use_rope:
+            q = self._apply_rope(q)
+            k = self._apply_rope(k)
+
         # build additive mask if needed
         # attn_mask expected broadcastable to (B,h,T,S) or (T,S)
         # key_padding_mask: (B,T) where True means masked
-        if key_padding_mask is not None:
-            # convert to additive mask
-            kp = key_padding_mask.view(B, 1, 1, T).to(dtype=x.dtype)
-            # use large negative for masked positions (avoid per-forward tensor alloc)
-            kp = torch.where(kp > 0, x.new_full((), -1e9), torch.zeros_like(kp))
-        else:
-            kp = None
+        # bool mask：True = 被遮蔽位置（FlashAttention 友好，PyTorch 2.2+ 可走 FA kernel）
+        kp = key_padding_mask.view(B, 1, 1, T).bool() if key_padding_mask is not None else None
 
-        # use PyTorch SDPA if available
-        sdpa = getattr(F, "scaled_dot_product_attention", None)
-        if callable(sdpa):
-            # F.scaled_dot_product_attention expects (B,h,T,hd)
-            # It supports attn_mask as float/bool. Combine masks if both.
-            merged = attn_mask
+        # SDPA fast path（FlashAttention → Efficient → Math 自动降级）
+        if hasattr(F, "scaled_dot_product_attention"):
+            merged: "Optional[torch.Tensor]" = None
+            if attn_mask is not None:
+                merged = attn_mask if attn_mask.dtype == torch.bool else attn_mask.bool()
             if kp is not None:
-                merged = kp if merged is None else (merged + kp)
-            out = sdpa(q, k, v, attn_mask=merged, dropout_p=self.drop.p if self.training else 0.0, is_causal=is_causal)
+                merged = kp if merged is None else (merged | kp)
+            out = _sdpa_flash(q, k, v, attn_mask=merged,
+                              dropout_p=self.drop.p if self.training else 0.0,
+                              is_causal=is_causal)
         else:
-            # manual attention
+            # manual attention（旧版 PyTorch 无 SDPA）
             scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # (B,h,T,T)
             if attn_mask is not None:
-                scores = scores + attn_mask
+                am = attn_mask if attn_mask.dtype == torch.bool else attn_mask.bool()
+                scores = scores.masked_fill(am, float('-inf'))
             if kp is not None:
-                scores = scores + kp
+                scores = scores.masked_fill(kp, float('-inf'))
             attn = torch.softmax(scores, dim=-1)
             attn = self.drop(attn)
             out = torch.matmul(attn, v)  # (B,h,T,hd)
@@ -168,13 +211,15 @@ class APTLiteEncoderLayer(nn.Module):
         batch_first: bool = True,
         norm_eps: float = 1e-6,
         gate_init: float = 0.0,
+        use_rope: bool = False,     # ← RoPE 开关
         **kwargs
     ):
         super().__init__()
         self.batch_first = batch_first
         self.norm1 = RMSNorm(d_model, eps=norm_eps)
         self.norm2 = RMSNorm(d_model, eps=norm_eps)
-        self.attn = LiteSelfAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.attn = LiteSelfAttention(d_model, nhead, dropout=dropout,
+                                      batch_first=batch_first, use_rope=use_rope)
         self.gate = AutopoieticGate(d_model, eps=norm_eps, init=gate_init)
         self.drop = nn.Dropout(dropout)
         self.ffn = SwiGLU(d_model, dim_feedforward, dropout=dropout)
@@ -208,6 +253,7 @@ class APTLiteDecoderLayer(nn.Module):
         norm_eps: float = 1e-6,
         gate_init: float = 0.0,
         use_cross_attn: bool = True,
+        use_rope: bool = False,     # ← RoPE 开关（仅作用于 self-attn）
         **kwargs
     ):
         super().__init__()
@@ -216,7 +262,8 @@ class APTLiteDecoderLayer(nn.Module):
         self.norm1 = RMSNorm(d_model, eps=norm_eps)
         self.norm2 = RMSNorm(d_model, eps=norm_eps)
         self.norm3 = RMSNorm(d_model, eps=norm_eps)
-        self.self_attn = LiteSelfAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.self_attn = LiteSelfAttention(d_model, nhead, dropout=dropout,
+                                           batch_first=batch_first, use_rope=use_rope)
         self.cross_q = nn.Linear(d_model, d_model)
         self.cross_kv = nn.Linear(d_model, 2*d_model)
         self.cross_o = nn.Linear(d_model, d_model)
@@ -1149,19 +1196,14 @@ class APTEncoderLayer(nn.Module):
             dbc_iterations=dbc_iterations
         )
 
-        # 前馈网络
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        # 前馈网络：SwiGLU 替代 Linear+GELU+Linear
+        self.ffn = SwiGLU(d_model, dim_feedforward, dropout=0.0)
 
-        # 层归一化
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        # 层归一化：RMSNorm 替代 LayerNorm
+        self.norm1 = RMSNorm(d_model, eps=eps)
+        self.norm2 = RMSNorm(d_model, eps=eps)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-
-        # 激活函数
-        self.activation = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
@@ -1226,8 +1268,8 @@ class APTEncoderLayer(nn.Module):
 
         src = self.norm1(src)
 
-        # 🚀 前馈网络子层（左旋平滑残差连接）
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        # 🚀 前馈网络子层（SwiGLU + 左旋平滑残差连接）
+        src2 = self.ffn(src)
         src2_dropout = self.dropout2(src2)
 
         # 替换: src = src + src2  →  src = LeftSpin(src, src2)
@@ -1317,21 +1359,16 @@ class APTDecoderLayer(nn.Module):
             dbc_iterations=dbc_iterations
         )
 
-        # 前馈网络
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        # 前馈网络：SwiGLU 替代 Linear+GELU+Linear
+        self.ffn = SwiGLU(d_model, dim_feedforward, dropout=0.0)
 
-        # 层归一化
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
+        # 层归一化：RMSNorm 替代 LayerNorm
+        self.norm1 = RMSNorm(d_model, eps=eps)
+        self.norm2 = RMSNorm(d_model, eps=eps)
+        self.norm3 = RMSNorm(d_model, eps=eps)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
-
-        # 激活函数
-        self.activation = F.gelu if activation == "gelu" else F.relu
 
         # 配置
         self.batch_first = batch_first
@@ -1428,8 +1465,8 @@ class APTDecoderLayer(nn.Module):
 
             tgt = self.norm2(tgt)
 
-        # 🚀 前馈网络子层（左旋平滑残差连接）
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        # 🚀 前馈网络子层（SwiGLU + 左旋平滑残差连接）
+        tgt2 = self.ffn(tgt)
         tgt2_dropout = self.dropout3(tgt2)
 
         if self.use_left_spin and self.left_spin_ffn is not None:
@@ -1677,9 +1714,9 @@ class APTModel(nn.Module):
         self.encoder_layers = nn.ModuleList(encoder_layers)
         self.decoder_layers = nn.ModuleList(decoder_layers)
         
-        # 最终层归一化
-        self.encoder_norm = nn.LayerNorm(config.d_model)
-        self.decoder_norm = nn.LayerNorm(config.d_model)
+        # 最终层归一化：RMSNorm 替代 LayerNorm
+        self.encoder_norm = RMSNorm(config.d_model)
+        self.decoder_norm = RMSNorm(config.d_model)
         
         # 输出投影
         self.output_projection = nn.Linear(config.d_model, config.vocab_size, bias=False)
