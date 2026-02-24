@@ -75,6 +75,33 @@ except Exception:
             return self.rec(z)
 
 
+# ========================= RMSNorm + SwiGLU =========================
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization。"""
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(d))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        norm = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (x / norm) * self.weight
+
+
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: (xW1) * silu(xWg) -> W2"""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.0):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff)
+        self.w2 = nn.Linear(d_model, d_ff)
+        self.w3 = nn.Linear(d_ff, d_model)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(self.drop(F.silu(self.w1(x)) * self.w2(x)))
+
+
 # ========================= utils =========================
 def token_entropy_scalar(logits: torch.Tensor) -> torch.Tensor:
     """Mean token entropy over [B,T,V] logits."""
@@ -472,24 +499,31 @@ class GPT5Attention(nn.Module):
             # Broadcast back to full head count
             k = k_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, H, T, hd)
             v = v_small.unsqueeze(2).repeat(1, 1, group_size, 1, 1).reshape(B, H, T, hd)
-        # Compute scaled dot‑product attention
-        att = (q @ k.transpose(-2, -1)) / math.sqrt(max(hd, 1))  # [B,H,T,T]
-        # Compose causal and sliding window masks
-        # Causal mask: disallow attending to future positions
-        causal_mask = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
-        mask = causal_mask
-        # Sliding window mask: disallow attention beyond window_size
-        if self.window_size and self.window_size > 0:
-            i = torch.arange(T, device=att.device).view(T, 1)
-            j = torch.arange(T, device=att.device).view(1, T)
-            local = j < (i - (self.window_size - 1))
-            mask = local if mask is None else (mask | local)
-        if mask is not None:
-            att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        # Softmax over last dimension
-        att = F.softmax(att, dim=-1)
-        # Compute attention output
-        y = att @ v  # [B,H,T,hd]
+        # SDPA 路径（FlashAttention / Mem-Efficient kernel）
+        if hasattr(F, "scaled_dot_product_attention"):
+            if self.window_size and self.window_size > 0:
+                _i = torch.arange(T, device=q.device).view(T, 1)
+                _j = torch.arange(T, device=q.device).view(1, T)
+                additive = torch.zeros(T, T, device=q.device, dtype=q.dtype)
+                causal_m = torch.triu(torch.ones(T, T, dtype=torch.bool, device=q.device), diagonal=1)
+                additive = additive.masked_fill(causal_m, float('-inf'))
+                window_m = _j < (_i - (self.window_size - 1))
+                additive = additive.masked_fill(window_m, float('-inf'))
+                y = F.scaled_dot_product_attention(q, k, v, attn_mask=additive)
+            else:
+                y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            # Fallback: 手动 softmax
+            att = (q @ k.transpose(-2, -1)) / math.sqrt(max(hd, 1))
+            causal_mask = torch.triu(torch.ones(T, T, dtype=torch.bool, device=att.device), diagonal=1)
+            att = att.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+            if self.window_size and self.window_size > 0:
+                _i = torch.arange(T, device=att.device).view(T, 1)
+                _j = torch.arange(T, device=att.device).view(1, T)
+                local = _j < (_i - (self.window_size - 1))
+                att = att.masked_fill(local.unsqueeze(0).unsqueeze(0), float('-inf'))
+            att = F.softmax(att, dim=-1)
+            y = att @ v  # [B,H,T,hd]
         # Concatenate heads and project back to d_model
         y = y.transpose(1, 2).contiguous().view(B, T, D)
         out = self.W_o(y)
@@ -525,8 +559,8 @@ class GPT5Block(nn.Module):
         # NOTE: compile_moe_dispatch is unused in attention (kept for API symmetry).
 
         super().__init__()
-        # Self‑attention with its own layer norm
-        self.norm_attn = nn.LayerNorm(d_model)
+        # Self‑attention with its own RMSNorm
+        self.norm_attn = RMSNorm(d_model)
         self.attn = GPT5Attention(
             d_model=d_model,
             n_heads=n_heads,
@@ -536,17 +570,13 @@ class GPT5Block(nn.Module):
             compile_moe_dispatch=compile_moe_dispatch,
         )
         # MoE components
-        self.norm_moe = nn.LayerNorm(d_model)
+        self.norm_moe = RMSNorm(d_model)
         self.router = CodebookRouter(d_model=d_model, d_route=d_route,
                                      num_skills=num_skills, temperature=0.7)
         self.moe = MoELayer(d_model=d_model, num_skills=num_skills, d_hidden=4 * d_model, init_method="xavier")
-        # Feed‑forward network with its own layer norm
-        self.ff = nn.Sequential(
-            nn.LayerNorm(d_model),
-            nn.Linear(d_model, 4 * d_model),
-            nn.SiLU(),
-            nn.Linear(4 * d_model, d_model),
-        )
+        # Feed‑forward network: SwiGLU 替代 SiLU Sequential
+        self.ff_norm = RMSNorm(d_model)
+        self.ff = SwiGLU(d_model, 4 * d_model)
         self.top_k = int(top_k)
         self.compile_moe_dispatch = bool(compile_moe_dispatch)
         # Diagnostic projector
@@ -560,7 +590,7 @@ class GPT5Block(nn.Module):
         # Mixture‑of‑experts branch
         moe_in = self.norm_moe(x)
         h, aux = self.moe(moe_in, self.router, top_k=self.top_k, compile_dispatch=self.compile_moe_dispatch)
-        x = x + h + self.ff(h)
+        x = x + h + self.ff(self.ff_norm(h))   # ff_norm + SwiGLU
         return x, {"moe": aux, "proj_rank": self.proj.rank}
 
 
@@ -623,7 +653,7 @@ class GPT5Model(nn.Module):
             )
             for _ in range(n_layers)
         ])
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = RMSNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
 
         # NOTE: vote/retrieval/feedback logic is intentionally NOT stored on the

@@ -737,6 +737,7 @@ class AutopoieticAttention(nn.Module):
         dbc_threshold: float = 1e-6,
         dbc_iterations: int = 1,
         use_fused_qkv: bool = True,
+        use_rope: bool = False,         # ← RoPE 开关
     ):
         super().__init__()
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
@@ -773,7 +774,25 @@ class AutopoieticAttention(nn.Module):
         self.auto_v = nn.Linear(r, embed_dim, bias=False)
         self.auto_gate = nn.Linear(embed_dim, num_heads, bias=True)
 
+        self.use_rope = bool(use_rope)
         self.dropout_layer = nn.Dropout(self.dropout)
+
+    def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
+        """对 [B,H,T,D] 的 q 或 k 施加旋转位置编码 (Standard RoPE)。"""
+        B, H, T, D = x.size()
+        orig_D = D
+        if orig_D % 2 != 0:
+            x = torch.cat([x, x.new_zeros(B, H, T, 1)], dim=-1)
+            D = orig_D + 1
+        half = D // 2
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, half, device=x.device, dtype=x.dtype) / float(half)))
+        sinusoid = pos.unsqueeze(1) * inv_freq.unsqueeze(0)       # [T, half]
+        sin = sinusoid.sin().unsqueeze(0).unsqueeze(0)            # [1,1,T,half]
+        cos = sinusoid.cos().unsqueeze(0).unsqueeze(0)            # [1,1,T,half]
+        x1, x2 = x[..., :half], x[..., half:half * 2]
+        x_rot = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+        return x_rot[..., :orig_D]
 
     def _shape(self, x: torch.Tensor) -> torch.Tensor:
         # (B,T,C) -> (B,H,T,D)
@@ -826,6 +845,11 @@ class AutopoieticAttention(nn.Module):
         q = self._shape(q)
         k = self._shape(k)
         v = self._shape(v)
+
+        # RoPE: 施加旋转位置编码到 Q / K
+        if self.use_rope:
+            q = self._apply_rope(q)
+            k = self._apply_rope(k)
 
         # key_padding_mask: (B,T) -> (B,1,1,T) additive mask for SDPA when needed
         # SDPA in PyTorch supports attn_mask; we compose a boolean mask if possible.
@@ -966,6 +990,7 @@ class APTEncoderLayer(nn.Module):
         # 现代化组件开关
         use_rmsnorm: bool = True,
         use_swiglu: bool = True,
+        use_rope: bool = False,         # ← RoPE 开关
         # FFN 扩展倍率（Phi-3 风格）
         ffn_ratio: Optional[float] = None,
         # MoE 参数（默认全关闭，不影响现有训练）
@@ -999,7 +1024,8 @@ class APTEncoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations
+            dbc_iterations=dbc_iterations,
+            use_rope=use_rope,
         )
 
         # 前馈网络：统一走 MoEFFN (Dense / MoE 可切换)
@@ -1141,6 +1167,7 @@ class APTDecoderLayer(nn.Module):
         # 现代化组件开关
         use_rmsnorm: bool = True,
         use_swiglu: bool = True,
+        use_rope: bool = False,         # ← RoPE 开关
         # GPT-only 开关：False 时 cross-attn 被旁路
         use_cross_attn: bool = True,
         # FFN 扩展倍率（Phi-3 风格）
@@ -1177,10 +1204,11 @@ class APTDecoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations
+            dbc_iterations=dbc_iterations,
+            use_rope=use_rope,
         )
 
-        # 编码器-解码器注意力层
+        # 编码器-解码器注意力层（cross-attn 不加 RoPE，位置已由 self-attn 编码）
         self.multihead_attn = AutopoieticAttention(
             embed_dim=d_model,
             num_heads=nhead,
@@ -1195,7 +1223,8 @@ class APTDecoderLayer(nn.Module):
             rank_ratio_proj=rank_ratio_proj,
             rank_ratio_res=rank_ratio_res,
             dbc_threshold=dbc_threshold,
-            dbc_iterations=dbc_iterations
+            dbc_iterations=dbc_iterations,
+            use_rope=False,  # cross-attn 不加 RoPE
         )
 
         # 前馈网络：统一走 MoEFFN (Dense / MoE 可切换)

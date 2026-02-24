@@ -46,6 +46,36 @@ def _init_linear(module: nn.Linear, std: float = 0.02):
 
 
 # ----------------------------------------------------------
+# RMSNorm + SwiGLU
+# ----------------------------------------------------------
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization."""
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(d))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        norm = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (x / norm) * self.weight
+
+
+class SwiGLU(nn.Module):
+    """SwiGLU FFN: silu(xW1) * (xW2) -> W3"""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.0):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff)
+        self.w2 = nn.Linear(d_model, d_ff)
+        self.w3 = nn.Linear(d_ff, d_model)
+        self.drop = nn.Dropout(dropout)
+        _init_linear(self.w1); _init_linear(self.w2); _init_linear(self.w3)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(self.drop(F.silu(self.w1(x)) * self.w2(x)))
+
+
+# ----------------------------------------------------------
 # Dynamic τ Gating (from 4o)
 # ----------------------------------------------------------
 
@@ -195,27 +225,40 @@ class TriVeinAttention(nn.Module):
         zk = self.subspace.project(k)
         zv = self.subspace.project(v)
 
-        # Compute attention in subspace
-        att = (zq @ zk.transpose(-2, -1)) / math.sqrt(max(self.rank, 1))
-
-        # Compose masks: causal + sliding window
-        mask = None
-        if is_causal:
-            causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
-            mask = causal
-        if self.window_size and self.window_size > 0:
-            i = torch.arange(T, device=att.device).view(T, 1)
-            j = torch.arange(T, device=att.device).view(1, T)
-            local = j < (i - (self.window_size - 1))
-            mask = local if mask is None else (mask | local)
-        if mask is not None:
-            att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-
-        # Softmax
-        att = F.softmax(att, dim=-1)
-
-        # Low‑rank output
-        y_sub = att @ zv
+        # Compute attention in subspace via SDPA (FlashAttention when available)
+        scale = 1.0 / math.sqrt(max(self.rank, 1))
+        need_window = bool(self.window_size and self.window_size > 0)
+        if hasattr(F, "scaled_dot_product_attention"):
+            if need_window or not is_causal:
+                # Build explicit float additive mask combining causal + window
+                additive = torch.zeros(T, T, device=zq.device, dtype=zq.dtype)
+                if is_causal:
+                    causal_m = torch.triu(torch.ones(T, T, dtype=torch.bool, device=zq.device), diagonal=1)
+                    additive = additive.masked_fill(causal_m, float('-inf'))
+                if need_window:
+                    _i = torch.arange(T, device=zq.device).view(T, 1)
+                    _j = torch.arange(T, device=zq.device).view(1, T)
+                    window_m = _j < (_i - (self.window_size - 1))
+                    additive = additive.masked_fill(window_m, float('-inf'))
+                y_sub = F.scaled_dot_product_attention(zq, zk, zv, attn_mask=additive, scale=scale)
+            else:
+                y_sub = F.scaled_dot_product_attention(zq, zk, zv, is_causal=True, scale=scale)
+        else:
+            # Fallback: manual softmax
+            att = (zq @ zk.transpose(-2, -1)) * scale
+            mask = None
+            if is_causal:
+                causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
+                mask = causal
+            if need_window:
+                _i = torch.arange(T, device=att.device).view(T, 1)
+                _j = torch.arange(T, device=att.device).view(1, T)
+                local = _j < (_i - (self.window_size - 1))
+                mask = local if mask is None else (mask | local)
+            if mask is not None:
+                att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+            att = F.softmax(att, dim=-1)
+            y_sub = att @ zv
         # Reconstruct to full dimension
         y = self.subspace.reconstruct(y_sub)
         y = y.transpose(1, 2).contiguous().view(B, T, D)
@@ -230,17 +273,11 @@ class HybridFFN(nn.Module):
     def __init__(self, d_model: int, d_ff: int, num_experts: int = 4, dropout: float = 0.0):
         super().__init__()
         self.num_experts = num_experts
+        # SwiGLU experts replace Sequential(Linear, SiLU, Linear)
         self.experts = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(d_model, d_ff),
-                nn.SiLU(),
-                nn.Linear(d_ff, d_model),
-            ) for _ in range(num_experts)
+            SwiGLU(d_model, d_ff, dropout=0.0)
+            for _ in range(num_experts)
         ])
-        for e in self.experts:
-            for m in e:
-                if isinstance(m, nn.Linear):
-                    _init_linear(m)
         self.gate = nn.Linear(d_model, num_experts, bias=False)
         _init_linear(self.gate)
         self.drop = nn.Dropout(dropout)
@@ -301,12 +338,12 @@ class GPT4oBlock(nn.Module):
             dropout: feedforward dropout
         """
         super().__init__()
-        self.norm1 = nn.LayerNorm(d_model)
+        self.norm1 = RMSNorm(d_model)
         self.attn = TriVeinAttention(d_model, n_heads, rank,
                                      window_size=window_size,
                                      num_kv_heads=num_kv_heads,
                                      use_rope=use_rope)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm2 = RMSNorm(d_model)
         self.ffn = HybridFFN(d_model, d_ff, dropout=dropout)
 
     def forward(self, x: torch.Tensor, load_factor: float = 1.0):
@@ -528,7 +565,7 @@ class GPTo3Model(nn.Module):
             for _ in range(num_layers)
         ])
         # Final normalisation and language head
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = RMSNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         _init_linear(self.lm_head, std=0.02)
 

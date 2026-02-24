@@ -27,6 +27,39 @@ import math
 from typing import Optional, Tuple, List
 
 # ----------------------------------------------------------
+# RMSNorm（替代 LayerNorm，无均值偏移，更稳定）
+# ----------------------------------------------------------
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization."""
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(d))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        norm = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (x / norm) * self.weight
+
+
+# ----------------------------------------------------------
+# SwiGLU FFN: (xW1) * silu(xWg) -> W2
+# ----------------------------------------------------------
+
+class SwiGLU(nn.Module):
+    """SwiGLU 前馈网络：Gate × SiLU 激活，比 GELU 更省显存且收敛更快。"""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.0):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff)    # gate
+        self.w2 = nn.Linear(d_model, d_ff)    # value
+        self.w3 = nn.Linear(d_ff, d_model)    # output
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(self.drop(F.silu(self.w1(x)) * self.w2(x)))
+
+
+# ----------------------------------------------------------
 # Dynamic τ Gating
 # ----------------------------------------------------------
 
@@ -101,23 +134,20 @@ class FastPathScheduler:
 # ----------------------------------------------------------
 
 class HybridFFN(nn.Module):
+    """Mini-MoE：每个 expert 改用 SwiGLU，取代 Linear+GELU+Linear。"""
     def __init__(self, d_model, d_ff, num_experts=4, dropout=0.1):
         super().__init__()
         self.num_experts = num_experts
+        # 每个 expert 用 SwiGLU 替代 GELU Linear
         self.experts = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(d_model, d_ff),
-                nn.GELU(),
-                nn.Linear(d_ff, d_model),
-            ) for _ in range(num_experts)
+            SwiGLU(d_model, d_ff, dropout=dropout)
+            for _ in range(num_experts)
         ])
         self.gate = nn.Linear(d_model, num_experts, bias=False)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        gate_logits = self.gate(x)
-        gate_weights = F.softmax(gate_logits, dim=-1)  # [B,T,num_experts]
-        # Properly aggregate expert outputs
+        gate_weights = F.softmax(self.gate(x), dim=-1)  # [B,T,num_experts]
         outputs = torch.zeros_like(x)
         for i, expert in enumerate(self.experts):
             w = gate_weights[..., i:i+1]  # [B,T,1]
@@ -237,28 +267,40 @@ class TriVeinAttention(nn.Module):
         # Attention scores in subspace
         att = (zq @ zk.transpose(-2, -1)) / math.sqrt(max(self.rank, 1))
 
-        # Compose masks: causal + sliding window
-        mask = None
-        # causal mask
-        if is_causal:
-            causal = torch.triu(torch.ones((T, T), dtype=torch.bool, device=att.device), diagonal=1)
-            mask = causal
-        # sliding window mask
+        # 构建滑窗掩码（causal 掩码由 SDPA is_causal 或 float mask 处理）
+        window_mask = None
         if self.window_size and self.window_size > 0:
-            # mask out keys beyond window_size from each query position
-            i = torch.arange(T, device=att.device).view(T, 1)
-            j = torch.arange(T, device=att.device).view(1, T)
-            local = j < (i - (self.window_size - 1))
-            mask = local if mask is None else (mask | local)
-        # Apply mask if present
-        if mask is not None:
-            att = att.masked_fill(mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+            _i = torch.arange(T, device=zq.device).view(T, 1)
+            _j = torch.arange(T, device=zq.device).view(1, T)
+            window_mask = (_j < (_i - (self.window_size - 1)))  # 超出窗口的位置
 
-        # Softmax normalisation
-        att = F.softmax(att, dim=-1)
-
-        # Low‑rank output
-        y_base = att @ zv
+        # SDPA 路径（FlashAttention / Mem-Efficient kernel）
+        scale = 1.0 / math.sqrt(max(self.rank, 1))
+        if hasattr(F, "scaled_dot_product_attention"):
+            if window_mask is not None or not is_causal:
+                # 需要显式 float mask：合并 causal + window
+                additive = torch.zeros(T, T, device=zq.device, dtype=zq.dtype)
+                if is_causal:
+                    causal_m = torch.triu(torch.ones(T, T, dtype=torch.bool, device=zq.device), diagonal=1)
+                    additive = additive.masked_fill(causal_m, float('-inf'))
+                if window_mask is not None:
+                    additive = additive.masked_fill(window_mask, float('-inf'))
+                y_base = F.scaled_dot_product_attention(
+                    zq, zk, zv, attn_mask=additive, scale=scale)
+            else:
+                # 纯 causal，让 SDPA 内部优化
+                y_base = F.scaled_dot_product_attention(
+                    zq, zk, zv, is_causal=True, scale=scale)
+        else:
+            # Fallback: 手动 softmax
+            att = (zq @ zk.transpose(-2, -1)) * scale
+            if is_causal:
+                causal_m = torch.triu(torch.ones(T, T, dtype=torch.bool, device=att.device), diagonal=1)
+                att = att.masked_fill(causal_m.unsqueeze(0).unsqueeze(0), float('-inf'))
+            if window_mask is not None:
+                att = att.masked_fill(window_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+            att = F.softmax(att, dim=-1)
+            y_base = att @ zv
 
         # === Low‑rank correction based on reconstruction error ===
         # Compute the reconstruction error of the queries in the low‑rank subspace
@@ -374,14 +416,12 @@ class GPT4oBlock(nn.Module):
             use_rope: whether to apply RoPE to Q/K
         """
         super().__init__()
-        # Layer normalisation before attention/FFN
-        self.norm1 = nn.LayerNorm(d_model)
-        # Pass window_size, num_kv_heads and use_rope into TriVeinAttention
+        self.norm1 = RMSNorm(d_model)
         self.attn = TriVeinAttention(d_model, n_heads, rank, tau_module,
                                      window_size=window_size,
                                      num_kv_heads=num_kv_heads,
                                      use_rope=use_rope)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm2 = RMSNorm(d_model)
         self.ffn = HybridFFN(d_model, d_ff)
 
     def forward(self, x: torch.Tensor, load_factor: float = 1.0) -> torch.Tensor:

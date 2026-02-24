@@ -81,9 +81,10 @@ class AutopoieticGate(nn.Module):
 class LiteSelfAttention(nn.Module):
     """
     轻量自注意力：优先走 scaled_dot_product_attention（若可用），否则回退到显式 softmax。
-    与 APT-Lite 的门控结合使用。
+    与 APT-Lite 的门控结合使用。支持 RoPE。
     """
-    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0, batch_first: bool = True):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0,
+                 batch_first: bool = True, use_rope: bool = False):
         super().__init__()
         assert d_model % nhead == 0, "d_model must be divisible by nhead"
         self.d_model = d_model
@@ -91,10 +92,28 @@ class LiteSelfAttention(nn.Module):
         self.head_dim = d_model // nhead
         self.scale = self.head_dim ** -0.5
         self.batch_first = batch_first
+        self.use_rope = bool(use_rope)
         # fused qkv projection
         self.w_qkv = nn.Linear(d_model, 3 * d_model)
         self.w_o = nn.Linear(d_model, d_model)
         self.drop = nn.Dropout(dropout)
+
+    def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
+        """对 [B,H,T,D] 的 q 或 k 施加旋转位置编码 (Standard RoPE)。"""
+        B, H, T, D = x.size()
+        orig_D = D
+        if orig_D % 2 != 0:
+            x = torch.cat([x, x.new_zeros(B, H, T, 1)], dim=-1)
+            D = orig_D + 1
+        half = D // 2
+        pos = torch.arange(T, device=x.device, dtype=x.dtype)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, half, device=x.device, dtype=x.dtype) / float(half)))
+        sinusoid = pos.unsqueeze(1) * inv_freq.unsqueeze(0)
+        sin = sinusoid.sin().unsqueeze(0).unsqueeze(0)
+        cos = sinusoid.cos().unsqueeze(0).unsqueeze(0)
+        x1, x2 = x[..., :half], x[..., half:half * 2]
+        x_rot = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+        return x_rot[..., :orig_D]
 
     def forward(self, x, attn_mask=None, key_padding_mask=None, is_causal: bool = False):
         # x: (B,T,C) if batch_first
@@ -110,6 +129,11 @@ class LiteSelfAttention(nn.Module):
         q = reshape(q)
         k = reshape(k)
         v = reshape(v)
+
+        # RoPE: 施加旋转位置编码到 Q / K
+        if self.use_rope:
+            q = self._apply_rope(q)
+            k = self._apply_rope(k)
 
         # build additive mask if needed
         # attn_mask expected broadcastable to (B,h,T,S) or (T,S)
@@ -168,13 +192,15 @@ class APTLiteEncoderLayer(nn.Module):
         batch_first: bool = True,
         norm_eps: float = 1e-6,
         gate_init: float = 0.0,
+        use_rope: bool = False,     # ← RoPE 开关
         **kwargs
     ):
         super().__init__()
         self.batch_first = batch_first
         self.norm1 = RMSNorm(d_model, eps=norm_eps)
         self.norm2 = RMSNorm(d_model, eps=norm_eps)
-        self.attn = LiteSelfAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.attn = LiteSelfAttention(d_model, nhead, dropout=dropout,
+                                      batch_first=batch_first, use_rope=use_rope)
         self.gate = AutopoieticGate(d_model, eps=norm_eps, init=gate_init)
         self.drop = nn.Dropout(dropout)
         self.ffn = SwiGLU(d_model, dim_feedforward, dropout=dropout)
@@ -208,6 +234,7 @@ class APTLiteDecoderLayer(nn.Module):
         norm_eps: float = 1e-6,
         gate_init: float = 0.0,
         use_cross_attn: bool = True,
+        use_rope: bool = False,     # ← RoPE 开关（仅作用于 self-attn）
         **kwargs
     ):
         super().__init__()
@@ -216,7 +243,8 @@ class APTLiteDecoderLayer(nn.Module):
         self.norm1 = RMSNorm(d_model, eps=norm_eps)
         self.norm2 = RMSNorm(d_model, eps=norm_eps)
         self.norm3 = RMSNorm(d_model, eps=norm_eps)
-        self.self_attn = LiteSelfAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.self_attn = LiteSelfAttention(d_model, nhead, dropout=dropout,
+                                           batch_first=batch_first, use_rope=use_rope)
         self.cross_q = nn.Linear(d_model, d_model)
         self.cross_kv = nn.Linear(d_model, 2*d_model)
         self.cross_o = nn.Linear(d_model, d_model)
