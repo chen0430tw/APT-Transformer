@@ -632,10 +632,9 @@ class DBCDAC_Optimizer:
         if grad.ndim < 2:
             return grad
 
-        # 🚀 修改点B：把 0.25 改为 0.05
-        # 意思：只有 5% 的概率往下走，95% 的概率直接 return (跳过)
-        import random
-        if random.random() > 0.05: 
+        # 🚀 修改点B：只有 5% 的概率触发昂贵的 DBC 计算
+        # 用 torch.rand 替代 Python random，与 torch 随机状态保持一致
+        if torch.rand(1).item() > 0.05:
             return grad
 
         # --- 以下是昂贵的 DBC 计算 (现在很少触发了) ---
