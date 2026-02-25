@@ -234,7 +234,7 @@ class LeftSpinStep(nn.Module):
         这两个 buffer 在训练中会被动态 resize (从 scalar 扩展为 [batch, seq_len])，
         checkpoint 保存时带着训练时的 shape。加载到新模型时 shape 可能不同
         （不同 batch_size 或序列长度），此时重置为 scalar 而不是报错。
-        同理 delta_prev 可能是 None 也可能是 [batch, seq_len, d_model]。
+        delta_prev 初始为 zeros(1) 占位，训练中扩展为 [batch, seq_len, d_model]。
 
         类似自生成注意力 (auto_u/auto_v) 的外挂层模式：
         模块自身负责兼容性，不需要外部 strip。
@@ -242,20 +242,20 @@ class LeftSpinStep(nn.Module):
         phi_key = prefix + 'phi_prev'
         delta_key = prefix + 'delta_prev'
 
-        # phi_prev: 如果 shape 不匹配，重置为 scalar（首次 forward 会重新 resize）
+        # phi_prev: 如果 shape 不匹配，重置为占位符（首次 forward 会重新 resize）
         if phi_key in state_dict:
             saved = state_dict[phi_key]
             if saved.shape != self.phi_prev.shape:
-                # shape 不同说明 batch/seq 变了，惯性记忆失效，重置
-                state_dict[phi_key] = torch.tensor(0.0, dtype=saved.dtype)
+                # shape 不同说明 batch/seq 变了，惯性记忆失效，重置为 zeros(1) 占位
+                state_dict[phi_key] = torch.zeros(1, dtype=saved.dtype)
 
-        # delta_prev: 如果目标是 None 但 checkpoint 里有值，跳过
+        # delta_prev: shape 不匹配时同样重置为占位符
+        # 注意：delta_prev 现在初始化为 zeros(1)（非 None），直接比较 shape
         if delta_key in state_dict:
             saved = state_dict[delta_key]
-            if self.delta_prev is None and saved is not None:
-                # 当前模型 delta_prev=None，checkpoint 里有训练时的值
-                # 直接丢弃 — 新的 forward 会重新计算
-                del state_dict[delta_key]
+            if saved.shape != self.delta_prev.shape:
+                # shape 不同说明 batch/seq/d_model 变了，历史增量失效，重置
+                state_dict[delta_key] = torch.zeros(1, dtype=saved.dtype)
 
         super()._load_from_state_dict(
             state_dict, prefix, local_metadata, strict,
@@ -264,8 +264,8 @@ class LeftSpinStep(nn.Module):
 
     def reset_state(self):
         """重置内部状态（用于新序列开始）"""
-        self.phi_prev = torch.tensor(0.0, device=self.phi_prev.device)
-        self.delta_prev = None
+        self.phi_prev = torch.zeros(1, device=self.phi_prev.device, dtype=self.phi_prev.dtype)
+        self.delta_prev = torch.zeros(1, device=self.delta_prev.device, dtype=self.delta_prev.dtype)
 
 
 class LeftSpinResidual(nn.Module):
