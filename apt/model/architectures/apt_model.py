@@ -363,10 +363,9 @@ class DBCDAC_Optimizer:
         if grad.ndim < 2:
             return grad
 
-        # 🚀 修改点B：把 0.25 改为 0.05
-        # 意思：只有 5% 的概率往下走，95% 的概率直接 return (跳过)
-        import random
-        if random.random() > 0.05: 
+        # 🚀 修改点B：只有 5% 的概率触发昂贵的 DBC 计算
+        # 用 torch.rand 替代 Python random，与 torch 随机状态保持一致
+        if torch.rand(1).item() > 0.05:
             return grad
 
         # --- 以下是昂贵的 DBC 计算 (现在很少触发了) ---
@@ -648,19 +647,18 @@ class MoEFFN(nn.Module):
         weights_flat = weights.view(B * T, self.top_k)              # (N, k)
         indices_flat = indices.view(B * T, self.top_k)              # (N, k)
 
-        # 收集所有专家需要处理的 token 并批量执行
+        # 向量化 dispatch：单层循环（仅遍历专家数），无嵌套 Python 循环，无 .any() CPU 同步
+        # 对每个专家，合并来自所有 top_k 槽的权重之和，再加权累加专家输出
+        # 未路由到该专家的 token 权重为 0，贡献自然为 0，无需掩码索引
         output = torch.zeros_like(x_flat)  # (N, D)
 
-        for k_idx in range(self.top_k):
-            expert_indices_k = indices_flat[:, k_idx]   # (N,)
-            weights_k = weights_flat[:, k_idx]           # (N,)
-
-            for e_idx in range(len(self.experts)):
-                mask = (expert_indices_k == e_idx)       # (N,)
-                if mask.any():
-                    expert_input = x_flat[mask]          # (n_e, D)
-                    expert_output = self.experts[e_idx](expert_input)  # (n_e, D)
-                    output[mask] += weights_k[mask].unsqueeze(-1) * expert_output
+        for e_idx, expert in enumerate(self.experts):
+            # combined_weight[i] = 分配给 expert e_idx 的总权重（多个 top_k 槽求和）
+            combined_weight = (
+                weights_flat * (indices_flat == e_idx).to(weights_flat.dtype)
+            ).sum(dim=-1)  # (N,)
+            expert_out = expert(x_flat)   # (N, D)
+            output = output + combined_weight.unsqueeze(-1) * expert_out
 
         output = output.view(B, T, D)
 

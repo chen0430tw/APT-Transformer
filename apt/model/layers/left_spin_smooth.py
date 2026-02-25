@@ -62,11 +62,12 @@ class LeftSpinStep(nn.Module):
         self.eps = eps
 
         # 缓冲角历史（用于惯性平滑）
-        # 训练中会被动态 resize 到 [batch, seq_len]，
-        # 恢复训练时通过 _load_from_state_dict 自动处理 shape 差异
-        self.register_buffer('phi_prev', torch.tensor(0.0))
+        # 初始化为标量 0；forward 中通过 expand_as+resize_as_ 自动扩展到实际形状，
+        # 无需任何 Python shape 条件判断
+        self.register_buffer('phi_prev', torch.zeros(1), persistent=False)
         # 上一次的增量（用于计算二阶导数/加速度）
-        self.register_buffer('delta_prev', None)
+        # 初始化为标量 0，numel()==1 表示"未初始化"状态，避免 None 检查
+        self.register_buffer('delta_prev', torch.zeros(1), persistent=False)
 
     def compute_spike_strength(
         self,
@@ -96,7 +97,8 @@ class LeftSpinStep(nn.Module):
         d = norm_delta / (self.eps + norm_u)
 
         # 二阶：加速度（曲率近似）
-        if delta_prev is not None and delta_prev.shape == delta_u.shape:
+        # numel()==1 表示初始标量占位符（未初始化），跳过计算
+        if delta_prev is not None and delta_prev.numel() > 1:
             norm_delta_prev = torch.norm(delta_prev, p=2, dim=-1, keepdim=False)
             delta_diff = delta_u - delta_prev
             norm_delta_diff = torch.norm(delta_diff, p=2, dim=-1, keepdim=False)
@@ -125,18 +127,13 @@ class LeftSpinStep(nn.Module):
         # softplus(s - τ) 当 s > τ 时快速增长，s < τ 时接近0
         phi_raw = self.alpha * F.softplus(s - self.tau)
 
-        # 惯性平滑（使用全局 phi_prev，适用于 batch 维度）
-        if self.phi_prev.numel() == 1 or self.phi_prev.shape != phi_raw.shape:
-            # 初始化或重新初始化为与 phi_raw 相同形状
-            # 处理变长序列：当序列长度变化时重新初始化
-            self.phi_prev = torch.zeros_like(phi_raw)
+        # 惯性平滑
+        # expand_as：标量 phi_prev（初始占位）自动广播到 phi_raw 形状，无需条件分支
+        phi = (1 - self.beta) * self.phi_prev.expand_as(phi_raw) + self.beta * phi_raw
 
-        phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
-
-        # 更新历史（in-place copy 避免每步分配新 tensor）
-        # shapes 在上面 init check (line 129-132) 后保证匹配
-        # copy_() 写入已有 buffer，phi_prev 与 phi 无 storage 共享（phi 是计算结果）
-        self.phi_prev.copy_(phi.detach())
+        # resize_as_ + copy_：处理首次调用（标量→真实形状）和形状不变两种情况，
+        # 均为原地操作，不触发新分配
+        self.phi_prev.resize_as_(phi_raw).copy_(phi.detach())
 
         # 确保非负
         phi = torch.clamp(phi, min=0.0)
@@ -212,20 +209,18 @@ class LeftSpinStep(nn.Module):
         delta_u_eff = g_expanded * delta_u
         u_next = u + delta_u_eff
 
-        # 5. 更新历史（in-place reuse buffer 当 shape 不变时）
-        # delta_prev 是 [B, T, D]，可能很大（如 4×2048×1024 = 32MB BF16）
-        # 当 batch/seq_len 稳定时用 copy_() 避免每步分配+释放
+        # 5. 更新历史
+        # resize_as_ 处理首次（标量占位→真实形状）和后续 shape 不变两种情况，均无重新分配
         _detached_du = delta_u.detach()
-        if self.delta_prev is not None and self.delta_prev.shape == _detached_du.shape:
-            self.delta_prev.copy_(_detached_du)
-        else:
-            self.delta_prev = _detached_du.clone()
+        self.delta_prev.resize_as_(_detached_du).copy_(_detached_du)
 
         # 6. 统计信息
+        # 保留为张量，避免 .item() 触发 GPU→CPU 同步；
+        # 诊断工具（LeftSpinMonitor）按需调用 .item()
         stats = {
-            'spike_strength': s.mean().item(),
-            'buffer_angle': phi.mean().item(),
-            'gate_value': g.mean().item(),
+            'spike_strength': s.mean(),
+            'buffer_angle': phi.mean(),
+            'gate_value': g.mean(),
             'smoothed': True
         }
 
@@ -399,13 +394,16 @@ class LeftSpinMonitor:
             'gate_value': []
         }
 
-    def log_stats(self, stats: Dict[str, float]):
+    def log_stats(self, stats: Dict):
         """记录统计信息"""
         self.step_count += 1
 
         for key in ['spike_strength', 'buffer_angle', 'gate_value']:
             if key in stats:
-                self.history[key].append(stats[key])
+                v = stats[key]
+                # stats 值现在是 tensor（避免训练热路径中的 .item() 同步），
+                # 此处为诊断路径，按需转 float
+                self.history[key].append(v.item() if hasattr(v, 'item') else float(v))
 
         # 定期打印
         if self.step_count % self.log_interval == 0:
