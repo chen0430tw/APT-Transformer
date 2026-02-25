@@ -400,6 +400,9 @@ class VirtualVRAMConfig:
 
     # 性能监控
     verbose: bool = False
+    # 调试模式：开启后打印 [DEBUG PACK/UNPACK/PREFETCH] 详细追踪日志
+    # 训练时务必保持 False，否则每次 backward 均会打印大量日志
+    debug: bool = False
 
     # 已废弃
     min_storage_bytes: int = 0
@@ -609,11 +612,12 @@ class _Packed:
 class _Prefetcher:
     """异步预取器（支持弱引用）"""
 
-    def __init__(self, cache_size: int = 5, verbose: bool = False):
+    def __init__(self, cache_size: int = 5, verbose: bool = False, debug: bool = False):
         self.cache: OrderedDict[Tuple, WeakTensor] = OrderedDict()  # 使用弱引用
         self.cache_size = cache_size
         self.queue: queue.Queue = queue.Queue(maxsize=10)
         self.verbose = verbose
+        self.debug = debug
         self.stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
@@ -629,13 +633,14 @@ class _Prefetcher:
 
     def add(self, packed: _Packed):
         if packed.cache_key is not None:
-            # DEBUG: Trace when packed is added to prefetch queue
-            print(f"[DEBUG PREFETCH] ADD to queue: packed id={id(packed)}, "
-                  f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                  f"cache_key={packed.cache_key}")
+            if self.debug:
+                print(f"[DEBUG PREFETCH] ADD to queue: packed id={id(packed)}, "
+                      f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
+                      f"cache_key={packed.cache_key}")
             self.queue.put(packed)
         else:
-            print(f"[DEBUG PREFETCH] SKIP add: packed id={id(packed)}, cache_key is None")
+            if self.debug:
+                print(f"[DEBUG PREFETCH] SKIP add: packed id={id(packed)}, cache_key is None")
 
     def _prefetch_worker(self):
         while not self.stop_event.is_set():
@@ -699,10 +704,10 @@ class _Prefetcher:
 
             packed.prefetched = restored
 
-            # DEBUG: Trace when prefetched is set
-            print(f"[DEBUG PREFETCH] SET prefetched on packed id={id(packed)}, "
-                  f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                  f"cache_key={packed.cache_key}")
+            if self.debug:
+                print(f"[DEBUG PREFETCH] SET prefetched on packed id={id(packed)}, "
+                      f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
+                      f"cache_key={packed.cache_key}")
 
             if self.verbose:
                 mb = restored.numel() * restored.element_size() / 1024 / 1024
@@ -713,9 +718,10 @@ class _Prefetcher:
                     print(f"[VirtualVRAM] ⚡ Prefetched {mb:.2f}MB {tuple(restored.shape)}")
 
         except Exception as e:
-            print(f"[DEBUG PREFETCH] FAILED for packed id={id(packed)}, "
-                  f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                  f"error={e}")
+            if self.debug:
+                print(f"[DEBUG PREFETCH] FAILED for packed id={id(packed)}, "
+                      f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
+                      f"error={e}")
             if self.verbose:
                 print(f"[VirtualVRAM] ⚠️  Prefetch failed: {e}")
             packed.prefetched = None
@@ -767,7 +773,8 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     if cfg.enable_prefetch:
         prefetcher = _Prefetcher(
             cache_size=cfg.prefetch_cache_size,
-            verbose=cfg.verbose
+            verbose=cfg.verbose,
+            debug=cfg.debug,
         )
         prefetcher.start()
 
@@ -817,10 +824,10 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         key = _make_key(t)
         if key in cache:
             cached = cache[key]
-            # DEBUG: Trace cache hit
-            print(f"[DEBUG PACK] CACHE HIT: packed id={id(cached)}, "
-                  f"block_id={cached.nested_block.block_id if cached.nested_block else 'N/A'}, "
-                  f"cache_key={cached.cache_key}")
+            if cfg.debug:
+                print(f"[DEBUG PACK] CACHE HIT: packed id={id(cached)}, "
+                      f"block_id={cached.nested_block.block_id if cached.nested_block else 'N/A'}, "
+                      f"cache_key={cached.cache_key}")
             # v1.6: 如果是嵌套块，增加引用计数并更新热度队列
             if cached.nested_block is not None:
                 cached.nested_block.arc_clone(key)
@@ -867,9 +874,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     nested_block=nested_block  # v1.6: 使用嵌套块
                 )
 
-                # DEBUG: Trace new packed creation
-                print(f"[DEBUG PACK] CACHE MISS (new): packed id={id(packed)}, "
-                      f"block_id={nested_block.block_id}, cache_key={key}")
+                if cfg.debug:
+                    print(f"[DEBUG PACK] CACHE MISS (new): packed id={id(packed)}, "
+                          f"block_id={nested_block.block_id}, cache_key={key}")
 
                 cache[key] = packed
 
@@ -1035,11 +1042,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
 
                 # v1.6: 检查预取结果（后台线程已预取）
                 # 优先检查packed.prefetched，这是预取完成后直接设置的
-                # DEBUG: Trace unpack checking prefetched
-                print(f"[DEBUG UNPACK] Checking packed id={id(packed)}, "
-                      f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                      f"prefetched={packed.prefetched is not None}, "
-                      f"cache_key={packed.cache_key}")
+                if cfg.debug:
+                    print(f"[DEBUG UNPACK] Checking packed id={id(packed)}, "
+                          f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
+                          f"prefetched={packed.prefetched is not None}, "
+                          f"cache_key={packed.cache_key}")
                 if packed.prefetched is not None:
                     if cfg.verbose:
                         mb = packed.prefetched.numel() * packed.prefetched.element_size() / 1024 / 1024
