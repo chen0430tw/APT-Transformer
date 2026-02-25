@@ -235,7 +235,12 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
         # 🔍 Debug: 检查grad_output是否有NaN
         if torch.isnan(grad_output).any():
-            print(f"[LECAC DEBUG] ❌ grad_output has NaN! shape={grad_output.shape}, alpha={ctx.alpha:.4f}, bits={bits}")
+            nan_count = torch.isnan(grad_output).sum().item()
+            print(f"[LECAC DEBUG] ❌ grad_output has NaN!")
+            print(f"  shape={grad_output.shape}, dtype={grad_output.dtype}, alpha={ctx.alpha:.4f}, bits={bits}")
+            print(f"  NaN count={nan_count}/{grad_output.numel()}")
+            print(f"  finite: min={grad_output[~torch.isnan(grad_output)].min().item():.4f}, max={grad_output[~torch.isnan(grad_output)].max().item():.4f}")
+            print(f"  saved_tensors: x_q shape={ctx.saved_tensors[0].shape if hasattr(ctx.saved_tensors[0], 'shape') else 'N/A'}")
 
         # 反量化
         if bits == 2:
@@ -245,7 +250,13 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
         # 🔍 Debug: 检查反量化后是否有NaN
         if torch.isnan(x_recon_fp).any():
-            print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after dequant! shape={x_recon_fp.shape}, alpha={ctx.alpha:.4f}")
+            nan_count = torch.isnan(x_recon_fp).sum().item()
+            print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after dequant!")
+            print(f"  shape={x_recon_fp.shape}, dtype={x_recon_fp.dtype}, alpha={ctx.alpha:.4f}")
+            print(f"  NaN count={nan_count}/{x_recon_fp.numel()}")
+            print(f"  scale: min={scale.min().item():.6f}, max={scale.max().item():.6f}, mean={scale.mean().item():.6f}")
+            if hasattr(ctx, 'error_std'):
+                print(f"  error_std={ctx.error_std:.6f}")
 
         # LECAC 标准补偿
         if ctx.alpha > 0:
@@ -257,7 +268,12 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
             # 🔍 Debug: 检查补偿后是否有NaN
             if torch.isnan(x_recon_fp).any():
-                print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after compensation! alpha={ctx.alpha:.4f}, error_std={ctx.error_std:.4f}")
+                nan_count = torch.isnan(x_recon_fp).sum().item()
+                print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after compensation!")
+                print(f"  alpha={ctx.alpha:.4f}, error_std={ctx.error_std:.4f}")
+                print(f"  NaN count={nan_count}/{x_recon_fp.numel()}")
+                print(f"  noise: min={noise.min().item():.6f}, max={noise.max().item():.6f}, mean={noise.mean().item():.6f}")
+                print(f"  compensation: min={compensation.min().item():.6f}, max={compensation.max().item():.6f}")
 
         # 正交投影补偿：将补偿量投影到 grad_output 的正交补空间，保护梯度方向
         if ctx.alpha > 0:
@@ -283,11 +299,18 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
         # 🔍 Debug: 检查梯度是否有NaN
         if torch.isnan(grad_input).any():
-            print(f"[LECAC DEBUG] ❌ grad_input has NaN! shape={grad_input.shape}, alpha={ctx.alpha:.4f}")
+            nan_count = torch.isnan(grad_input).sum().item()
+            print(f"[LECAC DEBUG] ❌ grad_input has NaN!")
+            print(f"  shape={grad_input.shape}, dtype={grad_input.dtype}, alpha={ctx.alpha:.4f}")
+            print(f"  NaN count={nan_count}/{grad_input.numel()}")
+            print(f"  finite: min={grad_input[~torch.isnan(grad_input)].min().item():.4f}, max={grad_input[~torch.isnan(grad_input)].max().item():.4f}")
         if torch.isnan(grad_weight).any():
-            print(f"[LECAC DEBUG] ❌ grad_weight has NaN! shape={grad_weight.shape}, alpha={ctx.alpha:.4f}")
+            nan_count = torch.isnan(grad_weight).sum().item()
+            print(f"[LECAC DEBUG] ❌ grad_weight has NaN!")
+            print(f"  shape={grad_weight.shape}, dtype={grad_weight.dtype}, alpha={ctx.alpha:.4f}")
+            print(f"  NaN count={nan_count}/{grad_weight.numel()}")
         if grad_bias is not None and torch.isnan(grad_bias).any():
-            print(f"[LECAC DEBUG] ❌ grad_bias has NaN! alpha={ctx.alpha:.4f}")
+            print(f"[LECAC DEBUG] ❌ grad_bias has NaN! alpha={ctx.alpha:.4f}, value={grad_bias.item()}")
 
         return grad_input, grad_weight, grad_bias, None, None
 

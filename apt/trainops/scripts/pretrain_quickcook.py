@@ -2079,10 +2079,19 @@ class QuickCookTrainer:
             outputs = self._forward(input_ids, labels)
             loss = outputs["loss"] / grad_accum
 
-        if scaler is not None:
-            scaler.scale(loss).backward()
+        # 🔍 前10步启用anomaly detection来捕获NaN来源
+        use_anomaly_detection = self.global_step < 10
+        if use_anomaly_detection:
+            with torch.autograd.detect_anomaly():
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
         else:
-            loss.backward()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
         running_loss += loss.item() * grad_accum
         return loss, running_loss
