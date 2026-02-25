@@ -372,7 +372,8 @@ class VirtualVRAMConfig:
     # ===== v1.6 新增：线性缩放嵌套架构 =====
     enable_nested_v16: bool = False        # 启用 v1.6 嵌套架构 (LECaC→Page→Block→Arc)
     nested_block_size: int = 64            # 嵌套块大小
-    nested_quantization_bits: int = 8      # 嵌套量化位数
+    nested_quantization_bits: int = 8      # ⚠️  已弃用：saved_tensors_hooks 中量化会破坏 backward
+                                           # 保留字段仅为接口兼容，实际不再使用
 
     # Block-based offload (保留向后兼容)
     enable_block_offload: bool = False
@@ -382,9 +383,9 @@ class VirtualVRAMConfig:
     enable_prefetch: bool = False
     prefetch_cache_size: int = 5
 
-    # Quantization (保留向后兼容)
-    enable_quantization: bool = False
-    quantization_bits: int = 8
+    # Quantization (已弃用：saved_tensors_hooks 中有损量化会破坏 backward 数值稳定性)
+    enable_quantization: bool = False      # ⚠️  已弃用，设为 True 不再生效
+    quantization_bits: int = 8             # ⚠️  已弃用
 
     # ===== v1.5 保留：向后兼容 =====
     enable_arc_memory: bool = False        # v1.5: 启用 Arc 引用计数
@@ -400,6 +401,9 @@ class VirtualVRAMConfig:
 
     # 性能监控
     verbose: bool = False
+    # 调试模式：开启后打印 [DEBUG PACK/UNPACK/PREFETCH] 详细追踪日志
+    # 训练时务必保持 False，否则每次 backward 均会打印大量日志
+    debug: bool = False
 
     # 已废弃
     min_storage_bytes: int = 0
@@ -609,11 +613,12 @@ class _Packed:
 class _Prefetcher:
     """异步预取器（支持弱引用）"""
 
-    def __init__(self, cache_size: int = 5, verbose: bool = False):
+    def __init__(self, cache_size: int = 5, verbose: bool = False, debug: bool = False):
         self.cache: OrderedDict[Tuple, WeakTensor] = OrderedDict()  # 使用弱引用
         self.cache_size = cache_size
         self.queue: queue.Queue = queue.Queue(maxsize=10)
         self.verbose = verbose
+        self.debug = debug
         self.stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
@@ -629,13 +634,7 @@ class _Prefetcher:
 
     def add(self, packed: _Packed):
         if packed.cache_key is not None:
-            # DEBUG: Trace when packed is added to prefetch queue
-            print(f"[DEBUG PREFETCH] ADD to queue: packed id={id(packed)}, "
-                  f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                  f"cache_key={packed.cache_key}")
             self.queue.put(packed)
-        else:
-            print(f"[DEBUG PREFETCH] SKIP add: packed id={id(packed)}, cache_key is None")
 
     def _prefetch_worker(self):
         while not self.stop_event.is_set():
@@ -659,7 +658,7 @@ class _Prefetcher:
                 requires_grad = nested.requires_grad
                 original_dtype = nested.dtype
 
-                # LECaC 去量化（如果启用）
+                # LECaC 去量化
                 if nested.quantized and LECaC_AVAILABLE:
                     restored = lecac_dequantize(
                         cpu_tensor,
@@ -671,10 +670,16 @@ class _Prefetcher:
                 else:
                     restored = cpu_tensor
 
-                restored = restored.to(device=target_device, non_blocking=False)
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch NESTED] Before to: tensor dtype={restored.dtype}, target dtype={original_dtype}, device={target_device}')
+                restored = restored.to(device=target_device, dtype=original_dtype, non_blocking=False)
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch NESTED] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
                 restored.requires_grad_(requires_grad)
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch NESTED] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
             else:
-                # 传统模式：直接从 packed 获取数据
+                # 传统模式
                 cpu_tensor = packed.cpu_tensor
 
                 if packed.quantized and LECaC_AVAILABLE:
@@ -687,11 +692,18 @@ class _Prefetcher:
                 else:
                     restored = cpu_tensor
 
-                restored = restored.to(device=packed.device, non_blocking=False)
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch LEGACY] Before to: tensor dtype={restored.dtype}, target dtype={packed.dtype}, device={packed.device}')
+                restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=False)
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch LEGACY] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
                 restored.requires_grad_(packed.requires_grad)
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch LEGACY] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
 
-            # 存入 cache
+            # 存入 cache（作为弱引用，允许 GC）
             if packed.cache_key is not None:
+                # 临时存储为强引用，后续转为弱引用
                 self.cache[packed.cache_key] = restored
 
             if len(self.cache) > self.cache_size:
@@ -699,23 +711,11 @@ class _Prefetcher:
 
             packed.prefetched = restored
 
-            # DEBUG: Trace when prefetched is set
-            print(f"[DEBUG PREFETCH] SET prefetched on packed id={id(packed)}, "
-                  f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                  f"cache_key={packed.cache_key}")
-
             if self.verbose:
                 mb = restored.numel() * restored.element_size() / 1024 / 1024
-                if packed.nested_block is not None:
-                    print(f"[VirtualVRAM v1.6] ⚡ Prefetched nested {mb:.2f}MB {tuple(restored.shape)} "
-                          f"block={packed.nested_block.block_id}")
-                else:
-                    print(f"[VirtualVRAM] ⚡ Prefetched {mb:.2f}MB {tuple(restored.shape)}")
+                print(f"[VirtualVRAM] ⚡ Prefetched {mb:.2f}MB {tuple(restored.shape)}")
 
         except Exception as e:
-            print(f"[DEBUG PREFETCH] FAILED for packed id={id(packed)}, "
-                  f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                  f"error={e}")
             if self.verbose:
                 print(f"[VirtualVRAM] ⚠️  Prefetch failed: {e}")
             packed.prefetched = None
@@ -767,7 +767,8 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     if cfg.enable_prefetch:
         prefetcher = _Prefetcher(
             cache_size=cfg.prefetch_cache_size,
-            verbose=cfg.verbose
+            verbose=cfg.verbose,
+            debug=cfg.debug,
         )
         prefetcher.start()
 
@@ -817,10 +818,6 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         key = _make_key(t)
         if key in cache:
             cached = cache[key]
-            # DEBUG: Trace cache hit
-            print(f"[DEBUG PACK] CACHE HIT: packed id={id(cached)}, "
-                  f"block_id={cached.nested_block.block_id if cached.nested_block else 'N/A'}, "
-                  f"cache_key={cached.cache_key}")
             # v1.6: 如果是嵌套块，增加引用计数并更新热度队列
             if cached.nested_block is not None:
                 cached.nested_block.arc_clone(key)
@@ -838,15 +835,48 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 first_dim_size = t.size(0) if t.dim() > 0 else 1
                 num_blocks = max(1, (first_dim_size + block_size - 1) // block_size)
 
-                # D2H：不使用LECAC量化（会导致backward NaN）
-                cpu_tensor = t.detach().cpu()
-                quantized = False  # v1.6: 禁用量化，避免NaN
+                # D2H：使用LECAC量化（INT8，仅对大tensor量化）
+                # 保存真实dtype，不要强制修改
+                original_dtype = t.dtype
+
+                # 只量化大tensor（>= 5MB），小tensor保持原样避免NaN
+                # ⚠️ 必须检查enable_nested_v16标志（v1.6），避免意外量化！
+                tensor_size_mb = nbytes / (1024 * 1024)
+
+                # v1.7 量化策略修复：仅对整数类型 tensor（LECACLinear 的 INT8 激活值）量化
+                # 浮点类型 tensor（Attention Q/K/V、或 LECACLinear 的 weight）不量化，
+                # 因为浮点 → INT8 → 浮点 的有损还原会引入误差 ε，
+                # 在大模型高初始梯度场景（vocab=65536, loss≈11 nats）下 ε 被放大 → FlashAttn NaN。
+                #
+                # LECACLinear 的 weight 已改为 ctx._weight 直接引用（不经 save_for_backward），
+                # 因此 VRAM 不会拦截 weight tensor。
+                # INT8 tensor（x_q）的量化近似无损：INT8[-2,1] → lecac_quant → lecac_dequant → INT8[-2,1]
+                is_float_dtype = t.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                should_quantize = (LECaC_AVAILABLE and
+                                   cfg.nested_quantization_bits > 0 and
+                                   tensor_size_mb >= 5.0 and
+                                   not is_float_dtype)  # 只对非浮点（INT8）量化
+
+                if should_quantize:
+                    cpu_tensor = lecac_quantize(
+                        t.detach(),
+                        bits=cfg.nested_quantization_bits,
+                        constant=NATURAL_EQUILIBRIUM_CONSTANT
+                    ).cpu()
+                    quantized = True
+                    if cfg.verbose:
+                        print(f"[VirtualVRAM v1.6] 🔢 INT量化D2H: {tensor_size_mb:.2f}MB {t.dtype}→INT{cfg.nested_quantization_bits}")
+                else:
+                    cpu_tensor = t.detach().cpu()
+                    quantized = False
+                    if cfg.verbose:
+                        print(f"[VirtualVRAM v1.6] 📤 无损D2H: {tensor_size_mb:.2f}MB {t.dtype}")
 
                 # 创建嵌套块（包含 Page → Block → Arc）
                 nested_block = _NestedArcBlock(
                     cpu_tensor=cpu_tensor,
                     device=t.device,
-                    dtype=t.dtype,
+                    dtype=original_dtype,  # 保存真实dtype
                     requires_grad=bool(t.requires_grad),
                     quantized=quantized,
                     quantization_bits=cfg.nested_quantization_bits,
@@ -860,16 +890,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 packed = _Packed(
                     cpu_tensor=cpu_tensor,
                     device=t.device,
-                    dtype=t.dtype,
+                    dtype=original_dtype,  # 保存真实dtype
                     requires_grad=bool(t.requires_grad),
                     quantized=quantized,
                     cache_key=key,
                     nested_block=nested_block  # v1.6: 使用嵌套块
                 )
-
-                # DEBUG: Trace new packed creation
-                print(f"[DEBUG PACK] CACHE MISS (new): packed id={id(packed)}, "
-                      f"block_id={nested_block.block_id}, cache_key={key}")
 
                 cache[key] = packed
 
@@ -970,7 +996,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 cpu_blocks = []
 
                 for block in blocks:
-                    if cfg.enable_quantization and LECaC_AVAILABLE:
+                    # 浮点 tensor 不量化（避免 backward NaN），只做无损 CPU offload
+                    _is_float = block.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                    if cfg.enable_quantization and LECaC_AVAILABLE and not _is_float:
                         q_block = lecac_quantize(
                             block.detach(),
                             bits=cfg.quantization_bits,
@@ -993,7 +1021,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 }
 
             else:
-                if cfg.enable_quantization and LECaC_AVAILABLE:
+                # 浮点 tensor 不量化（避免 backward NaN），只做无损 CPU offload
+                _is_float = t.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                if cfg.enable_quantization and LECaC_AVAILABLE and not _is_float:
                     cpu_tensor = lecac_quantize(
                         t.detach(),
                         bits=cfg.quantization_bits,
@@ -1033,27 +1063,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             try:
                 nested = packed.nested_block
 
-                # v1.6: 检查预取结果（后台线程已预取）
-                # 优先检查packed.prefetched，这是预取完成后直接设置的
-                # DEBUG: Trace unpack checking prefetched
-                print(f"[DEBUG UNPACK] Checking packed id={id(packed)}, "
-                      f"block_id={packed.nested_block.block_id if packed.nested_block else 'N/A'}, "
-                      f"prefetched={packed.prefetched is not None}, "
-                      f"cache_key={packed.cache_key}")
-                if packed.prefetched is not None:
-                    if cfg.verbose:
-                        mb = packed.prefetched.numel() * packed.prefetched.element_size() / 1024 / 1024
-                        print(f"[VirtualVRAM v1.6] ⚡ Using prefetched {mb:.2f}MB")
-                    return packed.prefetched
-
-                # 其次检查prefetcher cache（备用）
-                if prefetcher and packed.cache_key is not None:
-                    cached = prefetcher.get(packed.cache_key)
-                    if cached is not None:
-                        if cfg.verbose:
-                            mb = cached.numel() * cached.element_size() / 1024 / 1024
-                            print(f"[VirtualVRAM v1.6] ⚡ Using prefetch cache {mb:.2f}MB")
-                        return cached
+                # v1.6 优化：反向传播顺序预取 - 已禁用（会导致梯度NaN）
+                # 原因：detach后的tensor无法正确传播梯度
+                # 异步prefetch（_Prefetcher线程）已经足够
+                # if cfg.enable_nested_v16 and len(cache) > 1:
+                #     ... (反向预取代码已注释)
 
                 # LECaC 去量化
                 if nested.quantized and LECaC_AVAILABLE:
@@ -1064,11 +1078,17 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                         original_dtype=nested.dtype,
                         constant=NATURAL_EQUILIBRIUM_CONSTANT
                     )
+
+                    # 🔍 Debug: 检查去量化后的tensor是否有NaN
+                    if cfg.debug and torch.isnan(restored).any():
+                        print(f"[VRAM DEBUG] ❌ restored tensor has NaN after lecac_dequantize!")
+                        print(f"  shape={restored.shape}, bits={nested.quantization_bits}, constant={NATURAL_EQUILIBRIUM_CONSTANT:.4f}")
+                        print(f"  cpu_tensor dtype={nested.cpu_tensor.dtype}, cpu_tensor has NaN={torch.isnan(nested.cpu_tensor).any()}")
                 else:
                     restored = nested.cpu_tensor
 
                 # H2D 传输（同步，立即需要）
-                restored = restored.to(device=nested.device, non_blocking=False)
+                restored = restored.to(device=nested.device, dtype=nested.dtype, non_blocking=False)
                 restored.requires_grad_(nested.requires_grad)
 
                 # 更新热度（访问完成）
@@ -1144,7 +1164,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             else:
                 restored = cpu_tensor
 
-            restored = restored.to(device=packed.device, non_blocking=False)
+            restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=False)
             restored.requires_grad_(packed.requires_grad)
 
         except Exception as e:

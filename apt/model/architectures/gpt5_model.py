@@ -304,11 +304,13 @@ class ToyEmbed(nn.Module):
 
     def forward(self, x_ids: torch.Tensor) -> torch.Tensor:
         B, T = x_ids.shape
-        pos_ids = torch.arange(T, device=x_ids.device).unsqueeze(0).expand(B, T)
-        emb = self.tok(x_ids) + self.pos(pos_ids)
-        # Apply RoPE at the embedding level only if explicitly requested.
+        tok_emb = self.tok(x_ids)
         if self.use_rope_embed:
-            emb = self._apply_rope(emb)
+            # RoPE 本身编码位置信息，不叠加绝对位置嵌入（避免双重编码）
+            emb = self._apply_rope(tok_emb)
+        else:
+            pos_ids = torch.arange(T, device=x_ids.device).unsqueeze(0).expand(B, T)
+            emb = tok_emb + self.pos(pos_ids)
         return emb
 
 
@@ -376,12 +378,13 @@ class MultimodalEmbed(nn.Module):
 
         if x_ids is not None:
             B, T = x_ids.shape
-            pos_ids = torch.arange(T, device=x_ids.device).unsqueeze(0).expand(B, T)
-            txt = self.tok(x_ids) + self.pos(pos_ids)
-            # Apply RoPE at the embedding level only if requested.  Note
-            # that attention‑level RoPE is controlled separately via ``GPT5Attention``.
+            tok_emb = self.tok(x_ids)
             if self.use_rope_embed:
-                txt = self._apply_rope(txt)
+                # RoPE 本身编码位置信息，不叠加绝对位置嵌入（避免双重编码）
+                txt = self._apply_rope(tok_emb)
+            else:
+                pos_ids = torch.arange(T, device=x_ids.device).unsqueeze(0).expand(B, T)
+                txt = tok_emb + self.pos(pos_ids)
             parts.append(txt)
 
         if image_feat is not None:

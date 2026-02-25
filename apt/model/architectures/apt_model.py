@@ -363,10 +363,9 @@ class DBCDAC_Optimizer:
         if grad.ndim < 2:
             return grad
 
-        # 🚀 修改点B：把 0.25 改为 0.05
-        # 意思：只有 5% 的概率往下走，95% 的概率直接 return (跳过)
-        import random
-        if random.random() > 0.05: 
+        # 🚀 修改点B：只有 5% 的概率触发昂贵的 DBC 计算
+        # 用 torch.rand 替代 Python random，与 torch 随机状态保持一致
+        if torch.rand(1).item() > 0.05:
             return grad
 
         # --- 以下是昂贵的 DBC 计算 (现在很少触发了) ---
@@ -648,19 +647,19 @@ class MoEFFN(nn.Module):
         weights_flat = weights.view(B * T, self.top_k)              # (N, k)
         indices_flat = indices.view(B * T, self.top_k)              # (N, k)
 
-        # 收集所有专家需要处理的 token 并批量执行
+        # 稀疏 dispatch：移除 .any() CPU 同步，保留掩码索引以维持稀疏计算量
+        # 空 mask 时 x_flat[mask] 形状为 (0, D)，expert 正常处理空 batch，无需 if 守卫
+        # 计算量 ∝ top_k × N（稀疏），而非 num_experts × N（密集）
         output = torch.zeros_like(x_flat)  # (N, D)
 
         for k_idx in range(self.top_k):
             expert_indices_k = indices_flat[:, k_idx]   # (N,)
             weights_k = weights_flat[:, k_idx]           # (N,)
-
             for e_idx in range(len(self.experts)):
-                mask = (expert_indices_k == e_idx)       # (N,)
-                if mask.any():
-                    expert_input = x_flat[mask]          # (n_e, D)
-                    expert_output = self.experts[e_idx](expert_input)  # (n_e, D)
-                    output[mask] += weights_k[mask].unsqueeze(-1) * expert_output
+                mask = (expert_indices_k == e_idx)       # (N,) bool，无 .any() 同步
+                expert_input = x_flat[mask]              # (n_e, D)，空 batch 时 n_e=0
+                expert_output = self.experts[e_idx](expert_input)  # (n_e, D)
+                output[mask] += weights_k[mask].unsqueeze(-1) * expert_output
 
         output = output.view(B, T, D)
 

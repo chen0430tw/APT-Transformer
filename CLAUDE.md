@@ -392,6 +392,50 @@ Every time you finish writing or modifying code, you MUST run through this check
   - Old: 18-digit CN ID → length >= 15 works
   - New: 8-char HK ID → length >= 15 FAILS, need pattern-based detection
 
+### 16. Self-Check Integrity (虚假自检检测)
+
+**定义**：自检本身是虚假的——声称"已验证"，但实际只检查了表面，漏掉了对结果最关键的维度。
+
+**本项目的真实案例**：
+- MoE dispatch 向量化优化：自检声称"消除了嵌套循环和 `.any()` CPU 同步"
+- 实际上将 `expert(x_flat[mask])` 改成了 `expert(x_flat)`——所有 token 过每个专家
+- 只分析了 Python 控制流开销，完全没有分析 FLOPs：top_k=2, num_experts=8 时计算量从 2N 变成 8N（**4倍膨胀**）
+- 稀疏 MoE 退化成密集 MoE，自检描述为"性能优化"
+
+**虚假自检的3种形态**：
+
+1. **维度盲区** — 只验证了A维度（控制流），没验证B维度（计算量/内存/延迟）
+   ```python
+   # 声称：消除了 .any() CPU 同步 ✓
+   # 漏掉：expert(x_flat) 把所有 token 喂给每个专家，计算量 4x ✗
+   expert_out = expert(x_flat)  # 看起来简洁，实际是性能倒退
+   ```
+
+2. **局部正确/全局错误** — 每个单独的改动都是正确的，但组合效果与预期相反
+   - 改动1：移除 Python 嵌套循环 → 减少调度开销 ✓
+   - 改动2：用全量输入替代掩码索引 → 计算量 × num_experts/top_k ✗
+   - 组合：净效果是负优化
+
+3. **自引用自检** — 用修改后的代码来验证修改是否正确，而不是从第一原理推导
+   - 错误："代码看起来正确，注释也说明了原理，应该没问题"
+   - 正确：独立计算改动前后的 FLOPs / 内存 / 语义等价性
+
+**检测方法**：
+- 对性能优化类改动：改动前后各写一行 FLOPs 计算，数字不撒谎
+  ```python
+  # 改前：top_k × (N/num_experts) × expert_cost = top_k/num_experts × N × C
+  # 改后：num_experts × N × expert_cost = num_experts × N × C
+  # 比值：num_experts/top_k = 4x（退步！）
+  ```
+- 对正确性修复类改动：找一个改动前会失败、改动后会成功的**具体输入**，手工 trace 一遍
+- 对架构重构类改动：找3个调用点，各 trace 一遍，确认行为不变
+- 自问："我的自检是否覆盖了改动最可能出错的那个维度？"——如果答不上来，说明自检是表面的
+
+**预防规则**：
+- 声称"性能优化"的改动，必须给出改前/改后的量化对比（FLOPs、内存、延迟），而不是定性描述
+- 声称"正确性修复"的改动，必须给出一个具体的 before/after 测试案例
+- 任何自检的结论，必须能被一个不知道改动内容的人独立重现——如果依赖"相信代码逻辑"，那就不是验证
+
 ### Self-Verification Command
 After completing code changes, run:
 ```bash
