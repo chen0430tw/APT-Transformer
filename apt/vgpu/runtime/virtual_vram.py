@@ -401,6 +401,9 @@ class VirtualVRAMConfig:
 
     # 性能监控
     verbose: bool = False
+    # 调试模式：开启后打印 [DEBUG PACK/UNPACK/PREFETCH] 详细追踪日志
+    # 训练时务必保持 False，否则每次 backward 均会打印大量日志
+    debug: bool = False
 
     # 已废弃
     min_storage_bytes: int = 0
@@ -610,11 +613,12 @@ class _Packed:
 class _Prefetcher:
     """异步预取器（支持弱引用）"""
 
-    def __init__(self, cache_size: int = 5, verbose: bool = False):
+    def __init__(self, cache_size: int = 5, verbose: bool = False, debug: bool = False):
         self.cache: OrderedDict[Tuple, WeakTensor] = OrderedDict()  # 使用弱引用
         self.cache_size = cache_size
         self.queue: queue.Queue = queue.Queue(maxsize=10)
         self.verbose = verbose
+        self.debug = debug
         self.stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
@@ -666,12 +670,14 @@ class _Prefetcher:
                 else:
                     restored = cpu_tensor
 
-                # DEBUG: 打印 dtype 信息
-                print(f'[DEBUG _do_prefetch NESTED] Before to: tensor dtype={restored.dtype}, target dtype={original_dtype}, device={target_device}')
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch NESTED] Before to: tensor dtype={restored.dtype}, target dtype={original_dtype}, device={target_device}')
                 restored = restored.to(device=target_device, dtype=original_dtype, non_blocking=False)
-                print(f'[DEBUG _do_prefetch NESTED] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch NESTED] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
                 restored.requires_grad_(requires_grad)
-                print(f'[DEBUG _do_prefetch NESTED] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch NESTED] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
             else:
                 # 传统模式
                 cpu_tensor = packed.cpu_tensor
@@ -686,12 +692,14 @@ class _Prefetcher:
                 else:
                     restored = cpu_tensor
 
-                # DEBUG: 打印 dtype 信息
-                print(f'[DEBUG _do_prefetch LEGACY] Before to: tensor dtype={restored.dtype}, target dtype={packed.dtype}, device={packed.device}')
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch LEGACY] Before to: tensor dtype={restored.dtype}, target dtype={packed.dtype}, device={packed.device}')
                 restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=False)
-                print(f'[DEBUG _do_prefetch LEGACY] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch LEGACY] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
                 restored.requires_grad_(packed.requires_grad)
-                print(f'[DEBUG _do_prefetch LEGACY] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
+                if self.debug:
+                    print(f'[DEBUG _do_prefetch LEGACY] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
 
             # 存入 cache（作为弱引用，允许 GC）
             if packed.cache_key is not None:
@@ -759,7 +767,8 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     if cfg.enable_prefetch:
         prefetcher = _Prefetcher(
             cache_size=cfg.prefetch_cache_size,
-            verbose=cfg.verbose
+            verbose=cfg.verbose,
+            debug=cfg.debug,
         )
         prefetcher.start()
 
@@ -1071,7 +1080,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     )
 
                     # 🔍 Debug: 检查去量化后的tensor是否有NaN
-                    if torch.isnan(restored).any():
+                    if cfg.debug and torch.isnan(restored).any():
                         print(f"[VRAM DEBUG] ❌ restored tensor has NaN after lecac_dequantize!")
                         print(f"  shape={restored.shape}, bits={nested.quantization_bits}, constant={NATURAL_EQUILIBRIUM_CONSTANT:.4f}")
                         print(f"  cpu_tensor dtype={nested.cpu_tensor.dtype}, cpu_tensor has NaN={torch.isnan(nested.cpu_tensor).any()}")
