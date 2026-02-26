@@ -814,6 +814,17 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         if max_bytes > 0 and nbytes > max_bytes:
             return t
 
+        # 不 offload nn.Parameter 的 view/slice
+        # MoELayer 里 W1_e = self.W1[e_idx] 是 Parameter 的 index slice，
+        # 其 grad_fn 的直接父节点是 AccumulateGrad(Parameter)。
+        # 这类 tensor 已常驻 GPU，offload 只会带来 D2H/H2D 往返开销，无收益。
+        # 激活值（attention 输出、FFN 中间结果）的 grad_fn 父节点不会是 AccumulateGrad，
+        # 不受此筛选影响。
+        if t.requires_grad and t.grad_fn is not None:
+            for _fn, _ in t.grad_fn.next_functions:
+                if _fn is not None and type(_fn).__name__ == 'AccumulateGrad':
+                    return t
+
         # 查表缓存
         key = _make_key(t)
         if key in cache:
