@@ -405,6 +405,12 @@ class VirtualVRAMConfig:
     # 训练时务必保持 False，否则每次 backward 均会打印大量日志
     debug: bool = False
 
+    # 主 cache 最大条目数（LRU 淘汰）
+    # 每个训练步骤的激活 tensor 都有新的 data_ptr，cache 会无限增长。
+    # 设置上限防止 CPU RAM 耗尽：默认 2000 条，覆盖 ~2-5 步的激活值，
+    # 足够 autograd 一步 forward+backward 内去重，多余的旧条目被淘汰。
+    max_cache_entries: int = 2000
+
     # 已废弃
     min_storage_bytes: int = 0
 
@@ -742,7 +748,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         lecac_quantize = None
         lecac_dequantize = None
 
-    cache: Dict[Tuple, _Packed] = {}
+    cache: "OrderedDict[Tuple, _Packed]" = OrderedDict()
 
     # v1.5: Arc 分配器 + 分页内存管理
     page_allocator: Optional[_PageAllocator] = None
@@ -909,6 +915,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 )
 
                 cache[key] = packed
+                # LRU 淘汰：防止 cache 跨步骤无限增长（每步激活 tensor 的 data_ptr 不同）
+                if len(cache) > cfg.max_cache_entries:
+                    cache.popitem(last=False)
 
                 # 添加到全局热度优先队列
                 _heat_pq.add_or_update(nested_block, key)
@@ -986,6 +995,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                         print(f"[VirtualVRAM] 📄 Paged: {mb:.2f}MB -> page {page_ids[0]}")
 
                 cache[key] = packed
+                # LRU 淘汰
+                if len(cache) > cfg.max_cache_entries:
+                    cache.popitem(last=False)
 
                 if prefetcher:
                     prefetcher.add(packed)
@@ -1048,6 +1060,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                              bool(t.requires_grad), quantized,
                              block_info, key)
             cache[key] = packed
+            # LRU 淘汰
+            if len(cache) > cfg.max_cache_entries:
+                cache.popitem(last=False)
 
             if prefetcher:
                 prefetcher.add(packed)
@@ -1152,12 +1167,19 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     print(f"[VirtualVRAM] ⚠️  分页加载失败: {e}")
 
         # 检查预取
+        # ⚠️ 必须在 return 前将 packed.prefetched 清零！
+        # 若不清零，GPU tensor 会以强引用留在 _Packed 里，而 _Packed 在主 cache 中
+        # 永远存活 → 每步预取的 GPU tensor 全部泄漏。
         if packed.prefetched is not None:
-            return packed.prefetched
+            t_pre = packed.prefetched
+            packed.prefetched = None  # 消费后立即释放 GPU 强引用
+            return t_pre
 
         if prefetcher and packed.cache_key is not None:
             cached = prefetcher.get(packed.cache_key)
             if cached is not None:
+                # 消费后从预取缓存移除，避免 GPU tensor 在 prefetcher.cache 里滞留
+                prefetcher.cache.pop(packed.cache_key, None)
                 return cached
 
         # Fallback: 标准恢复
