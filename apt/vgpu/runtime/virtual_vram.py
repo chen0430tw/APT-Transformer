@@ -813,6 +813,12 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         if t.dtype == torch.bool:
             return t
 
+        # INT8/uint8 tensor（如 LECaC 的 x_q）已是紧凑整数存储（1 byte/element），
+        # 再走 VirtualVRAM 会触发二次量化（GPU kernel + .item() 强制同步）+ D2H/H2D，
+        # 开销远超收益，直接跳过。
+        if t.dtype in (torch.int8, torch.uint8):
+            return t
+
         nbytes = t.numel() * t.element_size()
 
         if nbytes < min_bytes:
