@@ -204,35 +204,51 @@ class MoELayer(nn.Module):
         gate = router.route(h)  # [B,T,E]
         k = min(int(top_k), self.num_skills)
 
+        B, T, D = h.shape
+        N = B * T
+
         # Top-k routing probabilities
-        probs = torch.softmax(gate, dim=-1)                  # [B,T,E]
-        topv, topi = torch.topk(probs, k=k, dim=-1)          # [B,T,K], [B,T,K]
+        probs = torch.softmax(gate, dim=-1)           # [B,T,E]
+        topv, topi = torch.topk(probs, k=k, dim=-1)  # [B,T,K], [B,T,K]
 
-        # Gather expert parameters per token per k
-        # Shapes:
-        #   topi -> [B,T,K]
-        #   W1_g -> [B,T,K,D,H]
-        W1_g = self.W1[topi]                                 # advanced indexing
-        b1_g = self.b1[topi]                                 # [B,T,K,H]
-        W2_g = self.W2[topi]                                 # [B,T,K,H,D]
-        b2_g = self.b2[topi]                                 # [B,T,K,D]
+        # 按 expert 分桶 dispatch：gather tokens，不 gather 参数
+        # 原实现 self.W1[topi] 产生 [B,T,K,D,H] 巨型张量——
+        # B=4,T=512,K=2,D=768,H=3072 时单张量 ≈18 GB，3 份合计 ≈54 GB，前向即 OOM。
+        # 新实现每次只持有 [n_e,H] 的 per-expert 激活，规模 ∝ (N/E)*H，可控。
+        h_flat    = h.view(N, D)          # [N, D]
+        topv_flat = topv.view(N, k)       # [N, K]
+        topi_flat = topi.view(N, k)       # [N, K]
 
-        # Compute expert outputs (SwiGLU: silu(W1·h) * (W_gate·h) → W2):
-        W_gate_g = self.W_gate[topi]                                  # [B,T,K,D,H]
-        pre      = torch.einsum('btd,btkdh->btkh', h, W1_g) + b1_g  # [B,T,K,H]
-        gate_v   = torch.einsum('btd,btkdh->btkh', h, W_gate_g)      # [B,T,K,H]
-        act      = torch.nn.functional.silu(pre) * gate_v             # SwiGLU gate
-        out      = torch.einsum('btkh,btkhd->btkd', act, W2_g) + b2_g  # [B,T,K,D]
+        output = torch.zeros(N, D, device=h.device, dtype=h.dtype)
 
-        # Weighted sum of top-k experts
-        mix = (out * topv.unsqueeze(-1)).sum(dim=2)           # [B,T,D]
+        for e_idx in range(self.num_skills):
+            # 取本专家参数（slice，无数据复制）
+            W1_e = self.W1[e_idx]      # [D, H]
+            Wg_e = self.W_gate[e_idx]  # [D, H]
+            b1_e = self.b1[e_idx]      # [H]
+            W2_e = self.W2[e_idx]      # [H, D]
+            b2_e = self.b2[e_idx]      # [D]
+            for k_idx in range(k):
+                # bool mask，无 .any() CPU 同步
+                mask = (topi_flat[:, k_idx] == e_idx)  # [N,]
+                h_e  = h_flat[mask]                    # [n_e, D]，空时 n_e=0 合法
+                w    = topv_flat[mask, k_idx]          # [n_e,]
 
-        # Add shared path (dense)
+                # SwiGLU：空 h_e → 空 out，不报错，无需 if 守卫
+                pre  = h_e @ W1_e + b1_e               # [n_e, H]
+                gv   = h_e @ Wg_e                      # [n_e, H]
+                act  = torch.nn.functional.silu(pre) * gv  # SwiGLU gate
+                out  = act @ W2_e + b2_e               # [n_e, D]
+
+                output[mask] += w.unsqueeze(-1) * out  # scatter-add 回原位
+
+        output = output.view(B, T, D)
+
+        # Shared expert path（始终执行，dense）
         shared = self.shared(h)
+        y = output + shared
 
-        y = mix + shared
-
-        aux = {"gate_mean": gate.mean()}  # tensor, no host sync
+        aux = {"gate_mean": gate.mean()}  # tensor，无 host sync
         return y, aux
 
     def forward(self, h: torch.Tensor, router: "CodebookRouter", top_k: int = 2, compile_dispatch: bool = False) -> Tuple[torch.Tensor, Dict[str, Any]]:
