@@ -49,6 +49,10 @@ def quantize_int2_symmetric(x: torch.Tensor):
     Returns:
         (x_int2, scale): INT8 存储的 INT2 值 + 标量缩放因子
     """
+    if x.numel() == 0:
+        # 空 tensor：返回同形状的空 INT8 张量 + 占位 scale
+        # max() 在 numel()==0 时崩溃，必须在此短路
+        return x.to(torch.int8), torch.tensor(1.0, device=x.device, dtype=torch.float32)
     with torch.no_grad():
         amax = x.abs().max()
         scale = torch.clamp(amax / 1.0, min=1e-6)
@@ -68,6 +72,8 @@ def quantize_int4_symmetric(x: torch.Tensor):
     Returns:
         (x_int4, scale): INT8 存储的 INT4 值 + 标量缩放因子
     """
+    if x.numel() == 0:
+        return x.to(torch.int8), torch.tensor(1.0, device=x.device, dtype=torch.float32)
     with torch.no_grad():
         amax = x.abs().max()
         scale = torch.clamp(amax / 7.0, min=1e-6)
@@ -108,6 +114,22 @@ class LECACLinearFunction(torch.autograd.Function):
         # 将输入展平为 2D 再量化（保持量化粒度一致）
         original_shape = input.shape
         input_2d = input.view(-1, input.shape[-1])  # [M, K]
+
+        # 空 tensor 短路：MoE sparse dispatch / StructuredReasoner 中专家未分配到 token 时
+        # input_2d.numel()==0，max()/std() 均会崩溃或返回 NaN（NaN 会污染后续梯度）
+        if input_2d.numel() == 0:
+            ctx.save_for_backward(
+                input_2d.to(torch.int8),                                   # 空 INT8
+                torch.tensor(1.0, device=input.device, dtype=torch.float32),  # 占位 scale
+            )
+            ctx._weight = weight
+            ctx._bias = bias
+            ctx.bits = bits
+            ctx.alpha = 0.0   # 无元素，禁用 LECAC 补偿防止 nan*noise
+            ctx.error_std = torch.tensor(0.0, device=input.device)
+            ctx.K = 0
+            ctx.original_shape = original_shape
+            return output
 
         with torch.no_grad():
             if bits == 2:
@@ -202,6 +224,21 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
         original_shape = input.shape
         input_2d = input.view(-1, input.shape[-1])
+
+        if input_2d.numel() == 0:
+            ctx.save_for_backward(
+                input_2d.to(torch.int8),
+                torch.tensor(1.0, device=input.device, dtype=torch.float32),
+                input_2d,   # x_recon 占位（空 tensor）
+            )
+            ctx._weight = weight
+            ctx._bias = bias
+            ctx.bits = bits
+            ctx.alpha = 0.0
+            ctx.error_std = torch.tensor(0.0, device=input.device)
+            ctx.K = 0
+            ctx.original_shape = original_shape
+            return output
 
         with torch.no_grad():
             if bits == 2:
@@ -443,6 +480,10 @@ def lecac_quantize(x: torch.Tensor, bits: int = 8, constant: float = _ALPHA_4_OV
     Returns:
         量化后的张量（scale 作为附加属性保存）
     """
+    if x.numel() == 0:
+        result = x.to(torch.int8)
+        result.scale = 1.0
+        return result
     if bits == 2:
         x_int, scale = quantize_int2_symmetric(x)
         # 将scale作为属性保存到tensor中
