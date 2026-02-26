@@ -229,7 +229,6 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
             ctx.save_for_backward(
                 input_2d.to(torch.int8),
                 torch.tensor(1.0, device=input.device, dtype=torch.float32),
-                input_2d,   # x_recon 占位（空 tensor）
             )
             ctx._weight = weight
             ctx._bias = bias
@@ -251,8 +250,8 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
             error_std = (input_2d - x_recon).std()
 
         # weight/bias 不经 save_for_backward（同 LECACLinearFunction，避免 VRAM 量化引入 ε）
-        # x_recon 是浮点 tensor，VRAM 只做无损 CPU offload（浮点不量化）
-        ctx.save_for_backward(x_q, scale, x_recon)  # 只保存 INT8 激活 + 正交投影用的 x_recon
+        # x_recon 不保存：backward 直接从 x_q+scale 重建，保存 FP32 x_recon 只会产生无谓 D2H/H2D 开销
+        ctx.save_for_backward(x_q, scale)  # 只保存 INT8 激活 + scale
         ctx._weight = weight                          # 直接引用，不经 hooks
         ctx._bias = bias
         ctx.bits = bits
@@ -265,7 +264,7 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        x_q, scale, x_recon = ctx.saved_tensors
+        x_q, scale = ctx.saved_tensors
         weight = ctx._weight               # 直接取引用，精度完整
         bias = ctx._bias
         bits = ctx.bits
