@@ -500,10 +500,18 @@ class ReasoningController(nn.Module):
             reshape_back = True
 
         B, T, D = h.shape
-        logits_prev = lm_head(h)                  # [B,T,V]
-        p_prev = F.softmax(logits_prev, dim=-1)
-        ent_prev = -(p_prev * p_prev.clamp_min(1e-8).log()).sum(dim=-1)  # [B,T]
-        z_prev = self.vein.project(h)
+
+        # 收敛判断所需的初始基线（lm_head 调用只用于监控，不参与 loss 梯度）
+        # 用 torch.no_grad() 避免 softmax/log 产生 [B,T,V] 引用环：
+        #   p = softmax(logits)  →  p.grad_fn(SoftmaxBackward0).saved_tensors = (p,)
+        # 这是一个 p → grad_fn → p 的引用环，Python GC 无法立即破环，
+        # 每步累积 6 × 5 × [1,N,V] 张量 ≈ 4.4 GB，30 步后 OOM。
+        # no_grad() 使输出不带 grad_fn，消除引用环，张量离开作用域即刻释放。
+        with torch.no_grad():
+            logits_prev = lm_head(h)              # [B,T,V]，requires_grad=False
+            p_prev = F.softmax(logits_prev, dim=-1)
+            ent_prev = -(p_prev * p_prev.clamp_min(1e-8).log()).sum(dim=-1)  # [B,T]
+            z_prev = self.vein.project(h)
 
         stall = torch.zeros(B, T, dtype=torch.long, device=h.device)
         steps = 0
@@ -517,26 +525,27 @@ class ReasoningController(nn.Module):
         # simplifies the control flow and avoids `.item()` calls.
         for t in range(self.max_steps):
             steps = t + 1
-            h, meta = self.reasoner.step(h)
-            logits = lm_head(h)
-            p = F.softmax(logits, dim=-1)
+            h, meta = self.reasoner.step(h)       # ← 梯度从此处流过
 
-            # Compute per‑token metrics
-            kl = self._kl(p, p_prev)                             # [B,T]
-            ent = -(p * p.clamp_min(1e-8).log()).sum(dim=-1)     # [B,T]
-            z_new = meta["z_new"]
-            vein_rel = (z_new - z_prev).norm(dim=-1) / (z_prev.norm(dim=-1) + 1e-6)
-            halt = meta["p_halt"]
+            # 收敛指标：仅用于 done/stall 判断，不参与 loss，全程 no_grad
+            with torch.no_grad():
+                logits = lm_head(h)               # [B,T,V]，requires_grad=False
+                p = F.softmax(logits, dim=-1)
 
-            # Determine which tokens have converged or should halt.  We keep
-            # these computations in tensor form and update ``stall`` to
-            # accumulate the count of consecutive non‑converged steps.
-            done = ((kl < self.eps_kl) &
-                    (vein_rel < self.eps_vein) &
-                    (((ent_prev - ent) / (ent_prev + 1e-6)) < self.eps_entropy)) | (halt > self.halt_thresh)
-            stall = stall + (~done).long()
-            # Update previous state for the next iteration
-            logits_prev, p_prev, ent_prev, z_prev = logits, p, ent, z_new
+                # Compute per‑token metrics
+                kl = self._kl(p, p_prev)                             # [B,T]
+                ent = -(p * p.clamp_min(1e-8).log()).sum(dim=-1)     # [B,T]
+                z_new = meta["z_new"]
+                vein_rel = (z_new - z_prev).norm(dim=-1) / (z_prev.norm(dim=-1) + 1e-6)
+                halt = meta["p_halt"]
+
+                # Determine which tokens have converged or should halt.
+                done = ((kl < self.eps_kl) &
+                        (vein_rel < self.eps_vein) &
+                        (((ent_prev - ent) / (ent_prev + 1e-6)) < self.eps_entropy)) | (halt > self.halt_thresh)
+                stall = stall + (~done).long()
+                # Update previous state for the next iteration
+                p_prev, ent_prev, z_prev = p, ent, z_new
             # We intentionally do not break early based on patience; the
             # loop will continue for the full ``max_steps`` so that the
             # reasoning is deterministic and free of Python scalar conversions.
@@ -635,7 +644,12 @@ class GPTo3Model(nn.Module):
         logits = self.lm_head(x)                                        # [B,T,V]
 
         # ---- Structured reasoning only for high‑entropy tokens ----
-        ent = self._token_entropy(logits)                               # [B,T]
+        # _token_entropy 内部计算 softmax→clamp→log，会产生多个 [B,T,V] 张量。
+        # 这些张量仅用于选出高熵 token，不参与 loss 梯度。
+        # 用 no_grad() 避免引用环（softmax 的 saved_tensors 指回自身），
+        # 消除跨步骤累积的 GPU 内存泄漏（~4.4 GB/step）。
+        with torch.no_grad():
+            ent = self._token_entropy(logits)                           # [B,T]
         B, T = ent.shape
         # Determine the entropy threshold to trigger structured reasoning.
         k = max(1, int(self.global_budget * B * T))
