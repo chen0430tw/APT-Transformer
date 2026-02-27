@@ -27,8 +27,9 @@ LECAC — Low-Entropy Compensation for Activated Computation
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -36,6 +37,27 @@ import torch.nn.functional as F
 
 # 自然均衡常数：alpha=4/e 是 alpha_sweep 实验中表现最优的锚点
 _ALPHA_4_OVER_E: float = 4.0 / math.e  # ≈ 1.4715
+
+# ── 性能诊断统计（[PerfTrack] 诊断用，极低开销；调用 reset_lecac_perf_stats() 清零） ──
+# fwd_ms = 所有 LECaC forward 的累积耗时（含 F.linear + 量化）
+# bwd_ms = 所有 LECaC backward 的累积耗时（含反量化 + 梯度计算）
+_lecac_perf: Dict[str, float] = {
+    "fwd_n":   0.0,   # forward 调用次数（跳过空 tensor 时也计入）
+    "fwd_ms":  0.0,   # forward 总耗时（ms）
+    "bwd_n":   0.0,   # backward 调用次数
+    "bwd_ms":  0.0,   # backward 总耗时（ms）
+}
+
+
+def reset_lecac_perf_stats() -> None:
+    """每步（或每 log_interval）调用一次，重置累积统计。"""
+    for k in _lecac_perf:
+        _lecac_perf[k] = 0.0
+
+
+def get_lecac_perf_stats() -> Dict[str, float]:
+    """返回当前统计快照（不重置）。"""
+    return dict(_lecac_perf)
 
 
 # ============================================================================
@@ -108,6 +130,7 @@ class LECACLinearFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: torch.Tensor, weight: torch.Tensor,
                 bias: Optional[torch.Tensor], bits: int, alpha: float):
+        _t0 = time.perf_counter()
         # 正常 forward（精度不损失）
         output = F.linear(input, weight, bias)
 
@@ -129,6 +152,8 @@ class LECACLinearFunction(torch.autograd.Function):
             ctx.error_std = torch.tensor(0.0, device=input.device)
             ctx.K = 0
             ctx.original_shape = original_shape
+            _lecac_perf["fwd_n"]  += 1
+            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
             return output
 
         with torch.no_grad():
@@ -165,10 +190,13 @@ class LECACLinearFunction(torch.autograd.Function):
         ctx.K = input_2d.numel()           # 用于 dimension_balance 归一化
         ctx.original_shape = original_shape
 
+        _lecac_perf["fwd_n"]  += 1
+        _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
         return output
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
+        _t0 = time.perf_counter()
         x_q, scale = ctx.saved_tensors
         weight = ctx._weight               # 直接取引用，精度完整
         bias = ctx._bias
@@ -201,6 +229,8 @@ class LECACLinearFunction(torch.autograd.Function):
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
                      if bias is not None else None)                         # [N]
 
+        _lecac_perf["bwd_n"]  += 1
+        _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
         return grad_input, grad_weight, grad_bias, None, None
 
 
@@ -229,6 +259,7 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: torch.Tensor, weight: torch.Tensor,
                 bias: Optional[torch.Tensor], bits: int, alpha: float):
+        _t0 = time.perf_counter()
         output = F.linear(input, weight, bias)
 
         original_shape = input.shape
@@ -246,6 +277,8 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
             ctx.error_std = torch.tensor(0.0, device=input.device)
             ctx.K = 0
             ctx.original_shape = original_shape
+            _lecac_perf["fwd_n"]  += 1
+            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
             return output
 
         with torch.no_grad():
@@ -274,10 +307,13 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         ctx.K = input_2d.numel()
         ctx.original_shape = original_shape
 
+        _lecac_perf["fwd_n"]  += 1
+        _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
         return output
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
+        _t0 = time.perf_counter()
         x_q, scale = ctx.saved_tensors
         weight = ctx._weight               # 直接取引用，精度完整
         bias = ctx._bias
@@ -339,6 +375,8 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         if grad_bias is not None and torch.isnan(grad_bias).any():
             print(f"[LECAC DEBUG] ❌ grad_bias has NaN! alpha={ctx.alpha:.4f}")
 
+        _lecac_perf["bwd_n"]  += 1
+        _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
         return grad_input, grad_weight, grad_bias, None, None
 
 
@@ -572,4 +610,7 @@ __all__ = [
     "replace_linear_with_lecac",
     # 常量
     "_ALPHA_4_OVER_E",
+    # 性能诊断
+    "reset_lecac_perf_stats",
+    "get_lecac_perf_stats",
 ]
