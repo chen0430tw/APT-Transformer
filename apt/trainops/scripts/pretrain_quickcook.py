@@ -1943,6 +1943,22 @@ class QuickCookTrainer:
             self.output_dir, total_steps, self.rank, self.log_interval
         )
 
+        # ── GPU 内存泄漏监控（诊断用，识别跨步骤持续增长） ──
+        # 每隔 log_interval 步打印 alloc/reserved/peak + delta。
+        # warm-up（前 30 步 Adam 初始化）结束后锁定 baseline，超出 0.5GB 则 WARNING。
+        _mem_prev_gb: float = 0.0
+        _mem_baseline_gb: float = 0.0
+        _mem_baseline_set: bool = False
+        _MEM_WARMUP_STEP: int = 30          # Adam 状态初始化完成
+        _MEM_WARN_THRESH_GB: float = 0.5    # 超出 baseline 多少 GB 触发警告
+        if torch.cuda.is_available() and self.rank == 0:
+            torch.cuda.reset_peak_memory_stats()
+            _mem_prev_gb = torch.cuda.memory_allocated() / 1e9
+            logger.info(
+                f"[MemTrack] 训练开始 GPU alloc={_mem_prev_gb:.2f}GB  "
+                f"reserved={torch.cuda.memory_reserved()/1e9:.2f}GB"
+            )
+
         # virtual_vram 包裹整个训练循环（而非每步创建/销毁）：
         # 每步重建会反复执行 saved_tensors_hooks 安装/卸载、OrderedDict/HeatPriorityQueue
         # 创建、全局 _heat_pq 重置等冗余开销。移到循环外后只初始化一次。
@@ -2033,6 +2049,38 @@ class QuickCookTrainer:
 
                         if self.global_step % self.log_interval == 0:
                             running_loss = 0.0
+
+                            # GPU 内存泄漏诊断：每个 log_interval 打印一次
+                            if torch.cuda.is_available() and self.rank == 0:
+                                alloc_gb    = torch.cuda.memory_allocated() / 1e9
+                                reserved_gb = torch.cuda.memory_reserved()  / 1e9
+                                peak_gb     = torch.cuda.max_memory_allocated() / 1e9
+                                delta_gb    = alloc_gb - _mem_prev_gb
+                                logger.info(
+                                    f"[MemTrack] step={self.global_step:5d}  "
+                                    f"alloc={alloc_gb:.2f}GB  "
+                                    f"reserved={reserved_gb:.2f}GB  "
+                                    f"peak={peak_gb:.2f}GB  "
+                                    f"Δ={delta_gb:+.3f}GB"
+                                )
+                                # warm-up 完成后锁定 baseline，之后持续超出则报警
+                                if not _mem_baseline_set and self.global_step >= _MEM_WARMUP_STEP:
+                                    _mem_baseline_gb = alloc_gb
+                                    _mem_baseline_set = True
+                                    logger.info(
+                                        f"[MemTrack] ✅ Baseline 锁定 @ step {self.global_step}: "
+                                        f"{_mem_baseline_gb:.2f}GB（后续超出 {_MEM_WARN_THRESH_GB}GB 则报警）"
+                                    )
+                                elif _mem_baseline_set:
+                                    growth_gb = alloc_gb - _mem_baseline_gb
+                                    if growth_gb > _MEM_WARN_THRESH_GB:
+                                        logger.warning(
+                                            f"[MemTrack] ⚠️  LEAK SUSPECTED: "
+                                            f"alloc 超出 baseline {growth_gb:.3f}GB "
+                                            f"(baseline={_mem_baseline_gb:.2f}GB, now={alloc_gb:.2f}GB)"
+                                        )
+                                torch.cuda.reset_peak_memory_stats()
+                                _mem_prev_gb = alloc_gb
 
                         # 定期打印虚拟 GPU 统计 (每 save_interval 步)
                         if (self.global_step % self.save_interval == 0
