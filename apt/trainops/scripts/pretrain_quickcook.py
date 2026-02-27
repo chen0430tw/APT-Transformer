@@ -78,6 +78,7 @@ import time
 import logging
 import argparse
 import signal as _signal
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Iterator, Tuple
 
@@ -1942,119 +1943,165 @@ class QuickCookTrainer:
             self.output_dir, total_steps, self.rank, self.log_interval
         )
 
-        # 是否用 virtual_vram 包裹 forward+backward
-        use_vram_ctx = (self._vram_config is not None and virtual_vram is not None)
+        # ── GPU 内存泄漏监控（诊断用，识别跨步骤持续增长） ──
+        # 每隔 log_interval 步打印 alloc/reserved/peak + delta。
+        # warm-up（前 30 步 Adam 初始化）结束后锁定 baseline，超出 0.5GB 则 WARNING。
+        _mem_prev_gb: float = 0.0
+        _mem_baseline_gb: float = 0.0
+        _mem_baseline_set: bool = False
+        _MEM_WARMUP_STEP: int = 30          # Adam 状态初始化完成
+        _MEM_WARN_THRESH_GB: float = 0.5    # 超出 baseline 多少 GB 触发警告
+        if torch.cuda.is_available() and self.rank == 0:
+            torch.cuda.reset_peak_memory_stats()
+            _mem_prev_gb = torch.cuda.memory_allocated() / 1e9
+            logger.info(
+                f"[MemTrack] 训练开始 GPU alloc={_mem_prev_gb:.2f}GB  "
+                f"reserved={torch.cuda.memory_reserved()/1e9:.2f}GB"
+            )
 
-        for epoch in range(self.epochs):
-            if self.rank == 0:
-                logger.info(f"===== Epoch {epoch + 1}/{self.epochs} =====")
+        # virtual_vram 包裹整个训练循环（而非每步创建/销毁）：
+        # 每步重建会反复执行 saved_tensors_hooks 安装/卸载、OrderedDict/HeatPriorityQueue
+        # 创建、全局 _heat_pq 重置等冗余开销。移到循环外后只初始化一次。
+        # optimizer.step、checkpoint 保存在 with 块内运行无影响——hooks 只拦截 save_for_backward。
+        _vram_ctx = (virtual_vram(self._vram_config)
+                     if self._vram_config is not None and virtual_vram is not None
+                     else nullcontext())
 
-            for batch in dataloader:
-                # 移到设备
-                input_ids = batch["input_ids"].to(self.device)
-                labels = batch["labels"].to(self.device)
+        with _vram_ctx:
+            for epoch in range(self.epochs):
+                if self.rank == 0:
+                    logger.info(f"===== Epoch {epoch + 1}/{self.epochs} =====")
 
-                # LECaC Alpha Warmup 更新 (v2.0) - 必须在forward之前！
-                if alpha_scheduler is not None and update_lecac_alpha is not None:
-                    current_alpha = alpha_scheduler.get_alpha(self.global_step)
-                    num_updated = update_lecac_alpha(self.model, current_alpha)
+                for batch in dataloader:
+                    # 移到设备
+                    input_ids = batch["input_ids"].to(self.device)
+                    labels = batch["labels"].to(self.device)
 
-                    # 🔍 前10步详细日志（每步都输出，不等梯度累积）
-                    if self.rank == 0 and self.global_step < 10:
-                        current_lr = scheduler.get_last_lr()[0] if scheduler else 0.0
-                        logger.info(
-                            f"[DEBUG Step {self.global_step}] Alpha={current_alpha:.4f}, "
-                            f"LR={current_lr:.2e}, Updated={num_updated} layers"
-                        )
-                    # 每100步输出一次调试信息
-                    elif self.rank == 0 and self.global_step % 100 == 0:
-                        logger.info(
-                            f"[LECAC Alpha Warmup] Step {self.global_step}: "
-                            f"Alpha={current_alpha:.4f}, Updated {num_updated} layers"
-                        )
+                    # LECaC Alpha Warmup 更新 (v2.0) - 必须在forward之前！
+                    if alpha_scheduler is not None and update_lecac_alpha is not None:
+                        current_alpha = alpha_scheduler.get_alpha(self.global_step)
+                        num_updated = update_lecac_alpha(self.model, current_alpha)
 
-                # ── forward + backward (可选 virtual_vram 包裹) ──
-                if use_vram_ctx:
-                    # Virtual VRAM: 激活值自动 offload 到 CPU, 降低显存峰值
-                    with virtual_vram(self._vram_config):
-                        loss, running_loss = self._forward_backward_step(
-                            input_ids, labels, autocast_ctx, scaler,
-                            grad_accum, running_loss,
-                        )
-                else:
+                        # 🔍 前10步详细日志（每步都输出，不等梯度累积）
+                        if self.rank == 0 and self.global_step < 10:
+                            current_lr = scheduler.get_last_lr()[0] if scheduler else 0.0
+                            logger.info(
+                                f"[DEBUG Step {self.global_step}] Alpha={current_alpha:.4f}, "
+                                f"LR={current_lr:.2e}, Updated={num_updated} layers"
+                            )
+                        # 每100步输出一次调试信息
+                        elif self.rank == 0 and self.global_step % 100 == 0:
+                            logger.info(
+                                f"[LECAC Alpha Warmup] Step {self.global_step}: "
+                                f"Alpha={current_alpha:.4f}, Updated {num_updated} layers"
+                            )
+
+                    # ── forward + backward ──
                     loss, running_loss = self._forward_backward_step(
                         input_ids, labels, autocast_ctx, scaler,
                         grad_accum, running_loss,
                     )
 
-                # 🔍 前10步输出实时loss（检测NaN）
-                if self.rank == 0 and self.global_step < 10 and alpha_scheduler is not None:
-                    loss_val = loss.item() if not torch.isnan(loss) else float('nan')
-                    if torch.isnan(loss):
-                        logger.error(f"[DEBUG Step {self.global_step}] ❌ Loss=NaN detected!")
-                    else:
-                        logger.info(f"[DEBUG Step {self.global_step}] Loss={loss_val:.4f}")
+                    # 🔍 前10步输出实时loss（检测NaN）
+                    if self.rank == 0 and self.global_step < 10 and alpha_scheduler is not None:
+                        loss_val = loss.item() if not torch.isnan(loss) else float('nan')
+                        if torch.isnan(loss):
+                            logger.error(f"[DEBUG Step {self.global_step}] ❌ Loss=NaN detected!")
+                        else:
+                            logger.info(f"[DEBUG Step {self.global_step}] Loss={loss_val:.4f}")
 
-                step_in_accum += 1
+                    step_in_accum += 1
 
-                # 累积够了再更新
-                if step_in_accum >= grad_accum:
-                    if scaler is not None:
-                        scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), self.gradient_clip
+                    # 累积够了再更新
+                    if step_in_accum >= grad_accum:
+                        if scaler is not None:
+                            scaler.unscale_(optimizer)
+                            torch.nn.utils.clip_grad_norm_(
+                                self.model.parameters(), self.gradient_clip
+                            )
+                            scaler.step(optimizer)
+                            scaler.update()
+                        else:
+                            torch.nn.utils.clip_grad_norm_(
+                                self.model.parameters(), self.gradient_clip
+                            )
+                            optimizer.step()
+
+                        scheduler.step()
+                        optimizer.zero_grad()
+
+                        self.global_step += 1
+                        step_in_accum = 0
+
+                        # VA100 信号采集 (每步记录 loss 和显存)
+                        if self._va100_signal is not None:
+                            self._va100_signal_tick(loss.item() * grad_accum)
+
+                        # 进度追踪 (替代原来的日志)
+                        cur_loss = running_loss / min(self.global_step, self.log_interval)
+                        cur_lr = scheduler.get_last_lr()[0]
+                        tokens_in_batch = input_ids.numel()
+
+                        progress.update(
+                            self.global_step, cur_loss, cur_lr,
+                            tokens_in_batch=tokens_in_batch,
                         )
-                        scaler.step(optimizer)
-                        scaler.update()
-                    else:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), self.gradient_clip
-                        )
-                        optimizer.step()
 
-                    scheduler.step()
-                    optimizer.zero_grad()
+                        if self.global_step % self.log_interval == 0:
+                            running_loss = 0.0
 
-                    self.global_step += 1
-                    step_in_accum = 0
+                            # GPU 内存泄漏诊断：每个 log_interval 打印一次
+                            if torch.cuda.is_available() and self.rank == 0:
+                                alloc_gb    = torch.cuda.memory_allocated() / 1e9
+                                reserved_gb = torch.cuda.memory_reserved()  / 1e9
+                                peak_gb     = torch.cuda.max_memory_allocated() / 1e9
+                                delta_gb    = alloc_gb - _mem_prev_gb
+                                logger.info(
+                                    f"[MemTrack] step={self.global_step:5d}  "
+                                    f"alloc={alloc_gb:.2f}GB  "
+                                    f"reserved={reserved_gb:.2f}GB  "
+                                    f"peak={peak_gb:.2f}GB  "
+                                    f"Δ={delta_gb:+.3f}GB"
+                                )
+                                # warm-up 完成后锁定 baseline，之后持续超出则报警
+                                if not _mem_baseline_set and self.global_step >= _MEM_WARMUP_STEP:
+                                    _mem_baseline_gb = alloc_gb
+                                    _mem_baseline_set = True
+                                    logger.info(
+                                        f"[MemTrack] ✅ Baseline 锁定 @ step {self.global_step}: "
+                                        f"{_mem_baseline_gb:.2f}GB（后续超出 {_MEM_WARN_THRESH_GB}GB 则报警）"
+                                    )
+                                elif _mem_baseline_set:
+                                    growth_gb = alloc_gb - _mem_baseline_gb
+                                    if growth_gb > _MEM_WARN_THRESH_GB:
+                                        logger.warning(
+                                            f"[MemTrack] ⚠️  LEAK SUSPECTED: "
+                                            f"alloc 超出 baseline {growth_gb:.3f}GB "
+                                            f"(baseline={_mem_baseline_gb:.2f}GB, now={alloc_gb:.2f}GB)"
+                                        )
+                                torch.cuda.reset_peak_memory_stats()
+                                _mem_prev_gb = alloc_gb
 
-                    # VA100 信号采集 (每步记录 loss 和显存)
-                    if self._va100_signal is not None:
-                        self._va100_signal_tick(loss.item() * grad_accum)
+                        # 定期打印虚拟 GPU 统计 (每 save_interval 步)
+                        if (self.global_step % self.save_interval == 0
+                                and self.rank == 0):
+                            self._log_vgpu_stats()
 
-                    # 进度追踪 (替代原来的日志)
-                    cur_loss = running_loss / min(self.global_step, self.log_interval)
-                    cur_lr = scheduler.get_last_lr()[0]
-                    tokens_in_batch = input_ids.numel()
+                        # 保存
+                        if self.global_step % self.save_interval == 0:
+                            self._save_checkpoint(
+                                optimizer, scheduler,
+                                {"loss": running_loss, "step": self.global_step}
+                            )
+                            if self.world_size > 1:
+                                dist.barrier()
 
-                    progress.update(
-                        self.global_step, cur_loss, cur_lr,
-                        tokens_in_batch=tokens_in_batch,
-                    )
+                        # 到达最大步数
+                        if self.max_steps and self.global_step >= self.max_steps:
+                            break
 
-                    if self.global_step % self.log_interval == 0:
-                        running_loss = 0.0
-
-                    # 定期打印虚拟 GPU 统计 (每 save_interval 步)
-                    if (self.global_step % self.save_interval == 0
-                            and self.rank == 0):
-                        self._log_vgpu_stats()
-
-                    # 保存
-                    if self.global_step % self.save_interval == 0:
-                        self._save_checkpoint(
-                            optimizer, scheduler,
-                            {"loss": running_loss, "step": self.global_step}
-                        )
-                        if self.world_size > 1:
-                            dist.barrier()
-
-                    # 到达最大步数
-                    if self.max_steps and self.global_step >= self.max_steps:
-                        break
-
-            if self.max_steps and self.global_step >= self.max_steps:
-                break
+                if self.max_steps and self.global_step >= self.max_steps:
+                    break
 
         # 最终保存
         self._save_checkpoint(
