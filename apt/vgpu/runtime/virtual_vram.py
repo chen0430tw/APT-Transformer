@@ -890,10 +890,15 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     if cfg.verbose:
                         print(f"[VirtualVRAM v1.6] 🔢 INT量化D2H: {tensor_size_mb:.2f}MB {t.dtype}→INT{cfg.nested_quantization_bits}")
                 else:
-                    cpu_tensor = t.detach().cpu()
+                    # 使用 pin_memory 存储：后续 H2D 可 non_blocking=True，GPU 不再因等待 DMA 而空转
+                    try:
+                        cpu_tensor = torch.empty(t.shape, dtype=t.dtype, pin_memory=True)
+                        cpu_tensor.copy_(t.detach())  # D2H 到页锁定内存（带宽更高）
+                    except Exception:
+                        cpu_tensor = t.detach().cpu()  # fallback：CUDA 不可用或锁定内存不足
                     quantized = False
                     if cfg.verbose:
-                        print(f"[VirtualVRAM v1.6] 📤 无损D2H: {tensor_size_mb:.2f}MB {t.dtype}")
+                        print(f"[VirtualVRAM v1.6] 📤 无损D2H(pinned): {tensor_size_mb:.2f}MB {t.dtype}")
 
                 # 创建嵌套块（包含 Page → Block → Arc）
                 nested_block = _NestedArcBlock(
@@ -1119,8 +1124,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 else:
                     restored = nested.cpu_tensor
 
-                # H2D 传输（同步，立即需要）
-                restored = restored.to(device=nested.device, dtype=nested.dtype, non_blocking=False)
+                # H2D 传输：non_blocking=True — H2D DMA 与后续 CUDA kernel 同流排队，
+                # CPU 不阻塞，GPU 不因等待 DMA 而空转（CUDA stream 保证 DMA 先于 kernel 执行）
+                restored = restored.to(device=nested.device, dtype=nested.dtype, non_blocking=True)
                 restored.requires_grad_(nested.requires_grad)
 
                 # 更新热度（访问完成）
@@ -1146,7 +1152,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 if packed.arc_mode and arc_allocator is not None:
                     arc = arc_allocator.get_arc(packed.page_id)
                     if arc is not None:
-                        restored = arc.data.to(device=packed.device, non_blocking=False)
+                        restored = arc.data.to(device=packed.device, non_blocking=True)
                         restored.requires_grad_(packed.requires_grad)
 
                         if cfg.verbose:
@@ -1159,7 +1165,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 if page_allocator is not None and page_table is not None:
                     page_data = page_allocator.get_page(packed.page_id)
                     if page_data is not None:
-                        restored = page_data.to(device=packed.device, non_blocking=False)
+                        restored = page_data.to(device=packed.device, non_blocking=True)
                         restored.requires_grad_(packed.requires_grad)
 
                         if cfg.verbose:
@@ -1203,7 +1209,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             else:
                 restored = cpu_tensor
 
-            restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=False)
+            restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=True)
             restored.requires_grad_(packed.requires_grad)
 
         except Exception as e:

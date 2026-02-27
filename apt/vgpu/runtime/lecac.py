@@ -134,12 +134,21 @@ class LECACLinearFunction(torch.autograd.Function):
         with torch.no_grad():
             if bits == 2:
                 x_q, scale = quantize_int2_symmetric(input_2d)
-                x_recon = dequantize_int2_symmetric(x_q, scale)
             else:  # bits == 4
                 x_q, scale = quantize_int4_symmetric(input_2d)
-                x_recon = dequantize_int4_symmetric(x_q, scale)
 
-            error_std = (input_2d - x_recon).std()
+            # error_std 只在 alpha>0 时 backward 中用到，alpha=0 时跳过计算
+            if alpha > 0:
+                if bits == 2:
+                    x_recon = dequantize_int2_symmetric(x_q, scale)
+                else:
+                    x_recon = dequantize_int4_symmetric(x_q, scale)
+                # .item() 将 0-dim GPU tensor 转为 Python float：
+                # ① ctx 不再持有 GPU tensor 引用（forward→backward 期间 GPU 内存立即释放）
+                # ② backward 中 compensation = (error_std / balance) * noise 变为纯 Python 标量乘法
+                error_std = float((input_2d - x_recon).std())
+            else:
+                error_std = 0.0
 
         # 关键设计：weight 和 bias 不通过 save_for_backward 保存，
         # 而是作为 ctx 直接属性引用（不经过 saved_tensors_hooks 拦截）。
@@ -242,12 +251,17 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         with torch.no_grad():
             if bits == 2:
                 x_q, scale = quantize_int2_symmetric(input_2d)
-                x_recon = dequantize_int2_symmetric(x_q, scale)
             else:
                 x_q, scale = quantize_int4_symmetric(input_2d)
-                x_recon = dequantize_int4_symmetric(x_q, scale)
 
-            error_std = (input_2d - x_recon).std()
+            if alpha > 0:
+                if bits == 2:
+                    x_recon = dequantize_int2_symmetric(x_q, scale)
+                else:
+                    x_recon = dequantize_int4_symmetric(x_q, scale)
+                error_std = float((input_2d - x_recon).std())
+            else:
+                error_std = 0.0
 
         # weight/bias 不经 save_for_backward（同 LECACLinearFunction，避免 VRAM 量化引入 ε）
         # x_recon 不保存：backward 直接从 x_q+scale 重建，保存 FP32 x_recon 只会产生无谓 D2H/H2D 开销
