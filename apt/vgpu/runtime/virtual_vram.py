@@ -1171,12 +1171,21 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             try:
                 nested = packed.nested_block
 
-                # v1.6 优化：反向传播顺序预取 - 已禁用（会导致梯度NaN）
-                # 原因：detach后的tensor无法正确传播梯度
-                # 异步prefetch（_Prefetcher线程）已经足够
-                # if cfg.enable_nested_v16 and len(cache) > 1:
-                #     ... (反向预取代码已注释)
+                # ⚡ 优先消费预取结果（prefetcher 线程已在 forward 期间完成 H2D）
+                # ⚠️ 必须先取局部引用再清零：防止 prefetcher 线程并发写入时的竞争
+                # ⚠️ 清零后原来的 GPU 强引用由 t_pre 持有，函数返回后自动释放，防止泄漏
+                _pre = packed.prefetched
+                if _pre is not None:
+                    packed.prefetched = None  # 消费后立即释放强引用，防止 GPU tensor 滞留泄漏
+                    nested.access_count += 1
+                    nested.last_access = time.time()
+                    if cfg.verbose:
+                        mb = _pre.numel() * _pre.element_size() / 1024 / 1024
+                        print(f"[VirtualVRAM v1.6] ⚡ Prefetch hit: {mb:.2f}MB "
+                              f"block={nested.block_id} heat={nested.arc_heat_score():.2f}")
+                    return _pre
 
+                # 预取未就绪，走同步路径：
                 # 等待异步 D2H 完成（pack 时 non_blocking=True，unpack 前必须 synchronize）
                 # 正常训练中 backward 发生在若干 forward 层之后，DMA 通常早已完成，此处几乎无等待
                 # 注意：先把引用存入局部变量再调用 synchronize()，避免 prefetcher 线程并发把
