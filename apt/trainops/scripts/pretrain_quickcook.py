@@ -111,11 +111,16 @@ if _datasets_supports_trust_remote_code():
 # --- Virtual VRAM: 激活值 offload ---
 _VIRTUAL_VRAM_AVAILABLE = False
 try:
-    from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
+    from apt.vgpu.runtime.virtual_vram import (
+        VirtualVRAMConfig, virtual_vram,
+        get_vram_perf_stats, reset_vram_perf_stats,
+    )
     _VIRTUAL_VRAM_AVAILABLE = True
 except Exception:
     VirtualVRAMConfig = None  # type: ignore[assignment,misc]
     virtual_vram = None  # type: ignore[assignment]
+    get_vram_perf_stats = None   # type: ignore[assignment]
+    reset_vram_perf_stats = None  # type: ignore[assignment]
 
 # --- Virtual Blackwell: 脉冲式量化感知 ---
 _VIRTUAL_BLACKWELL_AVAILABLE = False
@@ -154,6 +159,7 @@ try:
     from apt.vgpu.runtime.lecac import (
         replace_linear_with_lecac,
         LECACConfig,
+        get_lecac_perf_stats, reset_lecac_perf_stats,
     )
     _LECAC_AVAILABLE = True
     try:
@@ -170,6 +176,8 @@ except Exception:
     LECACConfig = None  # type: ignore[assignment,misc]
     LECACAlphaScheduler = None  # type: ignore[assignment,misc]
     update_lecac_alpha = None  # type: ignore[assignment]
+    get_lecac_perf_stats = None   # type: ignore[assignment]
+    reset_lecac_perf_stats = None  # type: ignore[assignment]
 
 # --- mosaicml-streaming: ProLong-TextFull MDS 格式读取 ---
 _MOSAICML_STREAMING_AVAILABLE = False
@@ -2081,6 +2089,43 @@ class QuickCookTrainer:
                                         )
                                 torch.cuda.reset_peak_memory_stats()
                                 _mem_prev_gb = alloc_gb
+
+                            # [PerfTrack] VirtualVRAM D2H/H2D + LECaC fwd/bwd 性能分解
+                            # 目的：定位 LV 模式相比 Pure 慢 ~79% 的根本原因
+                            if self.rank == 0 and (
+                                get_vram_perf_stats is not None
+                                or get_lecac_perf_stats is not None
+                            ):
+                                vp = get_vram_perf_stats() if get_vram_perf_stats is not None else {}
+                                lp = get_lecac_perf_stats() if get_lecac_perf_stats is not None else {}
+
+                                pack_n     = int(vp.get("pack_n", 0))
+                                pack_ms    = vp.get("pack_ms", 0.0)
+                                skip_n     = int(vp.get("skip_n", 0))
+                                pack_mb    = vp.get("pack_bytes", 0.0) / 1024 / 1024
+                                unpack_n   = int(vp.get("unpack_n", 0))
+                                unpack_mb  = vp.get("unpack_bytes", 0.0) / 1024 / 1024
+                                fwd_n      = int(lp.get("fwd_n", 0))
+                                fwd_ms     = lp.get("fwd_ms", 0.0)
+                                bwd_n      = int(lp.get("bwd_n", 0))
+                                bwd_ms     = lp.get("bwd_ms", 0.0)
+
+                                logger.info(
+                                    f"[PerfTrack] step={self.global_step:5d} "
+                                    f"| D2H: n={pack_n} skip={skip_n} "
+                                    f"{pack_mb:.1f}MB {pack_ms:.1f}ms "
+                                    f"({pack_ms/max(pack_n,1):.3f}ms/op) "
+                                    f"| H2D: n={unpack_n} {unpack_mb:.1f}MB(submit) "
+                                    f"| LECaC fwd: n={fwd_n} {fwd_ms:.1f}ms "
+                                    f"({fwd_ms/max(fwd_n,1):.3f}ms/op) "
+                                    f"| LECaC bwd: n={bwd_n} {bwd_ms:.1f}ms "
+                                    f"({bwd_ms/max(bwd_n,1):.3f}ms/op)"
+                                )
+
+                                if get_vram_perf_stats is not None:
+                                    reset_vram_perf_stats()
+                                if get_lecac_perf_stats is not None:
+                                    reset_lecac_perf_stats()
 
                         # 定期打印虚拟 GPU 统计 (每 save_interval 步)
                         if (self.global_step % self.save_interval == 0

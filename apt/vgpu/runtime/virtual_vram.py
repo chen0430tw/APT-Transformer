@@ -54,6 +54,29 @@ except ImportError:
 
 NATURAL_EQUILIBRIUM_CONSTANT: float = 4.0 / math.e
 
+# ── 性能诊断统计（始终累积，极低开销；调用 reset_vram_perf_stats() 清零） ──
+# pack_ms  = D2H 实际耗时（pinned copy_ 是同步操作，CPU 时间准确）
+# unpack_n = H2D 提交次数（non_blocking=True，提交即返回，不含 DMA 等待时间）
+_vram_perf: Dict[str, float] = {
+    "pack_n":      0.0,   # 实际发生 D2H 的次数
+    "pack_bytes":  0.0,   # D2H 总字节数
+    "pack_ms":     0.0,   # D2H 总耗时（ms，CPU 侧，同步传输，准确）
+    "skip_n":      0.0,   # _pack_hook 快速跳过次数（INT8/bool/size 过滤）
+    "unpack_n":    0.0,   # H2D 提交次数（non_blocking，不含实际 DMA 时间）
+    "unpack_bytes":0.0,   # H2D 总字节数（估算）
+}
+
+
+def reset_vram_perf_stats() -> None:
+    """每步（或每 log_interval）调用一次，重置累积统计。"""
+    for k in _vram_perf:
+        _vram_perf[k] = 0.0
+
+
+def get_vram_perf_stats() -> Dict[str, float]:
+    """返回当前统计快照（不重置）。"""
+    return dict(_vram_perf)
+
 
 class _HeatPriorityQueue:
     """
@@ -811,19 +834,23 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             return t
 
         if t.dtype == torch.bool:
+            _vram_perf["skip_n"] += 1
             return t
 
         # INT8/uint8 tensor（如 LECaC 的 x_q）已是紧凑整数存储（1 byte/element），
         # 再走 VirtualVRAM 会触发二次量化（GPU kernel + .item() 强制同步）+ D2H/H2D，
         # 开销远超收益，直接跳过。
         if t.dtype in (torch.int8, torch.uint8):
+            _vram_perf["skip_n"] += 1
             return t
 
         nbytes = t.numel() * t.element_size()
 
         if nbytes < min_bytes:
+            _vram_perf["skip_n"] += 1
             return t
         if max_bytes > 0 and nbytes > max_bytes:
+            _vram_perf["skip_n"] += 1
             return t
 
         # 不 offload nn.Parameter 的 view/slice
@@ -835,7 +862,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         if t.requires_grad and t.grad_fn is not None:
             for _fn, _ in t.grad_fn.next_functions:
                 if _fn is not None and type(_fn).__name__ == 'AccumulateGrad':
+                    _vram_perf["skip_n"] += 1
                     return t
+
+        # 通过所有过滤器 → 将进行实际 D2H，开始计时
+        _pack_t0 = time.perf_counter()
 
         # 查表缓存
         key = _make_key(t)
@@ -936,6 +967,10 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 if prefetcher:
                     prefetcher.add(packed)
 
+                _vram_perf["pack_n"]     += 1
+                _vram_perf["pack_bytes"] += nbytes
+                _vram_perf["pack_ms"]    += (time.perf_counter() - _pack_t0) * 1000
+
                 if cfg.verbose:
                     mb = nbytes / 1024 / 1024
                     print(f"[VirtualVRAM v1.6] ✅ Nested D2H: {mb:.2f}MB {tuple(t.shape)} "
@@ -1013,6 +1048,9 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 if prefetcher:
                     prefetcher.add(packed)
 
+                _vram_perf["pack_n"]     += 1
+                _vram_perf["pack_bytes"] += nbytes
+                _vram_perf["pack_ms"]    += (time.perf_counter() - _pack_t0) * 1000
                 return packed
 
             except Exception as e:
@@ -1078,6 +1116,10 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             if prefetcher:
                 prefetcher.add(packed)
 
+            _vram_perf["pack_n"]     += 1
+            _vram_perf["pack_bytes"] += nbytes
+            _vram_perf["pack_ms"]    += (time.perf_counter() - _pack_t0) * 1000
+
             if cfg.verbose:
                 mb = nbytes / 1024 / 1024
                 block_str = f" blocks={block_info['num_blocks']}" if block_info else ""
@@ -1094,6 +1136,15 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     def _unpack_hook(packed: Any) -> torch.Tensor:
         if not isinstance(packed, _Packed):
             return packed
+
+        # 统计 H2D 提交次数和字节数（non_blocking=True：提交即返回，不含 DMA 等待）
+        if packed.nested_block is not None:
+            _nb = packed.nested_block
+            _vram_perf["unpack_n"]     += 1
+            _vram_perf["unpack_bytes"] += _nb.cpu_tensor.numel() * _nb.cpu_tensor.element_size()
+        elif packed.cpu_tensor is not None:
+            _vram_perf["unpack_n"]     += 1
+            _vram_perf["unpack_bytes"] += packed.cpu_tensor.numel() * packed.cpu_tensor.element_size()
 
         # ===== v1.6: 嵌套模式加载 =====
         if packed.nested_block is not None:
