@@ -55,12 +55,12 @@ except ImportError:
 NATURAL_EQUILIBRIUM_CONSTANT: float = 4.0 / math.e
 
 # ── 性能诊断统计（始终累积，极低开销；调用 reset_vram_perf_stats() 清零） ──
-# pack_ms  = D2H 实际耗时（pinned copy_ 是同步操作，CPU 时间准确）
+# pack_ms  = D2H CPU 侧提交耗时（non_blocking=True：pinned 分配 + DMA 提交，不含实际 DMA 等待）
 # unpack_n = H2D 提交次数（non_blocking=True，提交即返回，不含 DMA 等待时间）
 _vram_perf: Dict[str, float] = {
     "pack_n":      0.0,   # 实际发生 D2H 的次数
     "pack_bytes":  0.0,   # D2H 总字节数
-    "pack_ms":     0.0,   # D2H 总耗时（ms，CPU 侧，同步传输，准确）
+    "pack_ms":     0.0,   # D2H CPU 侧提交耗时（ms，pinned 分配 + non_blocking copy_ 提交时间）
     "skip_n":      0.0,   # _pack_hook 快速跳过次数（INT8/bool/size 过滤）
     "unpack_n":    0.0,   # H2D 提交次数（non_blocking，不含实际 DMA 时间）
     "unpack_bytes":0.0,   # H2D 总字节数（估算）
@@ -691,8 +691,10 @@ class _Prefetcher:
                 nested = packed.nested_block
 
                 # 等待异步 D2H 完成（prefetch 线程可能早于 unpack_hook 访问 cpu_tensor）
-                if nested.dma_event is not None:
-                    nested.dma_event.synchronize()
+                # 先存局部变量再 synchronize()，避免主线程并发置 None 后拿到 NoneType。
+                _ev = nested.dma_event
+                if _ev is not None:
+                    _ev.synchronize()
                     nested.dma_event = None
 
                 cpu_tensor = nested.cpu_tensor
@@ -1177,8 +1179,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
 
                 # 等待异步 D2H 完成（pack 时 non_blocking=True，unpack 前必须 synchronize）
                 # 正常训练中 backward 发生在若干 forward 层之后，DMA 通常早已完成，此处几乎无等待
-                if nested.dma_event is not None:
-                    nested.dma_event.synchronize()
+                # 注意：先把引用存入局部变量再调用 synchronize()，避免 prefetcher 线程并发把
+                #       nested.dma_event 置 None 后主线程在 check 通过后拿到 NoneType。
+                _ev = nested.dma_event
+                if _ev is not None:
+                    _ev.synchronize()
                     nested.dma_event = None  # 释放 Event，允许 GC
 
                 # LECaC 去量化
