@@ -55,12 +55,12 @@ except ImportError:
 NATURAL_EQUILIBRIUM_CONSTANT: float = 4.0 / math.e
 
 # ── 性能诊断统计（始终累积，极低开销；调用 reset_vram_perf_stats() 清零） ──
-# pack_ms  = D2H 实际耗时（pinned copy_ 是同步操作，CPU 时间准确）
+# pack_ms  = D2H CPU 侧提交耗时（non_blocking=True：pinned 分配 + DMA 提交，不含实际 DMA 等待）
 # unpack_n = H2D 提交次数（non_blocking=True，提交即返回，不含 DMA 等待时间）
 _vram_perf: Dict[str, float] = {
     "pack_n":      0.0,   # 实际发生 D2H 的次数
     "pack_bytes":  0.0,   # D2H 总字节数
-    "pack_ms":     0.0,   # D2H 总耗时（ms，CPU 侧，同步传输，准确）
+    "pack_ms":     0.0,   # D2H CPU 侧提交耗时（ms，pinned 分配 + non_blocking copy_ 提交时间）
     "skip_n":      0.0,   # _pack_hook 快速跳过次数（INT8/bool/size 过滤）
     "unpack_n":    0.0,   # H2D 提交次数（non_blocking，不含实际 DMA 时间）
     "unpack_bytes":0.0,   # H2D 总字节数（估算）
@@ -177,6 +177,9 @@ class _NestedArcBlock:
         # 基础数据（共享）
         'cpu_tensor', 'device', 'dtype', 'requires_grad',
 
+        # 异步 D2H 完成事件（non_blocking copy_ 后 record，unpack 时 synchronize）
+        'dma_event',
+
         # 锁（用于 Arc 原子操作）
         '_lock'
     )
@@ -222,6 +225,10 @@ class _NestedArcBlock:
         self.device = device
         self.dtype = dtype
         self.requires_grad = requires_grad
+
+        # 异步 D2H 完成事件：pack 时 record，unpack/prefetch 时 synchronize
+        # None 表示 D2H 是同步完成的（fallback 路径），无需等待
+        self.dma_event: Optional[torch.cuda.Event] = None
 
         # Arc 原子操作锁
         self._lock = threading.Lock()
@@ -682,6 +689,14 @@ class _Prefetcher:
             if packed.nested_block is not None:
                 # 从嵌套块获取数据
                 nested = packed.nested_block
+
+                # 等待异步 D2H 完成（prefetch 线程可能早于 unpack_hook 访问 cpu_tensor）
+                # 先存局部变量再 synchronize()，避免主线程并发置 None 后拿到 NoneType。
+                _ev = nested.dma_event
+                if _ev is not None:
+                    _ev.synchronize()
+                    nested.dma_event = None
+
                 cpu_tensor = nested.cpu_tensor
                 target_device = nested.device
                 requires_grad = nested.requires_grad
@@ -884,52 +899,56 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         # ===== v1.6: 嵌套模式（LECaC → Page → Block → Arc） =====
         if cfg.enable_nested_v16:
             try:
-                # 计算块数
                 block_size = cfg.nested_block_size
-                first_dim_size = t.size(0) if t.dim() > 0 else 1
-                num_blocks = max(1, (first_dim_size + block_size - 1) // block_size)
-
-                # D2H：使用LECAC量化（INT8，仅对大tensor量化）
-                # 保存真实dtype，不要强制修改
                 original_dtype = t.dtype
-
-                # 只量化大tensor（>= 5MB），小tensor保持原样避免NaN
-                # ⚠️ 必须检查enable_nested_v16标志（v1.6），避免意外量化！
                 tensor_size_mb = nbytes / (1024 * 1024)
 
-                # v1.7 量化策略修复：仅对整数类型 tensor（LECACLinear 的 INT8 激活值）量化
-                # 浮点类型 tensor（Attention Q/K/V、或 LECACLinear 的 weight）不量化，
-                # 因为浮点 → INT8 → 浮点 的有损还原会引入误差 ε，
-                # 在大模型高初始梯度场景（vocab=65536, loss≈11 nats）下 ε 被放大 → FlashAttn NaN。
-                #
-                # LECACLinear 的 weight 已改为 ctx._weight 直接引用（不经 save_for_backward），
-                # 因此 VRAM 不会拦截 weight tensor。
-                # INT8 tensor（x_q）的量化近似无损：INT8[-2,1] → lecac_quant → lecac_dequant → INT8[-2,1]
+                # v1.7 量化策略：
+                # 浮点 tensor（Attention Q/K/V 等激活值）→ 不量化，无损 D2H
+                #   理由：float→INT8→float 有损还原引入误差 ε，大模型梯度被放大 → FlashAttn NaN
+                # 整数 tensor（LECACLinear 的 x_q，已被 pack_hook 早期过滤跳过）→ 理论可量化
+                #   实际：int8/uint8 在早期过滤处已 return t，此处 should_quantize 永远为 False
                 is_float_dtype = t.dtype in (torch.float32, torch.float16, torch.bfloat16)
                 should_quantize = (LECaC_AVAILABLE and
                                    cfg.nested_quantization_bits > 0 and
                                    tensor_size_mb >= 5.0 and
-                                   not is_float_dtype)  # 只对非浮点（INT8）量化
+                                   not is_float_dtype)
+
+                # ── 异步 D2H ──────────────────────────────────────────────────
+                # non_blocking=True：copy_ 提交 DMA 后立即返回，GPU 计算继续；
+                # dma_event.record() 记录提交点，unpack_hook 里 synchronize() 等待完成。
+                # 效果：D2H 与后续 forward 层的 GPU 计算重叠，消除同步阻塞。
+                dma_event: Optional[torch.cuda.Event] = None
 
                 if should_quantize:
-                    cpu_tensor = lecac_quantize(
+                    # INT 类型量化（实际上不会走到这里，见上方注释）
+                    quantized_gpu = lecac_quantize(
                         t.detach(),
                         bits=cfg.nested_quantization_bits,
                         constant=NATURAL_EQUILIBRIUM_CONSTANT
-                    ).cpu()
+                    )
+                    try:
+                        cpu_tensor = torch.empty(quantized_gpu.shape, dtype=quantized_gpu.dtype, pin_memory=True)
+                        cpu_tensor.copy_(quantized_gpu, non_blocking=True)
+                        dma_event = torch.cuda.Event()
+                        dma_event.record()
+                    except Exception:
+                        cpu_tensor = quantized_gpu.cpu()
                     quantized = True
                     if cfg.verbose:
-                        print(f"[VirtualVRAM v1.6] 🔢 INT量化D2H: {tensor_size_mb:.2f}MB {t.dtype}→INT{cfg.nested_quantization_bits}")
+                        print(f"[VirtualVRAM v1.6] 🔢 INT量化D2H(async): {tensor_size_mb:.2f}MB {t.dtype}→INT{cfg.nested_quantization_bits}")
                 else:
-                    # 使用 pin_memory 存储：后续 H2D 可 non_blocking=True，GPU 不再因等待 DMA 而空转
+                    # 浮点激活值：pinned memory + 异步 D2H
                     try:
                         cpu_tensor = torch.empty(t.shape, dtype=t.dtype, pin_memory=True)
-                        cpu_tensor.copy_(t.detach())  # D2H 到页锁定内存（带宽更高）
+                        cpu_tensor.copy_(t.detach(), non_blocking=True)  # 异步 D2H，不阻塞 GPU
+                        dma_event = torch.cuda.Event()
+                        dma_event.record()  # 记录 DMA 提交位置
                     except Exception:
-                        cpu_tensor = t.detach().cpu()  # fallback：CUDA 不可用或锁定内存不足
+                        cpu_tensor = t.detach().cpu()  # fallback：pinned 内存不足，同步 D2H
                     quantized = False
                     if cfg.verbose:
-                        print(f"[VirtualVRAM v1.6] 📤 无损D2H(pinned): {tensor_size_mb:.2f}MB {t.dtype}")
+                        print(f"[VirtualVRAM v1.6] 📤 无损D2H(async pinned): {tensor_size_mb:.2f}MB {t.dtype}")
 
                 # 创建嵌套块（包含 Page → Block → Arc）
                 nested_block = _NestedArcBlock(
@@ -945,6 +964,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     block_offset=0,
                     block_size=block_size
                 )
+                nested_block.dma_event = dma_event  # 异步 D2H 完成事件
 
                 packed = _Packed(
                     cpu_tensor=cpu_tensor,
@@ -1156,6 +1176,15 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 # 异步prefetch（_Prefetcher线程）已经足够
                 # if cfg.enable_nested_v16 and len(cache) > 1:
                 #     ... (反向预取代码已注释)
+
+                # 等待异步 D2H 完成（pack 时 non_blocking=True，unpack 前必须 synchronize）
+                # 正常训练中 backward 发生在若干 forward 层之后，DMA 通常早已完成，此处几乎无等待
+                # 注意：先把引用存入局部变量再调用 synchronize()，避免 prefetcher 线程并发把
+                #       nested.dma_event 置 None 后主线程在 check 通过后拿到 NoneType。
+                _ev = nested.dma_event
+                if _ev is not None:
+                    _ev.synchronize()
+                    nested.dma_event = None  # 释放 Event，允许 GC
 
                 # LECaC 去量化
                 if nested.quantized and LECaC_AVAILABLE:
