@@ -42,10 +42,19 @@ _ALPHA_4_OVER_E: float = 4.0 / math.e  # ≈ 1.4715
 # fwd_ms = 所有 LECaC forward 的累积耗时（含 F.linear + 量化）
 # bwd_ms = 所有 LECaC backward 的累积耗时（含反量化 + 梯度计算）
 _lecac_perf: Dict[str, float] = {
-    "fwd_n":   0.0,   # forward 调用次数（跳过空 tensor 时也计入）
-    "fwd_ms":  0.0,   # forward 总耗时（ms）
-    "bwd_n":   0.0,   # backward 调用次数
-    "bwd_ms":  0.0,   # backward 总耗时（ms）
+    "fwd_n":        0.0,   # forward 调用次数（跳过空 tensor 时也计入）
+    "fwd_ms":       0.0,   # forward 总耗时（ms）
+    "bwd_n":        0.0,   # backward 调用次数
+    "bwd_ms":       0.0,   # backward 总耗时（ms）
+    # ── 细粒度分解（诊断用）──
+    "fwd_linear_ms":   0.0,   # F.linear 本身耗时
+    "fwd_quant_ms":    0.0,   # 量化（quantize_int2/4）耗时
+    "fwd_dequant_ms":  0.0,   # 反量化（dequantize_int2/4）耗时
+    "fwd_std_ms":      0.0,   # .std() 计算耗时
+    "fwd_float_ms":    0.0,   # float() GPU→CPU 同步耗时 ← 主要嫌疑
+    "bwd_dequant_ms":  0.0,   # backward 反量化耗时
+    "bwd_randn_ms":    0.0,   # torch.randn_like 耗时
+    "bwd_mm_ms":       0.0,   # grad matmul 耗时
 }
 
 
@@ -56,8 +65,56 @@ def reset_lecac_perf_stats() -> None:
 
 
 def get_lecac_perf_stats() -> Dict[str, float]:
-    """返回当前统计快照（不重置）。"""
+    """返回当前统计快照（不重置）。含细粒度分解，用于性能诊断。"""
     return dict(_lecac_perf)
+
+
+def lecac_diag_report(steps: int = 1) -> str:
+    """
+    打印细粒度性能诊断报告。在训练 N 步后调用：
+
+        from apt.vgpu.runtime.lecac import lecac_diag_report, reset_lecac_perf_stats
+        reset_lecac_perf_stats()
+        # ... 跑 10 步训练 ...
+        print(lecac_diag_report(steps=10))
+
+    报告会展示 forward/backward 各子操作的耗时，重点标注 GPU-CPU 同步点。
+    """
+    s = _lecac_perf
+    n_fwd = max(s["fwd_n"], 1)
+    n_bwd = max(s["bwd_n"], 1)
+
+    lines = [
+        "=" * 60,
+        f"[LECaC] 细粒度性能诊断  ({steps} 步, {int(s['fwd_n'])} fwd, {int(s['bwd_n'])} bwd)",
+        "=" * 60,
+        "",
+        "── Forward 分解 (总计 / 每调用) ──",
+        f"  F.linear          : {s['fwd_linear_ms']:8.2f}ms  / {s['fwd_linear_ms']/n_fwd:.3f}ms",
+        f"  量化(quant)        : {s['fwd_quant_ms']:8.2f}ms  / {s['fwd_quant_ms']/n_fwd:.3f}ms",
+        f"  反量化(dequant)    : {s['fwd_dequant_ms']:8.2f}ms  / {s['fwd_dequant_ms']/n_fwd:.3f}ms",
+        f"  .std() 计算        : {s['fwd_std_ms']:8.2f}ms  / {s['fwd_std_ms']/n_fwd:.3f}ms",
+        f"  float() GPU→CPU ⚠️ : {s['fwd_float_ms']:8.2f}ms  / {s['fwd_float_ms']/n_fwd:.3f}ms  ← 同步点",
+        f"  forward 合计       : {s['fwd_ms']:8.2f}ms  / {s['fwd_ms']/n_fwd:.3f}ms",
+        "",
+        "── Backward 分解 (总计 / 每调用) ──",
+        f"  反量化(dequant)    : {s['bwd_dequant_ms']:8.2f}ms  / {s['bwd_dequant_ms']/n_bwd:.3f}ms",
+        f"  randn (噪声)       : {s['bwd_randn_ms']:8.2f}ms  / {s['bwd_randn_ms']/n_bwd:.3f}ms",
+        f"  matmul (grad)      : {s['bwd_mm_ms']:8.2f}ms  / {s['bwd_mm_ms']/n_bwd:.3f}ms",
+        f"  backward 合计      : {s['bwd_ms']:8.2f}ms  / {s['bwd_ms']/n_bwd:.3f}ms",
+        "",
+    ]
+
+    # 标注主要嫌疑
+    sync_pct = s['fwd_float_ms'] / max(s['fwd_ms'], 1e-6) * 100
+    lines.append(f"⚠️  float() 同步占 fwd 总耗时 {sync_pct:.1f}%")
+    if sync_pct > 20:
+        lines.append("   → 主要性能瓶颈，建议去掉 float() 改用 GPU tensor")
+
+    total_overhead = s['fwd_ms'] + s['bwd_ms'] - s['fwd_linear_ms'] - s['bwd_mm_ms']
+    lines.append(f"   量化额外开销 (vs 纯 linear): {total_overhead:.2f}ms 共 {steps} 步")
+    lines.append("=" * 60)
+    return "\n".join(lines)
 
 
 # ============================================================================
@@ -132,7 +189,9 @@ class LECACLinearFunction(torch.autograd.Function):
                 bias: Optional[torch.Tensor], bits: int, alpha: float):
         _t0 = time.perf_counter()
         # 正常 forward（精度不损失）
+        _t_linear = time.perf_counter()
         output = F.linear(input, weight, bias)
+        _lecac_perf["fwd_linear_ms"] += (time.perf_counter() - _t_linear) * 1000
 
         # 将输入展平为 2D 再量化（保持量化粒度一致）
         original_shape = input.shape
@@ -157,21 +216,30 @@ class LECACLinearFunction(torch.autograd.Function):
             return output
 
         with torch.no_grad():
+            _t_quant = time.perf_counter()
             if bits == 2:
                 x_q, scale = quantize_int2_symmetric(input_2d)
             else:  # bits == 4
                 x_q, scale = quantize_int4_symmetric(input_2d)
+            _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant) * 1000
 
             # error_std 只在 alpha>0 时 backward 中用到，alpha=0 时跳过计算
             if alpha > 0:
+                _t_dequant = time.perf_counter()
                 if bits == 2:
                     x_recon = dequantize_int2_symmetric(x_q, scale)
                 else:
                     x_recon = dequantize_int4_symmetric(x_q, scale)
-                # .item() 将 0-dim GPU tensor 转为 Python float：
-                # ① ctx 不再持有 GPU tensor 引用（forward→backward 期间 GPU 内存立即释放）
-                # ② backward 中 compensation = (error_std / balance) * noise 变为纯 Python 标量乘法
-                error_std = float((input_2d - x_recon).std())
+                _lecac_perf["fwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
+
+                # 诊断：分别计时 .std() 和 float()，float() 会强制 GPU-CPU 同步
+                _t_std = time.perf_counter()
+                _err_tensor = (input_2d - x_recon).std()
+                _lecac_perf["fwd_std_ms"] += (time.perf_counter() - _t_std) * 1000
+
+                _t_float = time.perf_counter()
+                error_std = float(_err_tensor)   # ← GPU-CPU 同步点，perf_counter() 在此阻塞
+                _lecac_perf["fwd_float_ms"] += (time.perf_counter() - _t_float) * 1000
             else:
                 error_std = 0.0
 
@@ -203,16 +271,20 @@ class LECACLinearFunction(torch.autograd.Function):
         bits = ctx.bits
 
         # 反量化恢复激活值 [M, K]（dequantize 返回 float32，后续需对齐 weight.dtype）
+        _t_dequant = time.perf_counter()
         if bits == 2:
             x_recon = dequantize_int2_symmetric(x_q, scale)
         else:
             x_recon = dequantize_int4_symmetric(x_q, scale)
+        _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
 
         # LECAC 补偿：用量化误差的标准差 + 随机噪声修正梯度偏差
         if ctx.alpha > 0:
             with torch.no_grad():
                 dimension_balance = math.log(ctx.K + math.e)
+                _t_randn = time.perf_counter()
                 noise = torch.randn_like(x_recon) * ctx.alpha
+                _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
                 compensation = (ctx.error_std / dimension_balance) * noise
             x_recon = x_recon + compensation
 
@@ -224,8 +296,10 @@ class LECACLinearFunction(torch.autograd.Function):
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])  # [M, N]
 
         grad_output_2d = grad_output_2d.to(weight.dtype)  # 对齐 dtype
+        _t_mm = time.perf_counter()
         grad_input = grad_output_2d.mm(weight).view(ctx.original_shape)   # [..., K]
         grad_weight = grad_output_2d.t().mm(x_recon)                       # [N, K]
+        _lecac_perf["bwd_mm_ms"] += (time.perf_counter() - _t_mm) * 1000
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
                      if bias is not None else None)                         # [N]
 
@@ -288,11 +362,20 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
                 x_q, scale = quantize_int4_symmetric(input_2d)
 
             if alpha > 0:
+                _t_dq2 = time.perf_counter()
                 if bits == 2:
                     x_recon = dequantize_int2_symmetric(x_q, scale)
                 else:
                     x_recon = dequantize_int4_symmetric(x_q, scale)
-                error_std = float((input_2d - x_recon).std())
+                _lecac_perf["fwd_dequant_ms"] += (time.perf_counter() - _t_dq2) * 1000
+
+                _t_std2 = time.perf_counter()
+                _err_tensor2 = (input_2d - x_recon).std()
+                _lecac_perf["fwd_std_ms"] += (time.perf_counter() - _t_std2) * 1000
+
+                _t_float2 = time.perf_counter()
+                error_std = float(_err_tensor2)   # ← GPU-CPU 同步点
+                _lecac_perf["fwd_float_ms"] += (time.perf_counter() - _t_float2) * 1000
             else:
                 error_std = 0.0
 
