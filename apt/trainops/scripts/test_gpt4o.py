@@ -137,15 +137,8 @@ def apply_virtual_blackwell_optimization(model):
 def apply_lecac_optimization(model, bits=2):
     """应用 LECaC 量化"""
     try:
-        from apt.vgpu.runtime import lecac
-
-        config = {
-            "bits": bits,
-            "alpha_warmup": True,
-            "warmup_multiplier": 3.0
-        }
-
-        model = lecac.apply_lecak_to_model(model, config)
+        from apt.vgpu.runtime.lecac import replace_linear_with_lecac
+        replace_linear_with_lecac(model, bits=bits)
         print(f"✅ LECaC INT{bits} 已启用")
         return model
     except Exception as e:
@@ -153,22 +146,20 @@ def apply_lecac_optimization(model, bits=2):
         return model
 
 
-def apply_virtual_vram_optimization(model):
-    """应用 Virtual VRAM"""
+def get_virtual_vram_config():
+    """获取 Virtual VRAM 配置（如果可用）。Virtual VRAM 是 context manager，不修改模型。"""
     try:
-        from apt.vgpu.runtime import virtual_vram
-
-        config = {
-            "enable_nested_v16": True,
-            "enable_prefetch": True
-        }
-
-        model = virtual_vram.enable_virtual_vram(model, config)
+        from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig
+        config = VirtualVRAMConfig(
+            enabled=True,
+            enable_nested_v16=True,
+            enable_prefetch=True,
+        )
         print("✅ Virtual VRAM 已启用")
-        return model
+        return config
     except Exception as e:
         print(f"⚠️ Virtual VRAM 不可用: {e}")
-        return model
+        return None
 
 
 def generate_dummy_data(vocab_size, seq_len, batch_size, num_batches):
@@ -179,8 +170,18 @@ def generate_dummy_data(vocab_size, seq_len, batch_size, num_batches):
         yield input_ids, labels
 
 
-def benchmark(model, dataloader, device, num_steps=100):
+def benchmark(model, dataloader, device, num_steps=100, vram_cfg=None):
     """基准测试"""
+    import contextlib
+    if vram_cfg is not None:
+        try:
+            from apt.vgpu.runtime.virtual_vram import virtual_vram as _virtual_vram
+            vram_ctx = _virtual_vram(vram_cfg)
+        except Exception:
+            vram_ctx = contextlib.nullcontext()
+    else:
+        vram_ctx = contextlib.nullcontext()
+
     model.train()
     model.to(device)
 
@@ -194,32 +195,33 @@ def benchmark(model, dataloader, device, num_steps=100):
     print(f"开始训练 ({num_steps} 步)")
     print(f"{'='*60}")
 
-    for step, (input_ids, labels) in enumerate(dataloader):
-        if step >= num_steps:
-            break
+    with vram_ctx:
+        for step, (input_ids, labels) in enumerate(dataloader):
+            if step >= num_steps:
+                break
 
-        input_ids = input_ids.to(device)
-        labels = labels.to(device)
+            input_ids = input_ids.to(device)
+            labels = labels.to(device)
 
-        optimizer.zero_grad()
+            optimizer.zero_grad()
 
-        # Forward
-        loss, logits = model(input_ids, labels)
+            # Forward
+            loss, logits = model(input_ids, labels)
 
-        # Backward
-        loss.backward()
-        optimizer.step()
+            # Backward
+            loss.backward()
+            optimizer.step()
 
-        # 统计
-        total_loss += loss.item()
-        total_tokens += input_ids.numel()
+            # 统计
+            total_loss += loss.item()
+            total_tokens += input_ids.numel()
 
-        # 每 10 步打印一次
-        if (step + 1) % 10 == 0 or step == 0:
-            elapsed = time.time() - start_time
-            tok_s = total_tokens / elapsed
-            avg_loss = total_loss / (step + 1)
-            print(f"Step {step+1:3d}/{num_steps} | Loss: {avg_loss:.4f} | Tok/s: {tok_s:,.0f}")
+            # 每 10 步打印一次
+            if (step + 1) % 10 == 0 or step == 0:
+                elapsed = time.time() - start_time
+                tok_s = total_tokens / elapsed
+                avg_loss = total_loss / (step + 1)
+                print(f"Step {step+1:3d}/{num_steps} | Loss: {avg_loss:.4f} | Tok/s: {tok_s:,.0f}")
 
     total_time = time.time() - start_time
     avg_loss = total_loss / num_steps
@@ -312,8 +314,9 @@ def main():
     if args.use_lecac:
         model = apply_lecac_optimization(model, bits=args.lecac_bits)
 
+    vram_cfg = None
     if args.use_virtual_vram:
-        model = apply_virtual_vram_optimization(model)
+        vram_cfg = get_virtual_vram_config()
 
     if args.use_virtual_blackwell:
         model, _ = apply_virtual_blackwell_optimization(model)
@@ -332,7 +335,7 @@ def main():
     )
 
     # 基准测试
-    results = benchmark(model, dataloader, device, num_steps=args.num_steps)
+    results = benchmark(model, dataloader, device, num_steps=args.num_steps, vram_cfg=vram_cfg)
 
     # 打印总结
     print("\n" + "="*60)
