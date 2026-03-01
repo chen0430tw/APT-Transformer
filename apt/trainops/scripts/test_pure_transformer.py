@@ -222,6 +222,15 @@ def benchmark(model, dataloader, device, num_steps=100, vram_cfg=None):
     print(f"平均速度: {avg_tok_s:,.0f} tok/s")
     print(f"{'='*60}\n")
 
+    # 如果 LECaC 激活，打印细粒度诊断报告
+    try:
+        from apt.vgpu.runtime.lecac import get_lecac_perf_stats, lecac_diag_report
+        stats = get_lecac_perf_stats()
+        if stats["fwd_n"] > 0:
+            print(lecac_diag_report(steps=num_steps))
+    except ImportError:
+        pass
+
     return {
         "total_time": total_time,
         "avg_loss": avg_loss,
