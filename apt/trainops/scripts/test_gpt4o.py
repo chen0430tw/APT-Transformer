@@ -118,16 +118,15 @@ def try_import_gpt4o():
 def apply_virtual_blackwell_optimization(model):
     """应用 Virtual Blackwell 优化"""
     try:
-        from apt.vgpu.runtime import vb_integration
+        from apt.vgpu.runtime.vb_integration import apply_virtual_blackwell_v64, VBConfigV64
 
-        config = {
-            "enabled": True,
-            "pulse_interval": 20,
-            "fake_int8": False,
-            "gate_projection": True
-        }
+        config = VBConfigV64(
+            pulse_interval=20,
+            use_fake_int8=False,
+            gate_projected_mode=True,
+        )
 
-        model, vb_adapter = vb_integration.apply_virtual_blackwell_v64(model, config)
+        model, vb_adapter = apply_virtual_blackwell_v64(model, config)
         print("✅ Virtual Blackwell 已启用")
         return model, vb_adapter
     except Exception as e:

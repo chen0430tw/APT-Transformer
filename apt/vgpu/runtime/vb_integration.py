@@ -96,6 +96,20 @@ class VBOptimizedLinearV64(nn.Module):
             # 传统模式：每次都经过 wrapper
             self.forward = self._wrapper_forward
 
+    # ── nn.Linear 兼容接口 ────────────────────────────────────────────────
+    # 外部代码（weight tying、LECaC from_linear、训练工具等）可能直接访问
+    # module.weight / module.bias；通过 property 透传 base 属性保持兼容。
+
+    @property
+    def weight(self) -> torch.Tensor:
+        return self.base.weight
+
+    @property
+    def bias(self) -> Optional[torch.Tensor]:
+        return self.base.bias
+
+    # ─────────────────────────────────────────────────────────────────────
+
     def _gate_forward(self, x: torch.Tensor) -> torch.Tensor:
         """门投影模式 forward：非门点零开销"""
         # torch.compile 兼容：编译时不要把"门控/脉冲"控制面纳入图里。
