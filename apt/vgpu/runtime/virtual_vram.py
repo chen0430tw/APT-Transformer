@@ -435,11 +435,25 @@ class VirtualVRAMConfig:
     # 训练时务必保持 False，否则每次 backward 均会打印大量日志
     debug: bool = False
 
-    # 主 cache 最大条目数（LRU 淘汰）
-    # 每个训练步骤的激活 tensor 都有新的 data_ptr，cache 会无限增长。
-    # 设置上限防止 CPU RAM 耗尽：默认 2000 条，覆盖 ~2-5 步的激活值，
-    # 足够 autograd 一步 forward+backward 内去重，多余的旧条目被淘汰。
-    max_cache_entries: int = 2000
+    # 主 cache 最大条目数（真 LRU 淘汰，需与 move_to_end 配合使用）
+    # 背景：
+    #   - 第1步：pack ~97 个 tensor（含模型参数的激活值）→ 后续步骤因 PyTorch 内存池
+    #     地址重用而命中 cache（cache hit），只有 ~3.8/步 是真正的新 key。
+    #   - 激活 tensor 每步地址不同（cache miss）→ 约 3.8 条/步新 _Packed 写入 cache。
+    #   - cache hit 时调用 move_to_end(key) 保证"频繁访问的参数激活"不被淘汰。
+    #
+    # 关键 BUG（已修复）：原值 2000 导致 LRU 从不触发（100步仅积累 ~380 条）：
+    #   prefetcher 可能在 _unpack_hook 走同步路径之后才完成 H2D，
+    #   并把 GPU tensor 写入 packed.prefetched；该 tensor 此后无人消费，
+    #   直到对应 _Packed 被 LRU 淘汰后随 _Packed GC 才释放。
+    #   原值 2000 → LRU 在步骤 (2000-97)/3.8 ≈ 500 步才触发 → GPU 显存持续累积。
+    #
+    # 新值 200 推导：
+    #   ~97 个稳定 pool-reused 条目（每步 cache hit）+ 103 个激活 buffer
+    #   → LRU 在 103/3.8 ≈ 27 步时开始淘汰旧激活 _Packed
+    #   → 步骤 30 基准线时已达稳态，步骤 30→100 增长 ≈ 0
+    #   （若模型的稳定 key 数量超过 ~100，可适当上调此值）
+    max_cache_entries: int = 200
 
     # 已废弃
     min_storage_bytes: int = 0
