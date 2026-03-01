@@ -887,6 +887,8 @@ def virtual_vram(cfg: VirtualVRAMConfig):
         key = _make_key(t)
         if key in cache:
             cached = cache[key]
+            # 访问时升到队尾（真正 LRU：频繁访问的 tensor 不被淘汰）
+            cache.move_to_end(key)
             # v1.6: 如果是嵌套块，增加引用计数并更新热度队列
             if cached.nested_block is not None:
                 cached.nested_block.arc_clone(key)
@@ -978,11 +980,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
 
                 cache[key] = packed
                 # LRU 淘汰：防止 cache 跨步骤无限增长（每步激活 tensor 的 data_ptr 不同）
+                # ⚠️ 不再调用 _heat_pq.add_or_update：_heat_pq.get_top_k() 在整个代码库中从未被调用，
+                # 优先队列纯粹是写入，没有读取，但每次 add_or_update 都强引用 _NestedArcBlock，
+                # 导致其 cpu_tensor（pinned 内存）永远无法被 GC，造成 CPU pinned 内存无限积累。
                 if len(cache) > cfg.max_cache_entries:
                     cache.popitem(last=False)
-
-                # 添加到全局热度优先队列
-                _heat_pq.add_or_update(nested_block, key)
 
                 if prefetcher:
                     prefetcher.add(packed)
@@ -1177,6 +1179,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 _pre = packed.prefetched
                 if _pre is not None:
                     packed.prefetched = None  # 消费后立即释放强引用，防止 GPU tensor 滞留泄漏
+                    # 同步从 prefetcher.cache 移除：_do_prefetch 会把同一个 GPU tensor
+                    # 存入 prefetcher.cache[key]（强引用），非 v1.6 fallback 路径已有 pop；
+                    # v1.6 路径此处补上，确保 GPU tensor 引用计数立即归零、显存立即释放。
+                    if prefetcher is not None and packed.cache_key is not None:
+                        prefetcher.cache.pop(packed.cache_key, None)
                     nested.access_count += 1
                     nested.last_access = time.time()
                     if cfg.verbose:
