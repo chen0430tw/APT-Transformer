@@ -84,7 +84,12 @@ def lecac_diag_report(steps: int = 1) -> str:
     n_fwd = max(s["fwd_n"], 1)
     n_bwd = max(s["bwd_n"], 1)
 
-    compile_tag = "torch.compile ✓" if _HAVE_TORCH_COMPILE else "纯 Python"
+    if _HAVE_TRITON_KERNELS:
+        compile_tag = "Triton ✓"
+    elif _HAVE_TORCH_COMPILE:
+        compile_tag = "torch.compile ✓"
+    else:
+        compile_tag = "纯 Python"
     lines = [
         "=" * 60,
         f"[LECaC] 细粒度性能诊断  ({steps} 步, {int(s['fwd_n'])} fwd, {int(s['bwd_n'])} bwd)  [{compile_tag}]",
@@ -235,6 +240,21 @@ _quant_with_std_int4 = _try_compile(_quant_with_std_int4_fn)
 _quant_only_int2     = _try_compile(_quant_only_int2_fn)
 _quant_only_int4     = _try_compile(_quant_only_int4_fn)
 _compensation        = _try_compile(_compensation_fn)
+
+# Triton 加速版本（优先级高于 torch.compile）
+# 两核融合：核1 abs-max 规约 → scale；核2 量化 + 单 pass 误差方差
+# 相比 torch.compile：x 只读两次（vs ≥4次），消除 .std() 双趟规约串行等待
+_HAVE_TRITON_KERNELS = False
+try:
+    from apt.vgpu.runtime.lecac_triton import (
+        triton_quant_with_std_int2 as _triton_qstd2,
+        triton_quant_with_std_int4 as _triton_qstd4,
+    )
+    _quant_with_std_int2 = _triton_qstd2
+    _quant_with_std_int4 = _triton_qstd4
+    _HAVE_TRITON_KERNELS = True
+except Exception:
+    pass
 
 
 # ============================================================================
