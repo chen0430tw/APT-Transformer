@@ -175,8 +175,15 @@ def dequantize_int4_symmetric(x_int4: torch.Tensor, scale: torch.Tensor) -> torc
 _HAVE_TORCH_COMPILE = hasattr(torch, 'compile')
 
 
-def _try_compile(fn, mode: str = "reduce-overhead"):
-    """尝试应用 torch.compile 加速（PyTorch 2.0+），失败时静默返回原函数。"""
+def _try_compile(fn, mode: str = "default"):
+    """尝试应用 torch.compile 加速（PyTorch 2.0+），失败时静默返回原函数。
+
+    使用 mode="default"（TorchInductor 算子融合）而非 "reduce-overhead"：
+    - "reduce-overhead" 使用 CUDA Graphs，会把输出 tensor 的显存固定并在每次调用时复用；
+      x_q 通过 ctx.save_for_backward 保存后，下一步 forward 会覆盖同一块显存，
+      导致 backward 读到错误数据（RuntimeError: CUDAGraphs tensor overwritten）。
+    - "default" 只做算子融合（逐元素链→单 kernel），不使用 CUDA Graphs，无此问题。
+    """
     if _HAVE_TORCH_COMPILE:
         try:
             return torch.compile(fn, mode=mode, fullgraph=False)
