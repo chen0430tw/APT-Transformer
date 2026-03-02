@@ -84,22 +84,21 @@ def lecac_diag_report(steps: int = 1) -> str:
     n_fwd = max(s["fwd_n"], 1)
     n_bwd = max(s["bwd_n"], 1)
 
+    compile_tag = "torch.compile ✓" if _HAVE_TORCH_COMPILE else "纯 Python"
     lines = [
         "=" * 60,
-        f"[LECaC] 细粒度性能诊断  ({steps} 步, {int(s['fwd_n'])} fwd, {int(s['bwd_n'])} bwd)",
+        f"[LECaC] 细粒度性能诊断  ({steps} 步, {int(s['fwd_n'])} fwd, {int(s['bwd_n'])} bwd)  [{compile_tag}]",
         "=" * 60,
         "",
         "── Forward 分解 (总计 / 每调用) ──",
         f"  F.linear          : {s['fwd_linear_ms']:8.2f}ms  / {s['fwd_linear_ms']/n_fwd:.3f}ms",
-        f"  量化(quant)        : {s['fwd_quant_ms']:8.2f}ms  / {s['fwd_quant_ms']/n_fwd:.3f}ms",
-        f"  反量化(dequant)    : {s['fwd_dequant_ms']:8.2f}ms  / {s['fwd_dequant_ms']/n_fwd:.3f}ms",
-        f"  .std()（含error_std）: {s['fwd_std_ms']:8.2f}ms  / {s['fwd_std_ms']/n_fwd:.3f}ms",
-        f"  float() GPU→CPU    : {s['fwd_float_ms']:8.2f}ms  / {s['fwd_float_ms']/n_fwd:.3f}ms  (修复后应≈0)",
+        f"  量化+std (融合)    : {s['fwd_quant_ms']:8.2f}ms  / {s['fwd_quant_ms']/n_fwd:.3f}ms  ← quant/dequant/error_std 合并",
+        f"  float() GPU→CPU    : {s['fwd_float_ms']:8.2f}ms  / {s['fwd_float_ms']/n_fwd:.3f}ms  (已消除)",
         f"  forward 合计       : {s['fwd_ms']:8.2f}ms  / {s['fwd_ms']/n_fwd:.3f}ms",
         "",
         "── Backward 分解 (总计 / 每调用) ──",
         f"  反量化(dequant)    : {s['bwd_dequant_ms']:8.2f}ms  / {s['bwd_dequant_ms']/n_bwd:.3f}ms",
-        f"  randn (噪声)       : {s['bwd_randn_ms']:8.2f}ms  / {s['bwd_randn_ms']/n_bwd:.3f}ms",
+        f"  randn+补偿 (融合)  : {s['bwd_randn_ms']:8.2f}ms  / {s['bwd_randn_ms']/n_bwd:.3f}ms  ← randn/scale/add 合并",
         f"  matmul (grad)      : {s['bwd_mm_ms']:8.2f}ms  / {s['bwd_mm_ms']/n_bwd:.3f}ms",
         f"  backward 合计      : {s['bwd_ms']:8.2f}ms  / {s['bwd_ms']/n_bwd:.3f}ms",
         "",
@@ -166,6 +165,72 @@ def dequantize_int4_symmetric(x_int4: torch.Tensor, scale: torch.Tensor) -> torc
 
 
 # ============================================================================
+# 融合量化内核（torch.compile 加速，PyTorch 2.0+）
+# ============================================================================
+# 三项优化：
+#   1. 乘法替代除法（x * (1/scale) 比 x / scale 快 2-4x）
+#   2. quant + dequant + error_std 融合为单次调用（消除 x_recon 中间张量）
+#   3. torch.compile 将逐元素 kernel 链融合为 1-2 个 CUDA kernel
+
+_HAVE_TORCH_COMPILE = hasattr(torch, 'compile')
+
+
+def _try_compile(fn, mode: str = "reduce-overhead"):
+    """尝试应用 torch.compile 加速（PyTorch 2.0+），失败时静默返回原函数。"""
+    if _HAVE_TORCH_COMPILE:
+        try:
+            return torch.compile(fn, mode=mode, fullgraph=False)
+        except Exception:
+            pass
+    return fn
+
+
+def _quant_with_std_int2_fn(x: torch.Tensor):
+    """INT2 融合内核：quant + error_std，避免 x_recon 中间张量。"""
+    amax = x.abs().max()
+    scale = torch.clamp(amax, min=1e-6)
+    x_q = (x * (1.0 / scale)).round().clamp(-2, 1).to(torch.int8)
+    error_std = (x - x_q.float() * scale).std()
+    return x_q, scale, error_std
+
+
+def _quant_with_std_int4_fn(x: torch.Tensor):
+    """INT4 融合内核：quant + error_std。"""
+    amax = x.abs().max()
+    scale = torch.clamp(amax / 7.0, min=1e-6)
+    x_q = (x * (1.0 / scale)).round().clamp(-8, 7).to(torch.int8)
+    error_std = (x - x_q.float() * scale).std()
+    return x_q, scale, error_std
+
+
+def _quant_only_int2_fn(x: torch.Tensor):
+    """INT2 量化（alpha=0 时跳过 error_std 计算）。"""
+    amax = x.abs().max()
+    scale = torch.clamp(amax, min=1e-6)
+    return (x * (1.0 / scale)).round().clamp(-2, 1).to(torch.int8), scale
+
+
+def _quant_only_int4_fn(x: torch.Tensor):
+    """INT4 量化（alpha=0 时跳过 error_std 计算）。"""
+    amax = x.abs().max()
+    scale = torch.clamp(amax / 7.0, min=1e-6)
+    return (x * (1.0 / scale)).round().clamp(-8, 7).to(torch.int8), scale
+
+
+def _compensation_fn(x_recon: torch.Tensor, scale_factor: torch.Tensor) -> torch.Tensor:
+    """backward 补偿：融合 randn + scale + add（减少 kernel 启动次数）。"""
+    return x_recon + torch.randn_like(x_recon) * scale_factor
+
+
+# 编译版本（PyTorch 2.0+ 自动启用，旧版降级为纯 Python 实现）
+_quant_with_std_int2 = _try_compile(_quant_with_std_int2_fn)
+_quant_with_std_int4 = _try_compile(_quant_with_std_int4_fn)
+_quant_only_int2     = _try_compile(_quant_only_int2_fn)
+_quant_only_int4     = _try_compile(_quant_only_int4_fn)
+_compensation        = _try_compile(_compensation_fn)
+
+
+# ============================================================================
 # LECAC 核心 autograd Function
 # ============================================================================
 
@@ -216,31 +281,24 @@ class LECACLinearFunction(torch.autograd.Function):
             return output
 
         with torch.no_grad():
+            # ── 融合量化内核：quant + (dequant + error_std) 合并为单次调用 ──
+            # 优化：① 乘法替代除法；② 消除 x_recon 中间张量；③ torch.compile 融合 kernel
             _t_quant = time.perf_counter()
-            if bits == 2:
-                x_q, scale = quantize_int2_symmetric(input_2d)
-            else:  # bits == 4
-                x_q, scale = quantize_int4_symmetric(input_2d)
-            _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant) * 1000
-
-            # error_std 只在 alpha>0 时 backward 中用到，alpha=0 时跳过计算
             if alpha > 0:
-                _t_dequant = time.perf_counter()
+                # 融合：一次 pass 完成 quant + error_std（反量化已内联）
                 if bits == 2:
-                    x_recon = dequantize_int2_symmetric(x_q, scale)
+                    x_q, scale, error_std = _quant_with_std_int2(input_2d)
                 else:
-                    x_recon = dequantize_int4_symmetric(x_q, scale)
-                _lecac_perf["fwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
-
-                # error_std 保留为 0-dim GPU tensor，不调用 float()（float() 会强制 GPU-CPU 同步）
-                # ctx.error_std 通过直接赋值存储（非 save_for_backward），VRAM hooks 不会拦截；
-                # backward 中 (ctx.error_std / dimension_balance) * noise 广播正确，无需 Python float。
-                _t_std = time.perf_counter()
-                error_std = (input_2d - x_recon).std()   # 0-dim GPU tensor，无同步
-                _lecac_perf["fwd_std_ms"] += (time.perf_counter() - _t_std) * 1000
-                # fwd_float_ms 修复后应接近 0，保留字段供前后对比
+                    x_q, scale, error_std = _quant_with_std_int4(input_2d)
             else:
+                # alpha=0：跳过 error_std，节省 dequant + std 开销
+                if bits == 2:
+                    x_q, scale = _quant_only_int2(input_2d)
+                else:
+                    x_q, scale = _quant_only_int4(input_2d)
                 error_std = 0.0
+            _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant) * 1000
+            # fwd_dequant_ms / fwd_std_ms 已融合入 fwd_quant_ms，不再单独计时
 
         # 关键设计：weight 和 bias 不通过 save_for_backward 保存，
         # 而是作为 ctx 直接属性引用（不经过 saved_tensors_hooks 拦截）。
@@ -277,15 +335,14 @@ class LECACLinearFunction(torch.autograd.Function):
             x_recon = dequantize_int4_symmetric(x_q, scale)
         _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
 
-        # LECAC 补偿：用量化误差的标准差 + 随机噪声修正梯度偏差
+        # LECAC 补偿：融合 randn + scale + add（_compensation 已 torch.compile 加速）
         if ctx.alpha > 0:
             with torch.no_grad():
                 dimension_balance = math.log(ctx.K + math.e)
                 _t_randn = time.perf_counter()
-                noise = torch.randn_like(x_recon) * ctx.alpha
+                scale_factor = ctx.error_std * (ctx.alpha / dimension_balance)
+                x_recon = _compensation(x_recon, scale_factor)
                 _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
-                compensation = (ctx.error_std / dimension_balance) * noise
-            x_recon = x_recon + compensation
 
         # 对齐 dtype：BF16 训练时 grad_output/weight 为 BF16，x_recon 为 float32
         # mm() 要求两个操作数 dtype 完全一致，否则抛 "mat1 and mat2 must have same dtype"
@@ -355,24 +412,19 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
             return output
 
         with torch.no_grad():
-            if bits == 2:
-                x_q, scale = quantize_int2_symmetric(input_2d)
-            else:
-                x_q, scale = quantize_int4_symmetric(input_2d)
-
+            _t_quant2 = time.perf_counter()
             if alpha > 0:
-                _t_dq2 = time.perf_counter()
                 if bits == 2:
-                    x_recon = dequantize_int2_symmetric(x_q, scale)
+                    x_q, scale, error_std = _quant_with_std_int2(input_2d)
                 else:
-                    x_recon = dequantize_int4_symmetric(x_q, scale)
-                _lecac_perf["fwd_dequant_ms"] += (time.perf_counter() - _t_dq2) * 1000
-
-                _t_std2 = time.perf_counter()
-                error_std = (input_2d - x_recon).std()   # 0-dim GPU tensor，无同步
-                _lecac_perf["fwd_std_ms"] += (time.perf_counter() - _t_std2) * 1000
+                    x_q, scale, error_std = _quant_with_std_int4(input_2d)
             else:
+                if bits == 2:
+                    x_q, scale = _quant_only_int2(input_2d)
+                else:
+                    x_q, scale = _quant_only_int4(input_2d)
                 error_std = 0.0
+            _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant2) * 1000
 
         # weight/bias 不经 save_for_backward（同 LECACLinearFunction，避免 VRAM 量化引入 ε）
         # x_recon 不保存：backward 直接从 x_q+scale 重建，保存 FP32 x_recon 只会产生无谓 D2H/H2D 开销
