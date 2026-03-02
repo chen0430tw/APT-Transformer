@@ -93,8 +93,8 @@ def lecac_diag_report(steps: int = 1) -> str:
         f"  F.linear          : {s['fwd_linear_ms']:8.2f}ms  / {s['fwd_linear_ms']/n_fwd:.3f}ms",
         f"  量化(quant)        : {s['fwd_quant_ms']:8.2f}ms  / {s['fwd_quant_ms']/n_fwd:.3f}ms",
         f"  反量化(dequant)    : {s['fwd_dequant_ms']:8.2f}ms  / {s['fwd_dequant_ms']/n_fwd:.3f}ms",
-        f"  .std() 计算        : {s['fwd_std_ms']:8.2f}ms  / {s['fwd_std_ms']/n_fwd:.3f}ms",
-        f"  float() GPU→CPU ⚠️ : {s['fwd_float_ms']:8.2f}ms  / {s['fwd_float_ms']/n_fwd:.3f}ms  ← 同步点",
+        f"  .std()（含error_std）: {s['fwd_std_ms']:8.2f}ms  / {s['fwd_std_ms']/n_fwd:.3f}ms",
+        f"  float() GPU→CPU    : {s['fwd_float_ms']:8.2f}ms  / {s['fwd_float_ms']/n_fwd:.3f}ms  (修复后应≈0)",
         f"  forward 合计       : {s['fwd_ms']:8.2f}ms  / {s['fwd_ms']/n_fwd:.3f}ms",
         "",
         "── Backward 分解 (总计 / 每调用) ──",
@@ -105,11 +105,11 @@ def lecac_diag_report(steps: int = 1) -> str:
         "",
     ]
 
-    # 标注主要嫌疑
     sync_pct = s['fwd_float_ms'] / max(s['fwd_ms'], 1e-6) * 100
-    lines.append(f"⚠️  float() 同步占 fwd 总耗时 {sync_pct:.1f}%")
-    if sync_pct > 20:
-        lines.append("   → 主要性能瓶颈，建议去掉 float() 改用 GPU tensor")
+    if sync_pct > 5:
+        lines.append(f"⚠️  float() 同步仍占 fwd 总耗时 {sync_pct:.1f}%，同步点未完全消除")
+    else:
+        lines.append(f"✅ float() 同步占 fwd 总耗时 {sync_pct:.1f}%（已消除）")
 
     total_overhead = s['fwd_ms'] + s['bwd_ms'] - s['fwd_linear_ms'] - s['bwd_mm_ms']
     lines.append(f"   量化额外开销 (vs 纯 linear): {total_overhead:.2f}ms 共 {steps} 步")
@@ -232,14 +232,13 @@ class LECACLinearFunction(torch.autograd.Function):
                     x_recon = dequantize_int4_symmetric(x_q, scale)
                 _lecac_perf["fwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
 
-                # 诊断：分别计时 .std() 和 float()，float() 会强制 GPU-CPU 同步
+                # error_std 保留为 0-dim GPU tensor，不调用 float()（float() 会强制 GPU-CPU 同步）
+                # ctx.error_std 通过直接赋值存储（非 save_for_backward），VRAM hooks 不会拦截；
+                # backward 中 (ctx.error_std / dimension_balance) * noise 广播正确，无需 Python float。
                 _t_std = time.perf_counter()
-                _err_tensor = (input_2d - x_recon).std()
+                error_std = (input_2d - x_recon).std()   # 0-dim GPU tensor，无同步
                 _lecac_perf["fwd_std_ms"] += (time.perf_counter() - _t_std) * 1000
-
-                _t_float = time.perf_counter()
-                error_std = float(_err_tensor)   # ← GPU-CPU 同步点，perf_counter() 在此阻塞
-                _lecac_perf["fwd_float_ms"] += (time.perf_counter() - _t_float) * 1000
+                # fwd_float_ms 修复后应接近 0，保留字段供前后对比
             else:
                 error_std = 0.0
 
@@ -370,12 +369,8 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
                 _lecac_perf["fwd_dequant_ms"] += (time.perf_counter() - _t_dq2) * 1000
 
                 _t_std2 = time.perf_counter()
-                _err_tensor2 = (input_2d - x_recon).std()
+                error_std = (input_2d - x_recon).std()   # 0-dim GPU tensor，无同步
                 _lecac_perf["fwd_std_ms"] += (time.perf_counter() - _t_std2) * 1000
-
-                _t_float2 = time.perf_counter()
-                error_std = float(_err_tensor2)   # ← GPU-CPU 同步点
-                _lecac_perf["fwd_float_ms"] += (time.perf_counter() - _t_float2) * 1000
             else:
                 error_std = 0.0
 
