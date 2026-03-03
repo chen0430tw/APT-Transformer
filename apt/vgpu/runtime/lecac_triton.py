@@ -20,6 +20,7 @@ LECAC Triton 加速内核
 """
 from __future__ import annotations
 
+import random
 import torch
 import triton
 import triton.language as tl
@@ -186,7 +187,7 @@ def triton_quant_with_std_int4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Ten
 @triton.jit
 def _compensation_kernel(
     inout_ptr,    # float32 in-place [N]，输出覆盖输入
-    scale,        # float32 标量（补偿幅度 error_std * alpha / dim_balance）
+    scale_ptr,    # float32[1] GPU 指针（避免 .item() D2H 同步破坏 pipeline）
     seed,         # int32 随机种子（每次调用传入不同值，保证 noise 独立）
     N,
     BLOCK: tl.constexpr,
@@ -197,16 +198,21 @@ def _compensation_kernel(
     使用 Triton 内置 Philox CBRNG（tl.randn），相比 torch.randn_like：
       * 无独立 randn kernel 启动——融合进同一 load→compute→store pass
       * 无额外中间张量分配（3.1M float32 = 12MB HBM 写入省去）
-      * Philox 在 GPU 上并行生成，延迟远低于 PyTorch 调度开销
+      * scale 以 GPU 指针传入，无 D2H 同步，GPU pipeline 完全异步
+
+    scale_ptr 设计说明：
+      Triton 不支持 0-d tensor 作为指针（无合法地址），需在调用侧将
+      0-d scale_factor 转为 view(1) 的 1-element tensor 再传入。
     """
     pid = tl.program_id(0)
     offsets = pid * BLOCK + tl.arange(0, BLOCK)
     mask = offsets < N
 
-    x = tl.load(inout_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    x     = tl.load(inout_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    scale = tl.load(scale_ptr)                            # GPU 内读取，无 D2H
     # tl.randn(seed, offsets)：Philox4 CBRNG，(seed, offset) 唯一确定 N(0,1) 样本
     noise = tl.randn(seed, offsets.to(tl.int32))
-    out = x + noise * scale
+    out   = x + noise * scale
     tl.store(inout_ptr + offsets, out, mask=mask)
 
 
@@ -215,7 +221,7 @@ def triton_compensation(x_recon: torch.Tensor, scale_factor) -> torch.Tensor:
     Triton 补偿内核：替换 _compensation_fn 中的 torch.randn_like。
 
     In-place 修改 x_recon（float32 连续张量），返回同形状张量。
-    每次调用使用 CPU 随机种子，保证跨 step / 层的 noise 不相关。
+    全程无 D2H 同步，GPU pipeline 不中断。
 
     Args:
         x_recon      : float32 激活重构值 [M, K]（backward 中的 dequant 输出）
@@ -224,24 +230,33 @@ def triton_compensation(x_recon: torch.Tensor, scale_factor) -> torch.Tensor:
 
     Returns:
         补偿后的张量（与 x_recon 共享内存，形状不变）
-    """
-    # 单标量 D2H 同步（微秒级，相比节省的 ~2900ms 可忽略）
-    if isinstance(scale_factor, torch.Tensor):
-        sf = scale_factor.item()
-    else:
-        sf = float(scale_factor)
 
+    D2H 同步消除说明：
+        旧实现 scale_factor.item() 会强制 GPU drain 所有 pending ops 后才返回，
+        在 backward 中每层都触发一次，共 num_layers 次 pipeline 停顿。
+        新实现将 scale 保留在 GPU 上以 scale_ptr 传入 kernel，
+        dequant → compensation 两个 kernel 完全异步流水。
+    """
     N = x_recon.numel()
+
+    # scale 保持在 GPU 上，0-d tensor 需 view(1) 获得合法指针地址
+    if isinstance(scale_factor, torch.Tensor):
+        scale_buf = scale_factor.float().view(1)          # O(1)，共享存储，无 D2H
+    else:
+        scale_buf = torch.tensor(
+            [float(scale_factor)], dtype=torch.float32, device=x_recon.device
+        )
+
     # 连续 float32 视图（dequantize 通常已满足，view 为 O(1)）
     if x_recon.is_contiguous() and x_recon.dtype == torch.float32:
         x_flat = x_recon.view(-1)
     else:
         x_flat = x_recon.contiguous().float().view(-1)
 
-    # CPU 随机种子，确保不同 step / 层生成不相关 noise
-    seed = int(torch.randint(0, 0x7FFF_FFFF, (1,)).item())
+    # Python random 生成种子：无 PyTorch tensor 分配，无 D2H，纯 CPU
+    seed = random.randint(0, 0x7FFF_FFFF)
 
     grid = (triton.cdiv(N, 1024),)
-    _compensation_kernel[grid](x_flat, sf, seed, N, BLOCK=1024)
+    _compensation_kernel[grid](x_flat, scale_buf, seed, N, BLOCK=1024)
 
     return x_flat.view(x_recon.shape)
