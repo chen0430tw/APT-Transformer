@@ -84,8 +84,10 @@ def lecac_diag_report(steps: int = 1) -> str:
     n_fwd = max(s["fwd_n"], 1)
     n_bwd = max(s["bwd_n"], 1)
 
-    if _HAVE_TRITON_KERNELS:
-        compile_tag = "Triton ✓"
+    if _HAVE_TRITON_KERNELS and _HAVE_TRITON_COMPENSATION:
+        compile_tag = "Triton ✓ (quant+randn)"
+    elif _HAVE_TRITON_KERNELS:
+        compile_tag = "Triton ✓ (quant) / compile (randn)"
     elif _HAVE_TORCH_COMPILE:
         compile_tag = "torch.compile ✓"
     else:
@@ -242,21 +244,34 @@ _quant_only_int4     = _try_compile(_quant_only_int4_fn)
 _compensation        = _try_compile(_compensation_fn)
 
 # Triton 加速版本（优先级高于 torch.compile）
-# forward: 两核融合：核1 abs-max 规约 → scale；核2 量化 + 单 pass 误差方差
-# backward: 核3 融合 randn + scale + add（替换 torch.randn_like，消除 92% backward 开销）
+# Block 1: forward 量化核（核1 abs-max + 核2 量化+误差规约）
 _HAVE_TRITON_KERNELS = False
 try:
     from apt.vgpu.runtime.lecac_triton import (
         triton_quant_with_std_int2 as _triton_qstd2,
         triton_quant_with_std_int4 as _triton_qstd4,
-        triton_compensation as _triton_compensation,
     )
     _quant_with_std_int2 = _triton_qstd2
     _quant_with_std_int4 = _triton_qstd4
-    _compensation        = _triton_compensation
     _HAVE_TRITON_KERNELS = True
-except Exception:
-    pass
+except Exception as _e:
+    logger.debug("Triton 量化内核不可用，回退到 torch.compile: %s", _e)
+
+# Block 2: backward 补偿核（核3 tl.randn + scale + add）
+# 独立保护原因：@triton.jit 懒编译，import 成功≠tl.randn 可用；
+# 需试调用才能在旧版 Triton 上提前发现问题，而不是在 backward 时 crash。
+_HAVE_TRITON_COMPENSATION = False
+try:
+    from apt.vgpu.runtime.lecac_triton import triton_compensation as _triton_compensation
+    # 验证 tl.randn 在当前 Triton 版本实际可用（32 个元素，微秒级开销）
+    if torch.cuda.is_available():
+        _t = torch.zeros(32, dtype=torch.float32, device="cuda")
+        _triton_compensation(_t, 0.0)
+        del _t
+    _compensation = _triton_compensation
+    _HAVE_TRITON_COMPENSATION = True
+except Exception as _e:
+    logger.debug("Triton 补偿内核不可用，回退到 torch.compile: %s", _e)
 
 
 # ============================================================================
