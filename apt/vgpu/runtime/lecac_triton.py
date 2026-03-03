@@ -184,6 +184,19 @@ def triton_quant_with_std_int4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Ten
 # 核 3：backward 补偿（randn + scale + add，in-place 融合）
 # ============================================================================
 
+@triton.autotune(
+    configs=[
+        # H100 Box-Muller 是计算瓶颈（log/cos 约 150 clocks/elem），
+        # 更多 warps 可掩盖超越函数延迟；小 BLOCK 提升 SM 并发 block 数。
+        triton.Config({"BLOCK": 256},  num_warps=4),
+        triton.Config({"BLOCK": 512},  num_warps=8),
+        triton.Config({"BLOCK": 512},  num_warps=16),
+        triton.Config({"BLOCK": 1024}, num_warps=16),
+        triton.Config({"BLOCK": 2048}, num_warps=16),
+        triton.Config({"BLOCK": 2048}, num_warps=32),
+    ],
+    key=["N"],   # N 相同时复用缓存的最优配置，训练中每层形状固定 → 只调优一次
+)
 @triton.jit
 def _compensation_kernel(
     inout_ptr,    # float32 in-place [N]，输出覆盖输入
@@ -193,27 +206,41 @@ def _compensation_kernel(
     BLOCK: tl.constexpr,
 ):
     """
-    in-place 融合补偿：out[i] = in[i] + tl.randn(seed, i) * scale
+    in-place 融合补偿：out[i] = in[i] + N(0,1) * scale
 
-    使用 Triton 内置 Philox CBRNG（tl.randn），相比 torch.randn_like：
-      * 无独立 randn kernel 启动——融合进同一 load→compute→store pass
-      * 无额外中间张量分配（3.1M float32 = 12MB HBM 写入省去）
-      * scale 以 GPU 指针传入，无 D2H 同步，GPU pipeline 完全异步
+    RNG 优化（randint4x 成对 Box-Muller）：
+      tl.randn(seed, i) 内部调用 randint4x(seed, i) 得到 (i1,i2,i3,i4)，
+      Box-Muller 只用 (i1,i2)，i3,i4 直接丢弃——50% Philox4 算力浪费。
 
-    scale_ptr 设计说明：
-      Triton 不支持 0-d tensor 作为指针（无合法地址），需在调用侧将
-      0-d scale_factor 转为 view(1) 的 1-element tensor 再传入。
+      本内核让相邻两元素共享同一次 randint4x(seed, k)：
+        偶数位置 2k   使用 (i1, i2) → Box-Muller → N(0,1)
+        奇数位置 2k+1 使用 (i3, i4) → Box-Muller → N(0,1)
+      Philox4 调用次数从 N 降至 N/2（-50%），Box-Muller 次数不变。
+
+    autotune 自动选择 BLOCK / num_warps：
+      Box-Muller（log + sqrt + cos）约 150 clocks/element，计算瓶颈而非内存。
+      更多 warps 可掩盖超越函数延迟，autotune 找出该激活形状的最优配置。
     """
-    pid = tl.program_id(0)
+    pid     = tl.program_id(0)
     offsets = pid * BLOCK + tl.arange(0, BLOCK)
-    mask = offsets < N
+    mask    = offsets < N
 
     x     = tl.load(inout_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
-    scale = tl.load(scale_ptr)                            # GPU 内读取，无 D2H
-    # tl.randn(seed, offsets)：Philox4 CBRNG，(seed, offset) 唯一确定 N(0,1) 样本
-    noise = tl.randn(seed, offsets.to(tl.int32))
-    out   = x + noise * scale
-    tl.store(inout_ptr + offsets, out, mask=mask)
+    scale = tl.load(scale_ptr)                         # GPU 内读取，无 D2H
+
+    # randint4x 成对 Box-Muller
+    rng_off = (offsets >> 1).to(tl.int32)             # 相邻两元素 rng_off 相同
+    i1, i2, i3, i4 = tl.randint4x(seed, rng_off)
+
+    _C      = 1.0 / 4294967296.0                       # int32 → float [0,1) 缩放系数
+    is_even = ((offsets & 1) == 0)
+    u_a     = tl.where(is_even, i1, i3).to(tl.float32) * _C + 0.5   # ∈ (0, 1)
+    u_b     = tl.where(is_even, i2, i4).to(tl.float32) * _C + 0.5   # ∈ (0, 1)
+
+    # Box-Muller 变换：(u_a, u_b) → N(0, 1)
+    noise = tl.sqrt(-2.0 * tl.log(u_a)) * tl.cos(6.283185307179586 * u_b)
+
+    tl.store(inout_ptr + offsets, x + noise * scale, mask=mask)
 
 
 def triton_compensation(x_recon: torch.Tensor, scale_factor) -> torch.Tensor:
@@ -256,7 +283,9 @@ def triton_compensation(x_recon: torch.Tensor, scale_factor) -> torch.Tensor:
     # Python random 生成种子：无 PyTorch tensor 分配，无 D2H，纯 CPU
     seed = random.randint(0, 0x7FFF_FFFF)
 
-    grid = (triton.cdiv(N, 1024),)
-    _compensation_kernel[grid](x_flat, scale_buf, seed, N, BLOCK=1024)
+    # autotune 自动决定最优 BLOCK；grid 通过 lambda 动态获取 meta["BLOCK"]
+    # 首次调用会自动基准测试所有配置（结果缓存至 ~/.triton/cache，后续复用）
+    grid = lambda meta: (triton.cdiv(N, meta["BLOCK"]),)
+    _compensation_kernel[grid](x_flat, scale_buf, seed, N)
 
     return x_flat.view(x_recon.shape)
