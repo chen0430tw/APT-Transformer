@@ -84,8 +84,10 @@ def lecac_diag_report(steps: int = 1) -> str:
     n_fwd = max(s["fwd_n"], 1)
     n_bwd = max(s["bwd_n"], 1)
 
-    if _HAVE_TRITON_KERNELS:
-        compile_tag = "Triton ✓"
+    if _HAVE_TRITON_KERNELS and _HAVE_TRITON_COMPENSATION:
+        compile_tag = "Triton ✓ (quant+randn)"
+    elif _HAVE_TRITON_KERNELS:
+        compile_tag = "Triton ✓ (quant) / compile (randn)"
     elif _HAVE_TORCH_COMPILE:
         compile_tag = "torch.compile ✓"
     else:
@@ -242,8 +244,7 @@ _quant_only_int4     = _try_compile(_quant_only_int4_fn)
 _compensation        = _try_compile(_compensation_fn)
 
 # Triton 加速版本（优先级高于 torch.compile）
-# 两核融合：核1 abs-max 规约 → scale；核2 量化 + 单 pass 误差方差
-# 相比 torch.compile：x 只读两次（vs ≥4次），消除 .std() 双趟规约串行等待
+# Block 1: forward 量化核（核1 abs-max + 核2 量化+误差规约）
 _HAVE_TRITON_KERNELS = False
 try:
     from apt.vgpu.runtime.lecac_triton import (
@@ -253,8 +254,24 @@ try:
     _quant_with_std_int2 = _triton_qstd2
     _quant_with_std_int4 = _triton_qstd4
     _HAVE_TRITON_KERNELS = True
-except Exception:
-    pass
+except Exception as _e:
+    logger.debug("Triton 量化内核不可用，回退到 torch.compile: %s", _e)
+
+# Block 2: backward 补偿核（核3 tl.randn + scale + add）
+# 独立保护原因：@triton.jit 懒编译，import 成功≠tl.randn 可用；
+# 需试调用才能在旧版 Triton 上提前发现问题，而不是在 backward 时 crash。
+_HAVE_TRITON_COMPENSATION = False
+try:
+    from apt.vgpu.runtime.lecac_triton import triton_compensation as _triton_compensation
+    # 验证 tl.randn 在当前 Triton 版本实际可用（32 个元素，微秒级开销）
+    if torch.cuda.is_available():
+        _t = torch.zeros(32, dtype=torch.float32, device="cuda")
+        _triton_compensation(_t, 0.0)
+        del _t
+    _compensation = _triton_compensation
+    _HAVE_TRITON_COMPENSATION = True
+except Exception as _e:
+    logger.debug("Triton 补偿内核不可用，回退到 torch.compile: %s", _e)
 
 
 # ============================================================================
@@ -476,84 +493,41 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         bias = ctx._bias
         bits = ctx.bits
 
-        # 🔍 Debug: 检查grad_output是否有NaN
-        if torch.isnan(grad_output).any():
-            nan_count = torch.isnan(grad_output).sum().item()
-            print(f"[LECAC DEBUG] ❌ grad_output has NaN!")
-            print(f"  shape={grad_output.shape}, dtype={grad_output.dtype}, alpha={ctx.alpha:.4f}, bits={bits}")
-            print(f"  NaN count={nan_count}/{grad_output.numel()}")
-            print(f"  finite: min={grad_output[~torch.isnan(grad_output)].min().item():.4f}, max={grad_output[~torch.isnan(grad_output)].max().item():.4f}")
-            print(f"  saved_tensors: x_q shape={ctx.saved_tensors[0].shape if hasattr(ctx.saved_tensors[0], 'shape') else 'N/A'}")
-
-        # 反量化
+        # 反量化恢复激活值 [M, K]
+        _t_dequant = time.perf_counter()
         if bits == 2:
             x_recon_fp = dequantize_int2_symmetric(x_q, scale)
         else:
             x_recon_fp = dequantize_int4_symmetric(x_q, scale)
+        _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
 
-        # 🔍 Debug: 检查反量化后是否有NaN
-        if torch.isnan(x_recon_fp).any():
-            nan_count = torch.isnan(x_recon_fp).sum().item()
-            print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after dequant!")
-            print(f"  shape={x_recon_fp.shape}, dtype={x_recon_fp.dtype}, alpha={ctx.alpha:.4f}")
-            print(f"  NaN count={nan_count}/{x_recon_fp.numel()}")
-            print(f"  scale: min={scale.min().item():.6f}, max={scale.max().item():.6f}, mean={scale.mean().item():.6f}")
-            if hasattr(ctx, 'error_std'):
-                print(f"  error_std={ctx.error_std:.6f}")
-
-        # LECAC 标准补偿
+        # LECAC 标准补偿（与 LECACLinearFunction 相同，使用 _compensation 统一入口）
         if ctx.alpha > 0:
             with torch.no_grad():
                 dimension_balance = math.log(ctx.K + math.e)
-                noise = torch.randn_like(x_recon_fp) * ctx.alpha
-                compensation = (ctx.error_std / dimension_balance) * noise
-            x_recon_fp = x_recon_fp + compensation
+                _t_randn = time.perf_counter()
+                scale_factor = ctx.error_std * (ctx.alpha / dimension_balance)
+                x_recon_fp = _compensation(x_recon_fp, scale_factor)
+                _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
 
-            # 🔍 Debug: 检查补偿后是否有NaN
-            if torch.isnan(x_recon_fp).any():
-                nan_count = torch.isnan(x_recon_fp).sum().item()
-                print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after compensation!")
-                print(f"  alpha={ctx.alpha:.4f}, error_std={ctx.error_std:.4f}")
-                print(f"  NaN count={nan_count}/{x_recon_fp.numel()}")
-                print(f"  noise: min={noise.min().item():.6f}, max={noise.max().item():.6f}, mean={noise.mean().item():.6f}")
-                print(f"  compensation: min={compensation.min().item():.6f}, max={compensation.max().item():.6f}")
-
-        # 正交投影补偿：将补偿量投影到 grad_output 的正交补空间，保护梯度方向
+        # 正交投影补偿：将重构激活值投影到 grad_output 的正交补空间，保护梯度方向
         if ctx.alpha > 0:
             with torch.no_grad():
                 grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])
-                # 逐行做正交投影（grad_output 的每行作为方向基）
                 orth = _orthogonal_projection(x_recon_fp, grad_output_2d)
                 x_recon_fp = x_recon_fp + orth * 0.5
-
-            # 🔍 Debug: 检查投影后是否有NaN
-            if torch.isnan(x_recon_fp).any():
-                print(f"[LECAC DEBUG] ❌ x_recon_fp has NaN after orthogonal projection! alpha={ctx.alpha:.4f}")
 
         # 对齐 dtype：BF16 训练时 grad_output/weight 为 BF16，x_recon_fp 为 float32
         x_recon_fp = x_recon_fp.to(weight.dtype)
 
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])
-
-        grad_input = grad_output_2d.mm(weight).view(ctx.original_shape)
-        grad_weight = grad_output_2d.t().mm(x_recon_fp)
+        grad_output_2d = grad_output_2d.to(weight.dtype)
+        _t_mm = time.perf_counter()
+        grad_input  = grad_output_2d.mm(weight).view(ctx.original_shape)   # [..., K]
+        grad_weight = grad_output_2d.t().mm(x_recon_fp)                    # [N, K]
+        _lecac_perf["bwd_mm_ms"] += (time.perf_counter() - _t_mm) * 1000
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
-                     if bias is not None else None)
-
-        # 🔍 Debug: 检查梯度是否有NaN
-        if torch.isnan(grad_input).any():
-            nan_count = torch.isnan(grad_input).sum().item()
-            print(f"[LECAC DEBUG] ❌ grad_input has NaN!")
-            print(f"  shape={grad_input.shape}, dtype={grad_input.dtype}, alpha={ctx.alpha:.4f}")
-            print(f"  NaN count={nan_count}/{grad_input.numel()}")
-            print(f"  finite: min={grad_input[~torch.isnan(grad_input)].min().item():.4f}, max={grad_input[~torch.isnan(grad_input)].max().item():.4f}")
-        if torch.isnan(grad_weight).any():
-            nan_count = torch.isnan(grad_weight).sum().item()
-            print(f"[LECAC DEBUG] ❌ grad_weight has NaN!")
-            print(f"  shape={grad_weight.shape}, dtype={grad_weight.dtype}, alpha={ctx.alpha:.4f}")
-            print(f"  NaN count={nan_count}/{grad_weight.numel()}")
-        if grad_bias is not None and torch.isnan(grad_bias).any():
-            print(f"[LECAC DEBUG] ❌ grad_bias has NaN! alpha={ctx.alpha:.4f}, value={grad_bias.item()}")
+                     if bias is not None else None)                         # [N]
 
         _lecac_perf["bwd_n"]  += 1
         _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
