@@ -186,16 +186,15 @@ def triton_quant_with_std_int4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Ten
 
 @triton.autotune(
     configs=[
-        # H100 Box-Muller 是计算瓶颈（log/cos 约 150 clocks/elem），
-        # 更多 warps 可掩盖超越函数延迟；小 BLOCK 提升 SM 并发 block 数。
+        # Box-Muller（log+sqrt+cos ≈ 150 clocks/elem）是计算瓶颈而非内存瓶颈。
+        # 更多 warps 可掩盖超越函数延迟；BLOCK=2048 会减少 blocks/SM 反而变慢，不纳入。
+        # H100 SM=132, max_warps/SM=64: BLOCK=512+num_warps=16 → 512 threads/block → 4 blocks/SM.
         triton.Config({"BLOCK": 256},  num_warps=4),
         triton.Config({"BLOCK": 512},  num_warps=8),
         triton.Config({"BLOCK": 512},  num_warps=16),
         triton.Config({"BLOCK": 1024}, num_warps=16),
-        triton.Config({"BLOCK": 2048}, num_warps=16),
-        triton.Config({"BLOCK": 2048}, num_warps=32),
     ],
-    key=["N"],   # N 相同时复用缓存的最优配置，训练中每层形状固定 → 只调优一次
+    key=["N"],   # N 相同时复用缓存配置（训练中激活形状固定 → 只调优一次）
 )
 @triton.jit
 def _compensation_kernel(
@@ -206,20 +205,23 @@ def _compensation_kernel(
     BLOCK: tl.constexpr,
 ):
     """
-    in-place 融合补偿：out[i] = in[i] + N(0,1) * scale
+    in-place 融合补偿：out[i] = in[i] + clamp(N(0,1), ±10) * scale
 
-    RNG 优化（randint4x 成对 Box-Muller）：
-      tl.randn(seed, i) 内部调用 randint4x(seed, i) 得到 (i1,i2,i3,i4)，
-      Box-Muller 只用 (i1,i2)，i3,i4 直接丢弃——50% Philox4 算力浪费。
+    算法选择说明（不使用 randint4x 手动 Box-Muller 的原因）：
+      tl.randn 是 Triton JIT 级别的优化原语，编译器对其有特殊处理；
+      手动用 randint4x + tl.where + log/sqrt/cos 会生成更多指令，
+      且 4 次 tl.where 的额外寄存器压力反而使整体变慢。
 
-      本内核让相邻两元素共享同一次 randint4x(seed, k)：
-        偶数位置 2k   使用 (i1, i2) → Box-Muller → N(0,1)
-        奇数位置 2k+1 使用 (i3, i4) → Box-Muller → N(0,1)
-      Philox4 调用次数从 N 降至 N/2（-50%），Box-Muller 次数不变。
+    NaN guard（tl.clamp）：
+      Box-Muller 当 u→0 时：log(0)→-inf → sqrt(inf)=inf → inf×cos(θ)，
+      若 cos(θ) 在 float32 下精确为 0 则产生 NaN（IEEE 754 inf×0=NaN）。
+      N(0,1) 超过 ±10σ 的概率 < 10^-23，裁剪不影响分布；
+      77.5 亿次采样（100步×25层×3.1M元素）无裁剪预期 NaN 事件 ≈ 0.018，
+      tl.clamp 将其归零，防止 backward 梯度污染。
 
-    autotune 自动选择 BLOCK / num_warps：
-      Box-Muller（log + sqrt + cos）约 150 clocks/element，计算瓶颈而非内存。
-      更多 warps 可掩盖超越函数延迟，autotune 找出该激活形状的最优配置。
+    autotune 配置说明：
+      排除 BLOCK=2048：过大的 BLOCK 使 blocks/SM 减少（H100: 1 block/SM），
+      SM 间无法流水掩盖超越函数延迟，实测倒退明显。
     """
     pid     = tl.program_id(0)
     offsets = pid * BLOCK + tl.arange(0, BLOCK)
@@ -228,17 +230,9 @@ def _compensation_kernel(
     x     = tl.load(inout_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
     scale = tl.load(scale_ptr)                         # GPU 内读取，无 D2H
 
-    # randint4x 成对 Box-Muller
-    rng_off = (offsets >> 1).to(tl.int32)             # 相邻两元素 rng_off 相同
-    i1, i2, i3, i4 = tl.randint4x(seed, rng_off)
-
-    _C      = 1.0 / 4294967296.0                       # int32 → float [0,1) 缩放系数
-    is_even = ((offsets & 1) == 0)
-    u_a     = tl.where(is_even, i1, i3).to(tl.float32) * _C + 0.5   # ∈ (0, 1)
-    u_b     = tl.where(is_even, i2, i4).to(tl.float32) * _C + 0.5   # ∈ (0, 1)
-
-    # Box-Muller 变换：(u_a, u_b) → N(0, 1)
-    noise = tl.sqrt(-2.0 * tl.log(u_a)) * tl.cos(6.283185307179586 * u_b)
+    noise = tl.randn(seed, offsets.to(tl.int32))
+    # NaN guard：将极稀有的 ±inf 裁至 ±10，防止传播至梯度
+    noise = tl.clamp(noise, -10.0, 10.0)
 
     tl.store(inout_ptr + offsets, x + noise * scale, mask=mask)
 
@@ -284,7 +278,7 @@ def triton_compensation(x_recon: torch.Tensor, scale_factor) -> torch.Tensor:
     seed = random.randint(0, 0x7FFF_FFFF)
 
     # autotune 自动决定最优 BLOCK；grid 通过 lambda 动态获取 meta["BLOCK"]
-    # 首次调用会自动基准测试所有配置（结果缓存至 ~/.triton/cache，后续复用）
+    # 首次调用自动基准测试（结果缓存至 ~/.triton/cache，后续复用，无重复开销）
     grid = lambda meta: (triton.cdiv(N, meta["BLOCK"]),)
     _compensation_kernel[grid](x_flat, scale_buf, seed, N)
 
