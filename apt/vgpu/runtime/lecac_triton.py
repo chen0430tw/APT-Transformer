@@ -177,3 +177,71 @@ def triton_quant_with_std_int2(x: torch.Tensor) -> tuple[torch.Tensor, torch.Ten
 def triton_quant_with_std_int4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """INT4 Triton 量化 + error_std（替换 _quant_with_std_int4）。"""
     return _triton_quant_with_std(x, clip_lo=-8, clip_hi=7, scale_div=7.0)
+
+
+# ============================================================================
+# 核 3：backward 补偿（randn + scale + add，in-place 融合）
+# ============================================================================
+
+@triton.jit
+def _compensation_kernel(
+    inout_ptr,    # float32 in-place [N]，输出覆盖输入
+    scale,        # float32 标量（补偿幅度 error_std * alpha / dim_balance）
+    seed,         # int32 随机种子（每次调用传入不同值，保证 noise 独立）
+    N,
+    BLOCK: tl.constexpr,
+):
+    """
+    in-place 融合补偿：out[i] = in[i] + tl.randn(seed, i) * scale
+
+    使用 Triton 内置 Philox CBRNG（tl.randn），相比 torch.randn_like：
+      * 无独立 randn kernel 启动——融合进同一 load→compute→store pass
+      * 无额外中间张量分配（3.1M float32 = 12MB HBM 写入省去）
+      * Philox 在 GPU 上并行生成，延迟远低于 PyTorch 调度开销
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < N
+
+    x = tl.load(inout_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    # tl.randn(seed, offsets)：Philox4 CBRNG，(seed, offset) 唯一确定 N(0,1) 样本
+    noise = tl.randn(seed, offsets.to(tl.int32))
+    out = x + noise * scale
+    tl.store(inout_ptr + offsets, out, mask=mask)
+
+
+def triton_compensation(x_recon: torch.Tensor, scale_factor) -> torch.Tensor:
+    """
+    Triton 补偿内核：替换 _compensation_fn 中的 torch.randn_like。
+
+    In-place 修改 x_recon（float32 连续张量），返回同形状张量。
+    每次调用使用 CPU 随机种子，保证跨 step / 层的 noise 不相关。
+
+    Args:
+        x_recon      : float32 激活重构值 [M, K]（backward 中的 dequant 输出）
+        scale_factor : 补偿幅度（error_std * alpha / dimension_balance），
+                       可为 0-d GPU tensor 或 Python float
+
+    Returns:
+        补偿后的张量（与 x_recon 共享内存，形状不变）
+    """
+    # 单标量 D2H 同步（微秒级，相比节省的 ~2900ms 可忽略）
+    if isinstance(scale_factor, torch.Tensor):
+        sf = scale_factor.item()
+    else:
+        sf = float(scale_factor)
+
+    N = x_recon.numel()
+    # 连续 float32 视图（dequantize 通常已满足，view 为 O(1)）
+    if x_recon.is_contiguous() and x_recon.dtype == torch.float32:
+        x_flat = x_recon.view(-1)
+    else:
+        x_flat = x_recon.contiguous().float().view(-1)
+
+    # CPU 随机种子，确保不同 step / 层生成不相关 noise
+    seed = int(torch.randint(0, 0x7FFF_FFFF, (1,)).item())
+
+    grid = (triton.cdiv(N, 1024),)
+    _compensation_kernel[grid](x_flat, sf, seed, N, BLOCK=1024)
+
+    return x_flat.view(x_recon.shape)
