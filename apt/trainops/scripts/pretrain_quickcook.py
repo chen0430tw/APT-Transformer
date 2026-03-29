@@ -227,7 +227,8 @@ MODEL_REGISTRY: Dict[str, Tuple[str, str]] = {
     "gpt4o":   ("apt.model.architectures.gpt4o_model",    "GPT4oModel"),
     "gpt5":    ("apt.model.architectures.gpt5_model",     "GPT5Model"),
     "claude4": ("apt.model.architectures.claude4_model",   "Claude4Model"),
-    "gpto3":   ("apt.model.architectures.gpto3_model",    "GPTo3Model"),
+    "gpto3":      ("apt.model.architectures.gpto3_model",    "GPTo3Model"),
+    "oscillator": ("oscillator.model",                        "Oscillator"),
 }
 
 
@@ -295,6 +296,24 @@ def create_model(arch: str, vocab_size: int, d_model: int, num_heads: int,
             num_layers=num_layers,
             max_seq_len=max_seq_len,
         )
+    elif arch == "oscillator":
+        import sys; sys.path.insert(0, "/work/twsuday816/Oscillator")
+        from oscillator.model import Oscillator
+        from oscillator.config import OscillatorConfig
+        cfg = OscillatorConfig(
+            vocab_size=vocab_size,
+            max_seq_len=max_seq_len,
+            d_model=d_model,
+            n_heads=num_heads,
+            n_layers=num_layers,
+            d_ff=d_model * 4,
+            dropout=0.1,
+            n_otal_steps=3,
+            lam=0.3,
+            phase_topk=max_seq_len // 4,
+            adj_topk=max_seq_len // 4,
+        )
+        model = Oscillator(cfg)
     else:
         raise ValueError(f"未知架构: {arch}")
 
@@ -2309,6 +2328,9 @@ class QuickCookTrainer:
             logits = base_model(input_ids=input_ids)
         elif model_class == "Claude4Model":
             logits = base_model(input_ids=input_ids)
+        elif model_class == "Oscillator":
+            output = base_model(input_ids)
+            logits = output["logits"]
         else:
             # APTModel / APTModel-Lite: (src_tokens, tgt_tokens)
             output = base_model(src_tokens=input_ids, tgt_tokens=labels)
