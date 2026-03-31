@@ -310,6 +310,8 @@ def create_model(arch: str, vocab_size: int, d_model: int, num_heads: int,
             dropout=0.1,
             n_otal_steps=3,
             lam=0.3,
+            adj_mode="mixed_local",
+            adj_mix_beta=0.30,
             phase_topk=max_seq_len // 4,
             adj_topk=max_seq_len // 4,
         )
@@ -1046,6 +1048,9 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
                 example = next(stream)
             except StopIteration:
                 return None  # 已耗尽
+            except Exception as e:
+                logger.warning(f"{name} 读取异常 (跳过): {e}")
+                return []  # 偶发 zstd/fsspec 错误, 视为空文档继续
             text = self._extract_text(example, name)
             if text is None or len(text.strip()) < 10:
                 return []  # 空文档, 返回空 list (非 None, 表示未耗尽)
@@ -1142,6 +1147,9 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
                     except StopIteration:
                         logger.info(f"数据源 {chosen} 已耗尽")
                         interleaved_exhausted.add(chosen)
+                        continue
+                    except Exception as e:
+                        logger.warning(f"{chosen} 读取异常 (跳过): {e}")
                         continue
 
                 if text is None or len(text.strip()) < 10:
@@ -1800,9 +1808,9 @@ class QuickCookTrainer:
             collate_fn=lambda batch: quickcook_collate_fn(
                 batch, pad_token_id=self.tokenizer.pad_token_id
             ),
-            num_workers=2,
+            num_workers=1,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=4,
+            prefetch_factor=2,
         )
 
     def _create_optimizer_and_scheduler(self, total_steps: int):

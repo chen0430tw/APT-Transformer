@@ -27,4 +27,5 @@ python -m apt.trainops.scripts.pretrain_quickcook \
     --lr 2e-3 \
     --log-interval 20 \
     --no-distributed \
-    --cache-dir /work/twsuday816/.cache
+    --cache-dir /work/twsuday816/.cache \
+    --hlbd-path /work/twsuday816/APT-Transformer/data/HLBD_Full_V2.json
