@@ -13,9 +13,9 @@
 #   - num_workers=1, prefetch_factor=2  异步预取 + zstd 异常兜底
 #   - zstd/fsspec 读流异常只 warning 跳过，不炸训练
 
-set -euo pipefail
-
 module load miniconda3/24.11.1
+
+set -euo pipefail
 
 export PYTHONPATH=/work/twsuday816/Oscillator:/work/twsuday816/APT-Transformer:$PYTHONPATH
 export TORCHINDUCTOR_COMPILE_THREADS=${COMPILE_THREADS:-4}
