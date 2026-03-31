@@ -6,9 +6,10 @@
 #   bash /work/twsuday816/APT-Transformer/slurm/run_osc_quickcook_login.sh
 #   bash /work/twsuday816/APT-Transformer/slurm/run_osc_quickcook_login.sh --max-steps 500
 #   bash /work/twsuday816/APT-Transformer/slurm/run_osc_quickcook_login.sh --output-dir /work/twsuday816/my_run
+#   COMPILE_THREADS=8 bash /work/twsuday816/APT-Transformer/slurm/run_osc_quickcook_login.sh
 #
 # 稳定配置（2026-03-31 验证）：
-#   - TORCHINDUCTOR_COMPILE_THREADS=4  避免编译线程争用
+#   - TORCHINDUCTOR_COMPILE_THREADS=4  避免编译线程争用（可用 COMPILE_THREADS=N 覆盖）
 #   - num_workers=1, prefetch_factor=2  异步预取 + zstd 异常兜底
 #   - zstd/fsspec 读流异常只 warning 跳过，不炸训练
 
@@ -17,7 +18,7 @@ set -euo pipefail
 module load miniconda3/24.11.1
 
 export PYTHONPATH=/work/twsuday816/Oscillator:/work/twsuday816/APT-Transformer:$PYTHONPATH
-export TORCHINDUCTOR_COMPILE_THREADS=4
+export TORCHINDUCTOR_COMPILE_THREADS=${COMPILE_THREADS:-4}
 
 cd /work/twsuday816/APT-Transformer
 
