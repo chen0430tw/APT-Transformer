@@ -17,7 +17,7 @@ module load miniconda3/24.11.1
 
 set -euo pipefail
 
-export PYTHONPATH=/work/twsuday816/Oscillator:/work/twsuday816/APT-Transformer:$PYTHONPATH
+export PYTHONPATH=/work/twsuday816/Oscillator:/work/twsuday816/APT-Transformer:${PYTHONPATH:-}
 export TORCHINDUCTOR_COMPILE_THREADS=${COMPILE_THREADS:-4}
 
 cd /work/twsuday816/APT-Transformer
