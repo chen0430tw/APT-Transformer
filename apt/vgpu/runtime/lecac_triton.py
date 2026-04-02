@@ -180,6 +180,60 @@ def triton_quant_with_std_int4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Ten
     return _triton_quant_with_std(x, clip_lo=-8, clip_hi=7, scale_div=7.0)
 
 
+@triton.jit
+def _quant_only_kernel(
+    x_ptr,
+    xq_ptr,
+    scale_ptr,
+    N,
+    CLIP_LO: tl.constexpr,
+    CLIP_HI: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < N
+    x = tl.load(x_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    scale = tl.load(scale_ptr)
+    inv_scale = 1.0 / scale
+    xq_f = libdevice.round(x * inv_scale)
+    xq_f = tl.clamp(xq_f, CLIP_LO, CLIP_HI)
+    tl.store(xq_ptr + offsets, xq_f.to(tl.int8), mask=mask)
+
+
+def _triton_quant_only(
+    x: torch.Tensor,
+    clip_lo: int,
+    clip_hi: int,
+    scale_div: float,
+    block: int = 1024,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    N = x.numel()
+    device = x.device
+    x_flat = x.contiguous().view(-1)
+    if x_flat.dtype != torch.float32:
+        x_flat = x_flat.float()
+    grid = (triton.cdiv(N, block),)
+    amax_buf = x_flat.new_zeros(1)
+    x_q_flat = torch.empty(N, dtype=torch.int8, device=device)
+    _amax_kernel[grid](x_flat, amax_buf, N, BLOCK=block)
+    scale_buf = torch.clamp(amax_buf / scale_div, min=1e-6)
+    _quant_only_kernel[grid](
+        x_flat, x_q_flat, scale_buf, N, CLIP_LO=clip_lo, CLIP_HI=clip_hi, BLOCK=block
+    )
+    x_q = x_q_flat.view(x.shape)
+    scale = scale_buf.squeeze(0)
+    return x_q, scale
+
+
+def triton_quant_only_int2(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return _triton_quant_only(x, clip_lo=-2, clip_hi=1, scale_div=1.0)
+
+
+def triton_quant_only_int4(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return _triton_quant_only(x, clip_lo=-8, clip_hi=7, scale_div=7.0)
+
+
 # ============================================================================
 # 核 3：backward 补偿（randn + scale + add，in-place 融合）
 # ============================================================================

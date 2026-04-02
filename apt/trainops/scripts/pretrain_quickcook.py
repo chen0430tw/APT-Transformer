@@ -2306,6 +2306,7 @@ class QuickCookTrainer:
         # Checkpoint 选项
         compress_checkpoints: bool = False,
         save_optimizer_state: bool = False,
+        disable_anomaly_detection: bool = False,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -2322,6 +2323,7 @@ class QuickCookTrainer:
         self.save_interval = save_interval
         self.max_steps = max_steps
         self.epochs = epochs
+        self.disable_anomaly_detection = disable_anomaly_detection
         self.model_config = model_config or {}
         if self.model_config:
             _required = {"arch", "vocab_size", "d_model", "num_heads", "num_layers", "max_seq_len"}
@@ -2837,8 +2839,8 @@ class QuickCookTrainer:
             outputs = self._forward(input_ids, labels)
             loss = outputs["loss"] / grad_accum
 
-        # 🔍 前10步启用anomaly detection来捕获NaN来源
-        use_anomaly_detection = self.global_step < 10
+        # 🔍 前10步启用 anomaly detection 来捕获 NaN 来源，允许显式关闭
+        use_anomaly_detection = (self.global_step < 10) and not getattr(self, "disable_anomaly_detection", False)
         if use_anomaly_detection:
             with torch.autograd.detect_anomaly():
                 if scaler is not None:
@@ -3311,6 +3313,8 @@ def parse_args():
     parser.add_argument("--verbose", action="store_true", help="详细日志")
     parser.add_argument("--torch-compile", action="store_true",
                         help="启用 torch.compile 加速 (Blackwell 硬件自动开启)")
+    parser.add_argument("--disable-anomaly-detection", action="store_true",
+                        help="Disable the first-10-step autograd anomaly detection debug path")
     parser.add_argument("--compress-checkpoints", action="store_true",
                         help="checkpoint 保存为 gzip 压缩格式 (.pt.gz, ~50%% 体积). "
                              "磁盘紧张时启用，调试时建议关闭（默认关闭）")
@@ -3433,8 +3437,17 @@ def main():
             "batch_size":           (8,    8),
             "gradient_accumulation":(1,    2),
         }
+        _explicit_cli_flags = set(sys.argv[1:])
+        _flag_names = {
+            "d_model": "--d-model",
+            "num_heads": "--num-heads",
+            "num_layers": "--num-layers",
+            "max_seq_len": "--max-seq-len",
+            "batch_size": "--batch-size",
+            "gradient_accumulation": "--gradient-accumulation",
+        }
         for attr, (default_val, blackwell_val) in _B200_OVERRIDES.items():
-            if getattr(args, attr, default_val) == default_val:
+            if _flag_names.get(attr) not in _explicit_cli_flags and getattr(args, attr, default_val) == default_val:
                 setattr(args, attr, blackwell_val)
         # bf16 + torch.compile 强制开启
         args.no_mixed_precision = False
@@ -3868,6 +3881,7 @@ def main():
         dataloader_prefetch_factor=_dl_prefetch,
         compress_checkpoints=args.compress_checkpoints,
         save_optimizer_state=args.save_optimizer_state,
+        disable_anomaly_detection=args.disable_anomaly_detection,
         # 可选: 虚拟 GPU 加速
         virtual_vram_config=vram_cfg,
         vb_adapter=vb_adapter,

@@ -248,11 +248,15 @@ _compensation        = _try_compile(_compensation_fn)
 _HAVE_TRITON_KERNELS = False
 try:
     from apt.vgpu.runtime.lecac_triton import (
+        triton_quant_only_int2 as _triton_qonly2,
+        triton_quant_only_int4 as _triton_qonly4,
         triton_quant_with_std_int2 as _triton_qstd2,
         triton_quant_with_std_int4 as _triton_qstd4,
     )
     _quant_with_std_int2 = _triton_qstd2
     _quant_with_std_int4 = _triton_qstd4
+    _quant_only_int2 = _triton_qonly2
+    _quant_only_int4 = _triton_qonly4
     _HAVE_TRITON_KERNELS = True
 except Exception as _e:
     logger.debug("Triton 量化内核不可用，回退到 torch.compile: %s", _e)
