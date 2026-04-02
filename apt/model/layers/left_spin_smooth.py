@@ -128,7 +128,9 @@ class LeftSpinStep(nn.Module):
         phi_raw = self.alpha * F.softplus(s - self.tau)
 
         # 惯性平滑
-        # expand_as：标量 phi_prev（初始占位）自动广播到 phi_raw 形状，无需条件分支
+        # phi_prev 形状变了（seq_len 不同）时重置为标量占位，避免 expand_as 失败
+        if self.phi_prev.numel() != 1 and self.phi_prev.shape != phi_raw.shape:
+            self.phi_prev.resize_(1).zero_()
         phi = (1 - self.beta) * self.phi_prev.expand_as(phi_raw) + self.beta * phi_raw
 
         # resize_as_ + copy_：处理首次调用（标量→真实形状）和形状不变两种情况，
