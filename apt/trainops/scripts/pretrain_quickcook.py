@@ -2959,33 +2959,42 @@ class QuickCookTrainer:
             )
             logger.info(f"DeepSpeed 训练完成! 总步数: {self.global_step}")
 
+    # arch -> forward 签名分组（按 MODEL_REGISTRY key，不依赖类名）
+    # torch.compile 会改变 type().__name__，所以必须用 model_config["arch"] 分流
+    _ARCH_TEXT_IDS  = {"gpt4o", "gpto3"}
+    _ARCH_INPUT_IDS = {"gpt5", "claude4", "standard-transformer"}
+    _ARCH_POSITIONAL = {"oscillator", "transformer"}
+    # 其余（apt, apt-lite）走 src_tokens/tgt_tokens
+
     def _forward(self, input_ids, labels):
         """
         标准前向传播 (适配不同模型接口)。
 
-        各模型 forward 签名不同:
-          - APTModel:   (src_tokens, tgt_tokens) -> logits
-          - GPT5Model:  (input_ids) -> logits
-          - GPT4oModel: (text_ids) -> logits
-          - Claude4Model: (input_ids) -> logits
-          - GPTo3Model: (text_ids) -> logits
+        分流依据 self.model_config["arch"]（训练开始前写入，compile 不影响），
+        不再依赖 type(base_model).__name__（torch.compile 后类名变为 OptimizedModule）。
 
-        所有模型均返回 logits, 需要在此处统一计算交叉熵损失。
+          arch gpt4o / gpto3           → base_model(text_ids=input_ids)
+          arch gpt5 / claude4 /
+               standard-transformer   → base_model(input_ids=input_ids)
+          arch oscillator              → base_model(input_ids)          positional
+          arch transformer             → base_model(input_ids, causal=True)
+          arch apt / apt-lite          → base_model(src_tokens=, tgt_tokens=)
         """
+        arch = self.model_config.get("arch", "apt")
         base_model = self.model.module if hasattr(self.model, "module") else self.model
-        model_class = type(base_model).__name__
 
-        if model_class in ("GPT4oModel", "GPTo3Model"):
+        if arch in self._ARCH_TEXT_IDS:
             logits = base_model(text_ids=input_ids)
-        elif model_class == "GPT5Model":
+        elif arch in self._ARCH_INPUT_IDS:
             logits = base_model(input_ids=input_ids)
-        elif model_class == "Claude4Model":
-            logits = base_model(input_ids=input_ids)
-        elif model_class in ("Oscillator", "Transformer"):
-            output = base_model(input_ids) if model_class == "Oscillator" else base_model(input_ids, causal=True)
-            logits = output["logits"]
+        elif arch == "oscillator":
+            output = base_model(input_ids)
+            logits = output["logits"] if isinstance(output, dict) else output
+        elif arch == "transformer":
+            output = base_model(input_ids, causal=True)
+            logits = output["logits"] if isinstance(output, dict) else output
         else:
-            # APTModel / APTModel-Lite: (src_tokens, tgt_tokens)
+            # apt / apt-lite: (src_tokens, tgt_tokens)
             output = base_model(src_tokens=input_ids, tgt_tokens=labels)
             if isinstance(output, dict) and "loss" in output:
                 return output
@@ -3003,14 +3012,18 @@ class QuickCookTrainer:
 
     def _forward_engine(self, engine, input_ids, labels):
         """DeepSpeed engine 前向传播 (适配不同模型接口)"""
-        # DeepSpeed engine 内部包装了模型, 用 engine.module 获取原始模型类名
-        inner = engine.module if hasattr(engine, "module") else engine
-        model_class = type(inner).__name__
+        arch = self.model_config.get("arch", "apt")
 
-        if model_class in ("GPT4oModel", "GPTo3Model"):
+        if arch in self._ARCH_TEXT_IDS:
             logits = engine(text_ids=input_ids)
-        elif model_class in ("GPT5Model", "Claude4Model"):
+        elif arch in self._ARCH_INPUT_IDS:
             logits = engine(input_ids=input_ids)
+        elif arch == "oscillator":
+            output = engine(input_ids)
+            logits = output["logits"] if isinstance(output, dict) else output
+        elif arch == "transformer":
+            output = engine(input_ids, causal=True)
+            logits = output["logits"] if isinstance(output, dict) else output
         else:
             output = engine(src_tokens=input_ids, tgt_tokens=labels)
             if isinstance(output, dict) and "loss" in output:
