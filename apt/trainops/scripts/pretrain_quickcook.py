@@ -105,6 +105,42 @@ if _datasets_supports_trust_remote_code():
 
 
 # ============================================================================
+# 硬件探测
+# ============================================================================
+
+def detect_hardware_profile() -> Dict[str, Any]:
+    """
+    探测当前 GPU 硬件，返回 profile dict。
+
+    profile 取值:
+      'blackwell' - B200 / GB200 / compute major >= 10
+      'hopper'    - H100 / H200 / compute major 9
+      'default'   - 其他（A100, V100, 无 GPU 等）
+    """
+    if not torch.cuda.is_available():
+        return {"profile": "default", "gpu_name": "cpu", "vram_gb": 0.0, "compute_major": 0}
+
+    props = torch.cuda.get_device_properties(0)
+    name_upper = props.name.upper()
+    vram_gb = props.total_memory / (1 << 30)
+    major = props.major
+
+    if major >= 10 or any(k in name_upper for k in ("B200", "GB200", "BLACKWELL")):
+        profile = "blackwell"
+    elif major >= 9 or any(k in name_upper for k in ("H100", "H200", "HOPPER")):
+        profile = "hopper"
+    else:
+        profile = "default"
+
+    return {
+        "profile": profile,
+        "gpu_name": props.name,
+        "vram_gb": vram_gb,
+        "compute_major": major,
+    }
+
+
+# ============================================================================
 # 可选依赖: 虚拟 GPU 加速 (Virtual VRAM / Virtual Blackwell / Virtual A100)
 # ============================================================================
 
@@ -2252,6 +2288,9 @@ class QuickCookTrainer:
         profile_warmup_steps: int = 5,
         profile_active_steps: int = 20,
         profile_output_name: str = "tensorearch_trace.json",
+        # DataLoader 并行度
+        dataloader_num_workers: int = 1,
+        dataloader_prefetch_factor: int = 2,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -2299,6 +2338,8 @@ class QuickCookTrainer:
 
         self.global_step = 0
         self.best_loss = float("inf")
+        self._dataloader_num_workers = dataloader_num_workers
+        self._dataloader_prefetch_factor = dataloader_prefetch_factor
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -2310,9 +2351,9 @@ class QuickCookTrainer:
             collate_fn=lambda batch: quickcook_collate_fn(
                 batch, pad_token_id=self.tokenizer.pad_token_id
             ),
-            num_workers=1,
+            num_workers=self._dataloader_num_workers,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=2,
+            prefetch_factor=self._dataloader_prefetch_factor,
         )
 
     def _create_optimizer_and_scheduler(self, total_steps: int):
@@ -2366,8 +2407,16 @@ class QuickCookTrainer:
 
         return optimizer, scheduler
 
-    def _save_checkpoint(self, optimizer, scheduler, metrics: Dict):
-        """保存检查点 (仅 rank 0)"""
+    def _save_checkpoint(self, optimizer, scheduler, metrics: Dict, keep_last: int = 2):
+        """保存检查点 (仅 rank 0)
+
+        保守写法：
+          1. 先写 .tmp 临时文件，写完再原子 rename 到最终路径
+             → 避免写到一半崩溃留下损坏文件
+          2. 只保留最近 keep_last 个 checkpoint
+             → 避免大卡上无限累积占满磁盘
+          3. 写 latest.txt 指针，方便断点续训直接找最新 ckpt
+        """
         if self.rank != 0:
             return
 
@@ -2384,13 +2433,44 @@ class QuickCookTrainer:
             "model_config": self.model_config,
         }
 
-        ckpt_path = os.path.join(
-            self.output_dir, f"checkpoint_step_{self.global_step}.pt"
-        )
-        torch.save(ckpt, ckpt_path)
+        ckpt_name = f"checkpoint_step_{self.global_step}.pt"
+        ckpt_path = os.path.join(self.output_dir, ckpt_name)
+        tmp_path  = ckpt_path + ".tmp"
+
+        # 1. 写临时文件
+        try:
+            torch.save(ckpt, tmp_path)
+        except Exception as e:
+            logger.error(f"checkpoint 写入失败 (tmp): {e}")
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            return
+
+        # 2. 原子 rename（同盘 rename 在 Linux/macOS 上是原子操作）
+        os.replace(tmp_path, ckpt_path)
         logger.info(f"检查点已保存: {ckpt_path}")
 
-        # 同时保存分词器
+        # 3. 更新 latest.txt 指针
+        latest_txt = os.path.join(self.output_dir, "latest.txt")
+        with open(latest_txt, "w", encoding="utf-8") as _f:
+            _f.write(ckpt_name + "\n")
+
+        # 4. 清理旧 checkpoint，只保留最近 keep_last 个
+        import glob as _glob
+        old_ckpts = sorted(
+            _glob.glob(os.path.join(self.output_dir, "checkpoint_step_*.pt")),
+            key=lambda p: int(os.path.basename(p).replace("checkpoint_step_", "").replace(".pt", ""))
+        )
+        for old in old_ckpts[:-keep_last]:
+            try:
+                os.remove(old)
+                logger.debug(f"清理旧 checkpoint: {old}")
+            except OSError:
+                pass
+
+        # 5. 同时保存分词器
         tok_path = os.path.join(self.output_dir, "tokenizer.json")
         self.tokenizer.save(tok_path)
 
@@ -3165,6 +3245,8 @@ def parse_args():
                              "训练集群上应指向 work 目录而非 home。")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
+    parser.add_argument("--torch-compile", action="store_true",
+                        help="启用 torch.compile 加速 (Blackwell 硬件自动开启)")
     parser.add_argument("--profile-slices", action="store_true",
                         help="导出轻量切片 profiling，并在输出目录写出 Tensorearch trace JSON")
     parser.add_argument("--profile-warmup-steps", type=int, default=5,
@@ -3268,6 +3350,38 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # --- 硬件 profile 探测 & Blackwell 默认值自动覆盖 ---
+    # 只在用户没有显式偏离 argparse 默认值时才生效
+    _hw = detect_hardware_profile()
+    if _hw["profile"] == "blackwell":
+        _B200_OVERRIDES = {
+            # (argparse默认值, Blackwell目标值)
+            "d_model":              (768,  2048),
+            "num_heads":            (12,   16),
+            "num_layers":           (12,   24),
+            "max_seq_len":          (2048, 4096),
+            "batch_size":           (8,    32),
+            "gradient_accumulation":(1,    4),
+        }
+        for attr, (default_val, blackwell_val) in _B200_OVERRIDES.items():
+            if getattr(args, attr, default_val) == default_val:
+                setattr(args, attr, blackwell_val)
+        # bf16 + torch.compile 强制开启
+        args.no_mixed_precision = False
+        args.mixed_precision_dtype = "bf16"
+        if not args.torch_compile:
+            args.torch_compile = True
+        logger.info(
+            f"[HW] Blackwell detected ({_hw['gpu_name']}, {_hw['vram_gb']:.0f}GB) — "
+            f"d_model={args.d_model}, layers={args.num_layers}, "
+            f"seq={args.max_seq_len}, bs={args.batch_size}, "
+            f"grad_accum={args.gradient_accumulation}, torch_compile=True"
+        )
+    elif _hw["profile"] == "hopper":
+        logger.info(f"[HW] Hopper detected ({_hw['gpu_name']}, {_hw['vram_gb']:.0f}GB) — using default settings")
+    else:
+        logger.info(f"[HW] profile=default ({_hw['gpu_name']}, {_hw['vram_gb']:.0f}GB)")
+
     # --- --stage 速记: 自动覆盖数据源开关和权重为推荐配置 ---
     if args.stage == 2:
         # Stage 2: 数学/推理强化
@@ -3336,21 +3450,35 @@ def main():
     tokenizer = None
     tok_path = os.path.join(args.output_dir, "tokenizer.json")
 
+    # 优先级: --tokenizer-path > output_dir/tokenizer.json (已有缓存) > 重新训练
+    _tok_src = None
     if args.tokenizer_path and os.path.exists(args.tokenizer_path):
+        _tok_src = args.tokenizer_path
+    elif os.path.exists(tok_path):
+        _tok_src = tok_path
+
+    if _tok_src:
         # 路径 A: 所有 rank 直接加载已有分词器 (无需 barrier)
         if rank == 0:
-            logger.info(f"加载已有分词器: {args.tokenizer_path}")
-        tokenizer = AdaptiveBPETokenizer.load(args.tokenizer_path)
+            logger.info(f"复用已有分词器: {_tok_src}")
+        tokenizer = AdaptiveBPETokenizer.load(_tok_src)
     else:
         # 路径 B: rank 0 训练, 其他 rank 等待后加载
         if rank == 0:
             logger.info("未找到分词器, 从混合语料训练新分词器...")
             corpus_path = os.path.join(args.output_dir, "tokenizer_corpus.txt")
-            texts = collect_tokenizer_corpus(
-                hlbd_path=args.hlbd_path,
-                sample_size=args.tokenizer_sample_size,
-                output_path=corpus_path,
-            )
+            # corpus 缓存复用: 已有语料文件直接读取，跳过重采样
+            if os.path.exists(corpus_path):
+                logger.info(f"  复用已有语料缓存: {corpus_path}")
+                with open(corpus_path, encoding="utf-8") as _f:
+                    texts = [line.rstrip("\n") for line in _f if line.strip()]
+                logger.info(f"  语料缓存加载: {len(texts)} 条")
+            else:
+                texts = collect_tokenizer_corpus(
+                    hlbd_path=args.hlbd_path,
+                    sample_size=args.tokenizer_sample_size,
+                    output_path=corpus_path,
+                )
 
             tokenizer = AdaptiveBPETokenizer.train_from_iterator(
                 iter(texts),
@@ -3575,6 +3703,16 @@ def main():
                     f"prefetch_window={args.va100_prefetch_window}"
                 )
 
+    # torch.compile (在 distributed wrap 之前，VB/LECAC 替换之后)
+    if getattr(args, "torch_compile", False) and torch.cuda.is_available():
+        try:
+            model = torch.compile(model)
+            if rank == 0:
+                logger.info("[torch.compile] 模型已编译")
+        except Exception as _tc_err:
+            if rank == 0:
+                logger.warning(f"[torch.compile] 编译失败，跳过: {_tc_err}")
+
     # 分布式包装 (在 VB 替换之后)
     model = wrap_model_distributed(model, device, dist_config, rank, world_size)
 
@@ -3622,6 +3760,10 @@ def main():
         world_size=world_size,
     )
 
+    # DataLoader 并行度: Blackwell 用更激进的预取
+    _dl_num_workers = 4 if _hw["profile"] == "blackwell" else 1
+    _dl_prefetch = 4 if _hw["profile"] == "blackwell" else 2
+
     # --- 训练 ---
     trainer = QuickCookTrainer(
         model=model,
@@ -3639,6 +3781,8 @@ def main():
         save_interval=args.save_interval,
         max_steps=args.max_steps,
         epochs=args.epochs,
+        dataloader_num_workers=_dl_num_workers,
+        dataloader_prefetch_factor=_dl_prefetch,
         # 可选: 虚拟 GPU 加速
         virtual_vram_config=vram_cfg,
         vb_adapter=vb_adapter,
