@@ -2291,6 +2291,9 @@ class QuickCookTrainer:
         # DataLoader 并行度
         dataloader_num_workers: int = 1,
         dataloader_prefetch_factor: int = 2,
+        # Checkpoint 选项
+        compress_checkpoints: bool = False,
+        save_optimizer_state: bool = False,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -2340,6 +2343,8 @@ class QuickCookTrainer:
         self.best_loss = float("inf")
         self._dataloader_num_workers = dataloader_num_workers
         self._dataloader_prefetch_factor = dataloader_prefetch_factor
+        self._compress_checkpoints = compress_checkpoints
+        self._save_optimizer_state = save_optimizer_state
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -2407,39 +2412,56 @@ class QuickCookTrainer:
 
         return optimizer, scheduler
 
-    def _save_checkpoint(self, optimizer, scheduler, metrics: Dict, keep_last: int = 2):
+    def _save_checkpoint(self, optimizer, scheduler, metrics: Dict,
+                         keep_last: int = 1, save_optimizer_state: bool = False,
+                         compress: bool = False):
         """保存检查点 (仅 rank 0)
 
         保守写法：
-          1. 先写 .tmp 临时文件，写完再原子 rename 到最终路径
+          1. 先写 .tmp 临时文件，写完再原子 rename
              → 避免写到一半崩溃留下损坏文件
-          2. 只保留最近 keep_last 个 checkpoint
-             → 避免大卡上无限累积占满磁盘
-          3. 写 latest.txt 指针，方便断点续训直接找最新 ckpt
+          2. compress=True 时写 .pt.gz (gzip compresslevel=1, ~50% 体积)
+             compress=False (默认) 时写 .pt，方便直接检查
+          3. 默认不保存 optimizer state (Adam = 2× 模型体积)
+             需要精确断点续训时传 save_optimizer_state=True
+          4. 只保留最近 keep_last 个 checkpoint (默认 1)
+          5. 写 latest.txt 指针
         """
         if self.rank != 0:
             return
 
+        import glob as _glob
+
         base_model = self.model.module if hasattr(self.model, "module") else self.model
 
-        ckpt = {
+        ckpt: Dict[str, Any] = {
             "format": "quickcook",
             "global_step": self.global_step,
             "model_state_dict": base_model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "metrics": metrics,
             "tokenizer_vocab_size": self.tokenizer.vocab_size,
             "model_config": self.model_config,
+            "has_optimizer_state": save_optimizer_state,
         }
+        if save_optimizer_state:
+            ckpt["optimizer_state_dict"] = optimizer.state_dict()
 
-        ckpt_name = f"checkpoint_step_{self.global_step}.pt"
+        ext = ".pt.gz" if compress else ".pt"
+        ckpt_name = f"checkpoint_step_{self.global_step}{ext}"
         ckpt_path = os.path.join(self.output_dir, ckpt_name)
         tmp_path  = ckpt_path + ".tmp"
 
         # 1. 写临时文件
         try:
-            torch.save(ckpt, tmp_path)
+            if compress:
+                import gzip as _gzip, io as _io
+                buf = _io.BytesIO()
+                torch.save(ckpt, buf)
+                with _gzip.open(tmp_path, "wb", compresslevel=1) as gz_f:
+                    gz_f.write(buf.getvalue())
+            else:
+                torch.save(ckpt, tmp_path)
         except Exception as e:
             logger.error(f"checkpoint 写入失败 (tmp): {e}")
             try:
@@ -2448,9 +2470,14 @@ class QuickCookTrainer:
                 pass
             return
 
-        # 2. 原子 rename（同盘 rename 在 Linux/macOS 上是原子操作）
+        # 2. 原子 rename
         os.replace(tmp_path, ckpt_path)
-        logger.info(f"检查点已保存: {ckpt_path}")
+        size_mb = os.path.getsize(ckpt_path) / (1 << 20)
+        logger.info(
+            f"检查点已保存: {ckpt_path} ({size_mb:.0f}MB, "
+            f"optimizer={'yes' if save_optimizer_state else 'no'}, "
+            f"compressed={compress})"
+        )
 
         # 3. 更新 latest.txt 指针
         latest_txt = os.path.join(self.output_dir, "latest.txt")
@@ -2458,10 +2485,13 @@ class QuickCookTrainer:
             _f.write(ckpt_name + "\n")
 
         # 4. 清理旧 checkpoint，只保留最近 keep_last 个
-        import glob as _glob
+        def _step_num(p: str) -> int:
+            base = os.path.basename(p).replace("checkpoint_step_", "").replace(".pt.gz", "").replace(".pt", "")
+            return int(base) if base.isdigit() else 0
+
         old_ckpts = sorted(
-            _glob.glob(os.path.join(self.output_dir, "checkpoint_step_*.pt")),
-            key=lambda p: int(os.path.basename(p).replace("checkpoint_step_", "").replace(".pt", ""))
+            _glob.glob(os.path.join(self.output_dir, "checkpoint_step_*.pt*")),
+            key=_step_num,
         )
         for old in old_ckpts[:-keep_last]:
             try:
@@ -2752,7 +2782,9 @@ class QuickCookTrainer:
                         if self.global_step % self.save_interval == 0:
                             self._save_checkpoint(
                                 optimizer, scheduler,
-                                {"loss": running_loss, "step": self.global_step}
+                                {"loss": running_loss, "step": self.global_step},
+                                compress=self._compress_checkpoints,
+                                save_optimizer_state=self._save_optimizer_state,
                             )
                             if self.world_size > 1:
                                 dist.barrier()
@@ -2767,7 +2799,9 @@ class QuickCookTrainer:
         # 最终保存
         self._save_checkpoint(
             optimizer, scheduler,
-            {"loss": running_loss, "step": self.global_step, "final": True}
+            {"loss": running_loss, "step": self.global_step, "final": True},
+            compress=self._compress_checkpoints,
+            save_optimizer_state=self._save_optimizer_state,
         )
         self.slice_profiler.export_tensorearch_trace(
             final_loss=progress.last_loss,
@@ -3073,13 +3107,18 @@ def collect_tokenizer_corpus(
 
     logger.info(f"分词器语料总计: {len(texts)} 条")
 
-    # 可选: 保存到文件
+    # 可选: 保存到文件（支持 .gz 自动压缩）
     if output_path:
+        import gzip as _gzip
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            for text in texts:
-                # 一行一条, 去掉换行符
-                f.write(text.replace("\n", " ").strip() + "\n")
+        if output_path.endswith(".gz"):
+            with _gzip.open(output_path, "wt", encoding="utf-8", compresslevel=1) as f:
+                for text in texts:
+                    f.write(text.replace("\n", " ").strip() + "\n")
+        else:
+            with open(output_path, "w", encoding="utf-8") as f:
+                for text in texts:
+                    f.write(text.replace("\n", " ").strip() + "\n")
         logger.info(f"分词器语料已保存到: {output_path}")
 
     return texts
@@ -3247,6 +3286,12 @@ def parse_args():
     parser.add_argument("--verbose", action="store_true", help="详细日志")
     parser.add_argument("--torch-compile", action="store_true",
                         help="启用 torch.compile 加速 (Blackwell 硬件自动开启)")
+    parser.add_argument("--compress-checkpoints", action="store_true",
+                        help="checkpoint 保存为 gzip 压缩格式 (.pt.gz, ~50%% 体积). "
+                             "磁盘紧张时启用，调试时建议关闭（默认关闭）")
+    parser.add_argument("--save-optimizer-state", action="store_true",
+                        help="checkpoint 中保存 optimizer state (Adam=2x模型体积). "
+                             "需要精确断点续训时启用，默认关闭")
     parser.add_argument("--profile-slices", action="store_true",
                         help="导出轻量切片 profiling，并在输出目录写出 Tensorearch trace JSON")
     parser.add_argument("--profile-warmup-steps", type=int, default=5,
@@ -3466,18 +3511,25 @@ def main():
         # 路径 B: rank 0 训练, 其他 rank 等待后加载
         if rank == 0:
             logger.info("未找到分词器, 从混合语料训练新分词器...")
-            corpus_path = os.path.join(args.output_dir, "tokenizer_corpus.txt")
-            # corpus 缓存复用: 已有语料文件直接读取，跳过重采样
-            if os.path.exists(corpus_path):
-                logger.info(f"  复用已有语料缓存: {corpus_path}")
-                with open(corpus_path, encoding="utf-8") as _f:
+            corpus_path_gz  = os.path.join(args.output_dir, "tokenizer_corpus.txt.gz")
+            corpus_path_txt = os.path.join(args.output_dir, "tokenizer_corpus.txt")
+            # corpus 缓存复用: 优先读 .gz，其次读 .txt，都没有就重新采样
+            import gzip as _gzip
+            if os.path.exists(corpus_path_gz):
+                logger.info(f"  复用已有语料缓存 (gz): {corpus_path_gz}")
+                with _gzip.open(corpus_path_gz, "rt", encoding="utf-8") as _f:
+                    texts = [line.rstrip("\n") for line in _f if line.strip()]
+                logger.info(f"  语料缓存加载: {len(texts)} 条")
+            elif os.path.exists(corpus_path_txt):
+                logger.info(f"  复用已有语料缓存 (txt): {corpus_path_txt}")
+                with open(corpus_path_txt, encoding="utf-8") as _f:
                     texts = [line.rstrip("\n") for line in _f if line.strip()]
                 logger.info(f"  语料缓存加载: {len(texts)} 条")
             else:
                 texts = collect_tokenizer_corpus(
                     hlbd_path=args.hlbd_path,
                     sample_size=args.tokenizer_sample_size,
-                    output_path=corpus_path,
+                    output_path=corpus_path_gz,   # 直接保存为 .gz
                 )
 
             tokenizer = AdaptiveBPETokenizer.train_from_iterator(
@@ -3524,7 +3576,13 @@ def main():
             logger.info(f"从检查点恢复: {args.resume}")
         if not os.path.exists(args.resume):
             raise FileNotFoundError(f"检查点文件不存在: {args.resume}")
-        ckpt = torch.load(args.resume, map_location="cpu")
+        if args.resume.endswith(".gz"):
+            import gzip as _gzip, io as _io
+            with _gzip.open(args.resume, "rb") as _gz:
+                _buf = _io.BytesIO(_gz.read())
+            ckpt = torch.load(_buf, map_location="cpu")
+        else:
+            ckpt = torch.load(args.resume, map_location="cpu")
         if not isinstance(ckpt, dict) or "model_state_dict" not in ckpt:
             available_keys = list(ckpt.keys()) if isinstance(ckpt, dict) else type(ckpt).__name__
             raise KeyError(
@@ -3783,6 +3841,8 @@ def main():
         epochs=args.epochs,
         dataloader_num_workers=_dl_num_workers,
         dataloader_prefetch_factor=_dl_prefetch,
+        compress_checkpoints=args.compress_checkpoints,
+        save_optimizer_state=args.save_optimizer_state,
         # 可选: 虚拟 GPU 加速
         virtual_vram_config=vram_cfg,
         vb_adapter=vb_adapter,
