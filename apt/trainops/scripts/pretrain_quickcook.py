@@ -266,6 +266,10 @@ MODEL_REGISTRY: Dict[str, Tuple[str, str]] = {
     "gpto3":      ("apt.model.architectures.gpto3_model",    "GPTo3Model"),
     "oscillator": ("oscillator.model",                        "Oscillator"),
     "transformer": ("transformer.model",                       "Transformer"),
+    # 内置标准 Transformer，无外部依赖，任何环境可用
+    "standard-transformer": (
+        "apt.model.architectures.standard_transformer", "StandardTransformer"
+    ),
 }
 
 
@@ -367,6 +371,14 @@ def create_model(arch: str, vocab_size: int, d_model: int, num_heads: int,
             dropout=0.1,
         )
         model = Transformer(cfg)
+    elif arch == "standard-transformer":
+        model = model_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            num_heads=num_heads,
+            num_layers=num_layers,
+            max_seq_len=max_seq_len,
+        )
     else:
         raise ValueError(f"未知架构: {arch}")
 
@@ -3401,12 +3413,12 @@ def main():
     if _hw["profile"] == "blackwell":
         _B200_OVERRIDES = {
             # (argparse默认值, Blackwell目标值)
-            "d_model":              (768,  2048),
+            "d_model":              (768,  1536),
             "num_heads":            (12,   16),
-            "num_layers":           (12,   24),
-            "max_seq_len":          (2048, 4096),
-            "batch_size":           (8,    32),
-            "gradient_accumulation":(1,    4),
+            "num_layers":           (12,   18),
+            "max_seq_len":          (2048, 3072),
+            "batch_size":           (8,    8),
+            "gradient_accumulation":(1,    2),
         }
         for attr, (default_val, blackwell_val) in _B200_OVERRIDES.items():
             if getattr(args, attr, default_val) == default_val:

@@ -61,13 +61,11 @@ class LeftSpinStep(nn.Module):
         self.gate_type = gate_type
         self.eps = eps
 
-        # 缓冲角历史（用于惯性平滑）
-        # 初始化为标量 0；forward 中通过 expand_as+resize_as_ 自动扩展到实际形状，
-        # 无需任何 Python shape 条件判断
-        self.register_buffer('phi_prev', torch.zeros(1), persistent=False)
-        # 上一次的增量（用于计算二阶导数/加速度）
-        # 初始化为标量 0，numel()==1 表示"未初始化"状态，避免 None 检查
-        self.register_buffer('delta_prev', torch.zeros(1), persistent=False)
+        # 0-dim 标量 buffer：形状永远是 ()，torch.compile 下 shape 稳定
+        # phi_prev  : 上一步 phi 的均值 EMA（广播到任意 [B, T]）
+        # delta_prev: 上一步 ‖Δu‖ 的均值 EMA（广播到任意 [B, T]）
+        self.register_buffer('phi_prev',   torch.zeros(()), persistent=False)
+        self.register_buffer('delta_prev', torch.zeros(()), persistent=False)
 
     def compute_spike_strength(
         self,
@@ -92,17 +90,17 @@ class LeftSpinStep(nn.Module):
             s: 尖点强度 [*]
         """
         # 一阶：相对变化强度
-        norm_u = torch.norm(u, p=2, dim=-1, keepdim=False)
-        norm_delta = torch.norm(delta_u, p=2, dim=-1, keepdim=False)
+        norm_u     = torch.norm(u,       p=2, dim=-1, keepdim=False)  # [B, T]
+        norm_delta = torch.norm(delta_u, p=2, dim=-1, keepdim=False)  # [B, T]
         d = norm_delta / (self.eps + norm_u)
 
         # 二阶：加速度（曲率近似）
-        # numel()==1 表示初始标量占位符（未初始化），跳过计算
-        if delta_prev is not None and delta_prev.numel() > 1 and delta_prev.shape == delta_u.shape:
-            norm_delta_prev = torch.norm(delta_prev, p=2, dim=-1, keepdim=False)
-            delta_diff = delta_u - delta_prev
-            norm_delta_diff = torch.norm(delta_diff, p=2, dim=-1, keepdim=False)
-            a = norm_delta_diff / (self.eps + norm_delta + norm_delta_prev)
+        # delta_prev 是 0-dim 标量（上一步 ‖Δu‖ 的均值），广播到 [B, T]
+        if delta_prev is not None:
+            norm_delta_prev = delta_prev.abs()           # scalar → broadcasts
+            a = (norm_delta - norm_delta_prev).abs() / (
+                self.eps + norm_delta + norm_delta_prev
+            )
         else:
             a = torch.zeros_like(d)
 
@@ -125,22 +123,15 @@ class LeftSpinStep(nn.Module):
             phi: 缓冲角 [*]  (保证 ≥ 0)
         """
         # softplus(s - τ) 当 s > τ 时快速增长，s < τ 时接近0
-        phi_raw = self.alpha * F.softplus(s - self.tau)
+        phi_raw = self.alpha * F.softplus(s - self.tau)           # [B, T]
 
-        # 惯性平滑
-        # phi_prev 形状变了（seq_len 不同）时重置为标量占位，避免 expand_as 失败
-        if self.phi_prev.numel() != 1 and self.phi_prev.shape != phi_raw.shape:
-            self.phi_prev.resize_(1).zero_()
-        phi = (1 - self.beta) * self.phi_prev.expand_as(phi_raw) + self.beta * phi_raw
+        # 惯性平滑：phi_prev 是 0-dim 标量，广播到 phi_raw 形状，shape 始终稳定
+        phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw   # [B, T]
 
-        # resize_as_ + copy_：处理首次调用（标量→真实形状）和形状不变两种情况，
-        # 均为原地操作，不触发新分配
-        self.phi_prev.resize_as_(phi_raw).copy_(phi.detach())
+        # 只将均值写回标量 buffer，形状永不改变
+        self.phi_prev.copy_(phi.detach().mean())
 
-        # 确保非负
-        phi = torch.clamp(phi, min=0.0)
-
-        return phi
+        return torch.clamp(phi, min=0.0)
 
     def apply_gate(self, phi: torch.Tensor) -> torch.Tensor:
         """
@@ -211,10 +202,10 @@ class LeftSpinStep(nn.Module):
         delta_u_eff = g_expanded * delta_u
         u_next = u + delta_u_eff
 
-        # 5. 更新历史
-        # resize_as_ 处理首次（标量占位→真实形状）和后续 shape 不变两种情况，均无重新分配
-        _detached_du = delta_u.detach()
-        self.delta_prev.resize_as_(_detached_du).copy_(_detached_du)
+        # 5. 更新历史：只存均值范数到 0-dim 标量，shape 永不改变
+        self.delta_prev.copy_(
+            delta_u.detach().norm(p=2, dim=-1).mean()
+        )
 
         # 6. 统计信息
         # 保留为张量，避免 .item() 触发 GPU→CPU 同步；
@@ -244,20 +235,13 @@ class LeftSpinStep(nn.Module):
         phi_key = prefix + 'phi_prev'
         delta_key = prefix + 'delta_prev'
 
-        # phi_prev: 如果 shape 不匹配，重置为占位符（首次 forward 会重新 resize）
-        if phi_key in state_dict:
-            saved = state_dict[phi_key]
-            if saved.shape != self.phi_prev.shape:
-                # shape 不同说明 batch/seq 变了，惯性记忆失效，重置为 zeros(1) 占位
-                state_dict[phi_key] = torch.zeros(1, dtype=saved.dtype)
-
-        # delta_prev: shape 不匹配时同样重置为占位符
-        # 注意：delta_prev 现在初始化为 zeros(1)（非 None），直接比较 shape
-        if delta_key in state_dict:
-            saved = state_dict[delta_key]
-            if saved.shape != self.delta_prev.shape:
-                # shape 不同说明 batch/seq/d_model 变了，历史增量失效，重置
-                state_dict[delta_key] = torch.zeros(1, dtype=saved.dtype)
+        # phi_prev / delta_prev 现在是 0-dim 标量；旧 checkpoint 可能保存了高维 shape
+        # 统一折叠成 0-dim，保留数值意义（取均值）
+        for key in (phi_key, delta_key):
+            if key in state_dict:
+                saved = state_dict[key]
+                if saved.shape != ():
+                    state_dict[key] = saved.float().mean().reshape(())
 
         super()._load_from_state_dict(
             state_dict, prefix, local_metadata, strict,
@@ -266,8 +250,8 @@ class LeftSpinStep(nn.Module):
 
     def reset_state(self):
         """重置内部状态（用于新序列开始）"""
-        self.phi_prev = torch.zeros(1, device=self.phi_prev.device, dtype=self.phi_prev.dtype)
-        self.delta_prev = torch.zeros(1, device=self.delta_prev.device, dtype=self.delta_prev.dtype)
+        self.phi_prev.zero_()
+        self.delta_prev.zero_()
 
 
 class LeftSpinResidual(nn.Module):
@@ -477,14 +461,11 @@ class AdaptiveLeftSpinStep(LeftSpinStep):
         alpha_constrained = torch.sigmoid(self.alpha) * (self.alpha_max - self.alpha_min) + self.alpha_min
         tau_constrained = torch.sigmoid(self.tau) * (self.tau_max - self.tau_min) + self.tau_min
 
-        phi_raw = alpha_constrained * F.softplus(s - tau_constrained)
+        phi_raw = alpha_constrained * F.softplus(s - tau_constrained)   # [B, T]
 
-        if self.phi_prev.numel() == 1 or self.phi_prev.shape != phi_raw.shape:
-            self.phi_prev = torch.zeros_like(phi_raw)
-
+        # phi_prev 是 0-dim 标量，直接广播
         phi = (1 - self.beta) * self.phi_prev + self.beta * phi_raw
-        # in-place copy：shapes 在上面 init check 后保证匹配
-        self.phi_prev.copy_(phi.detach())
+        self.phi_prev.copy_(phi.detach().mean())
 
         return torch.clamp(phi, min=0.0)
 
