@@ -424,6 +424,8 @@ class ProgressTracker:
         self._tqdm_bar = None
         self._start_time = time.time()
         self._tokens_processed = 0
+        self.last_tokens_per_sec = 0.0
+        self.last_loss = 0.0
 
         if rank == 0:
             # 进度日志文件 (可 tail -f)
@@ -467,6 +469,8 @@ class ProgressTracker:
         self._tokens_processed += tokens_in_batch
         elapsed = time.time() - self._start_time
         tokens_per_sec = self._tokens_processed / elapsed if elapsed > 0 else 0
+        self.last_tokens_per_sec = tokens_per_sec
+        self.last_loss = loss
         pct = step / self.total_steps * 100 if self.total_steps > 0 else 0
 
         # ETA
@@ -508,6 +512,474 @@ class ProgressTracker:
                 f"总 token: {self._tokens_processed:,}\n"
             )
             self._progress_file.close()
+
+
+def _tensor_nbytes(obj: Any) -> int:
+    """Estimate the byte size of tensors contained in an arbitrary output."""
+    if torch.is_tensor(obj):
+        return int(obj.numel() * obj.element_size())
+    if isinstance(obj, dict):
+        return sum(_tensor_nbytes(v) for v in obj.values())
+    if isinstance(obj, (list, tuple)):
+        return sum(_tensor_nbytes(v) for v in obj)
+    return 0
+
+
+class SliceTraceProfiler:
+    """
+    Lightweight per-slice forward profiler for short profiling runs.
+
+    It hooks a small set of architecture-specific modules and exports a
+    Tensorearch-compatible trace JSON after training.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        model_config: Dict[str, Any],
+        device: torch.device,
+        output_dir: str,
+        enabled: bool = False,
+        warmup_steps: int = 5,
+        active_steps: int = 20,
+        output_name: str = "tensorearch_trace.json",
+    ):
+        self.enabled = enabled
+        self.model = model
+        self.model_config = model_config or {}
+        self.device = device
+        self.output_dir = output_dir
+        self.warmup_steps = max(0, warmup_steps)
+        self.active_steps = max(1, active_steps)
+        self.output_name = output_name
+
+        self._handles: list[Any] = []
+        self._active = False
+        self._profiled_steps = 0
+        self._starts: dict[str, float] = {}
+        self._stats: dict[str, dict[str, Any]] = {}
+
+        if self.enabled:
+            self._install_hooks()
+
+    def _base_model(self) -> nn.Module:
+        return self.model.module if hasattr(self.model, "module") else self.model
+
+    def _sync(self):
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(self.device)
+
+    def _ensure_stat(self, slice_id: str, kind: str, op_type: str, layer_index: int):
+        if slice_id not in self._stats:
+            self._stats[slice_id] = {
+                "slice_id": slice_id,
+                "kind": kind,
+                "op_type": op_type,
+                "layer_index": layer_index,
+                "calls": 0,
+                "total_ms": 0.0,
+                "max_ms": 0.0,
+                "activation_bytes": 0,
+            }
+        return self._stats[slice_id]
+
+    def _register_module(self, module: nn.Module, slice_id: str, kind: str, op_type: str, layer_index: int):
+        stat = self._ensure_stat(slice_id, kind, op_type, layer_index)
+
+        def _pre_hook(_module, _args):
+            if not self._active:
+                return
+            self._sync()
+            self._starts[slice_id] = time.perf_counter()
+
+        def _post_hook(_module, _args, output):
+            if not self._active:
+                return
+            start = self._starts.pop(slice_id, None)
+            if start is None:
+                return
+            self._sync()
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            stat["calls"] += 1
+            stat["total_ms"] += elapsed_ms
+            stat["max_ms"] = max(stat["max_ms"], elapsed_ms)
+            stat["activation_bytes"] = max(stat["activation_bytes"], _tensor_nbytes(output))
+
+        self._handles.append(module.register_forward_pre_hook(_pre_hook))
+        self._handles.append(module.register_forward_hook(_post_hook))
+
+    def _install_hooks(self):
+        base_model = self._base_model()
+        arch = self.model_config.get("arch", "")
+
+        if arch == "transformer":
+            for i, layer in enumerate(getattr(base_model, "layers", [])):
+                self._register_module(layer.attn.W_Q, f"blk{i}.q", "attention", "attn_q", i)
+                self._register_module(layer.attn.W_K, f"blk{i}.k", "attention", "attn_k", i)
+                self._register_module(layer.attn.W_V, f"blk{i}.v", "attention", "attn_v", i)
+                self._register_module(layer.attn.attn_dropout, f"blk{i}.score", "attention", "attn_score", i)
+                self._register_module(layer.attn.W_O, f"blk{i}.attn_out", "attention", "attn_out", i)
+                self._register_module(layer.ff, f"blk{i}.ffn", "ffn", "ffn", i)
+        elif arch == "oscillator":
+            for i, layer in enumerate(getattr(base_model, "layers", [])):
+                self._register_module(layer.attn.phase_enc, f"blk{i}.phase", "phase", "attn_qkv", i)
+                self._register_module(layer.attn.adj, f"blk{i}.adj", "attention", "attn_adj", i)
+                self._register_module(layer.attn.propagate, f"blk{i}.prop", "propagation", "attn_score", i)
+                self._register_module(layer.attn.drop, f"blk{i}.phase_attn", "attention", "attn_phase", i)
+                self._register_module(layer.attn.W_V, f"blk{i}.value", "attention", "attn_v", i)
+                self._register_module(layer.attn.W_O, f"blk{i}.attn_out", "attention", "attn_out", i)
+                self._register_module(layer.ff, f"blk{i}.ffn", "ffn", "ffn", i)
+        else:
+            logger.warning(f"[SliceProfiler] Unsupported arch for profiling: {arch}")
+            self.enabled = False
+
+    def begin_step(self, global_step: int):
+        if not self.enabled:
+            return
+        self._active = (
+            global_step >= self.warmup_steps
+            and self._profiled_steps < self.active_steps
+        )
+
+    def finish_step(self):
+        if not self.enabled:
+            return
+        if self._active:
+            self._profiled_steps += 1
+        self._active = False
+
+    def _default_slice_fields(self, item: dict[str, Any]) -> dict[str, Any]:
+        d_model = int(self.model_config.get("d_model", 0))
+        n_heads = int(self.model_config.get("num_heads", 0))
+        batch_size = int(self.model_config.get("batch_size", 0))
+        seq_len = int(self.model_config.get("max_seq_len", 0))
+        tokens = batch_size * seq_len
+        kind = item["kind"]
+        kernel_ms = item["total_ms"] / max(item["calls"], 1)
+        activation_bytes = float(item["activation_bytes"])
+
+        if kind == "attention":
+            flops = float(max(tokens * d_model * 4, 1))
+            weight_bytes = float(d_model * d_model * 4)
+            kv_bytes = float(tokens * max(d_model, 1) * 2)
+            doi_alignment = 1.0
+            write_magnitude = 1.0
+            read_sensitivity = 1.0
+        elif kind == "phase":
+            flops = float(max(tokens * d_model * 3, 1))
+            weight_bytes = float(d_model * d_model * 2)
+            kv_bytes = float(tokens * max(d_model, 1) * 2)
+            doi_alignment = 0.9
+            write_magnitude = 1.1
+            read_sensitivity = 1.0
+        elif kind == "propagation":
+            flops = float(max(tokens * max(n_heads, 1) * seq_len, 1))
+            weight_bytes = 0.0
+            kv_bytes = float(tokens * max(d_model, 1))
+            doi_alignment = 0.88
+            write_magnitude = 1.15
+            read_sensitivity = 1.1
+        else:
+            flops = float(max(tokens * d_model * 8, 1))
+            weight_bytes = float(d_model * max(int(self.model_config.get("d_model", 0)) * 4, 1))
+            kv_bytes = 0.0
+            doi_alignment = 0.95
+            write_magnitude = 1.0
+            read_sensitivity = 0.95
+
+        return {
+            "hidden_size": d_model,
+            "intermediate_size": int(self.model_config.get("d_model", 0)) * 4,
+            "num_heads": n_heads,
+            "kv_heads": int(self.model_config.get("num_heads", 0)),
+            "tokens_in": tokens,
+            "tokens_out": tokens,
+            "flops": flops,
+            "activation_bytes": activation_bytes,
+            "memory_bytes": activation_bytes,
+            "weight_bytes": weight_bytes,
+            "kv_bytes": kv_bytes,
+            "comm_bytes": 0.0,
+            "sync_cost": 0.0,
+            "kernel_time_ms": kernel_ms,
+            "stall_ms": 0.0,
+            "measured_latency_ms": kernel_ms,
+            "write_magnitude": write_magnitude,
+            "read_sensitivity": read_sensitivity,
+            "doi_alignment": doi_alignment,
+            "local_vector_space": [],
+            "metadata": {
+                "profile_calls": item["calls"],
+                "profile_max_ms": item["max_ms"],
+            },
+        }
+
+    def export_tensorearch_trace(self, final_loss: float, tokens_per_sec: float) -> Optional[str]:
+        if not self.enabled or not self._stats:
+            return None
+
+        arch = self.model_config.get("arch", "unknown")
+        batch_size = int(self.model_config.get("batch_size", 0))
+        seq_len = int(self.model_config.get("max_seq_len", 0))
+        step_latency_ms = 0.0
+        if tokens_per_sec > 0 and batch_size > 0 and seq_len > 0:
+            step_latency_ms = (batch_size * seq_len) / tokens_per_sec * 1000.0
+
+        payload: dict[str, Any] = {
+            "system": {
+                "name": f"quickcook-{arch}-profile",
+                "model_arch": arch,
+                "num_layers": int(self.model_config.get("num_layers", 0)),
+                "hidden_size": int(self.model_config.get("d_model", 0)),
+                "intermediate_size": int(self.model_config.get("d_model", 0)) * 4,
+                "num_heads": int(self.model_config.get("num_heads", 0)),
+                "kv_heads": int(self.model_config.get("num_heads", 0)),
+                "batch_size": batch_size,
+                "seq_len": seq_len,
+                "dtype": "bf16",
+                "measured_latency_ms": step_latency_ms,
+                "measured_tokens_per_sec": tokens_per_sec,
+                "device": str(self.device).replace("cuda", "H100"),
+                "tp_degree": 1,
+                "pp_degree": 1,
+                "metadata": {
+                    "final_loss": final_loss,
+                    "profiled_steps": self._profiled_steps,
+                    "profile_warmup_steps": self.warmup_steps,
+                    "profile_active_steps": self.active_steps,
+                },
+            },
+            "slices": [],
+            "edges": [],
+        }
+
+        for slice_id, item in sorted(self._stats.items(), key=lambda kv: (kv[1]["layer_index"], kv[0])):
+            row = {
+                "slice_id": slice_id,
+                "kind": item["kind"],
+                "layer_index": item["layer_index"],
+                "op_type": item["op_type"],
+            }
+            row.update(self._default_slice_fields(item))
+            payload["slices"].append(row)
+
+        num_layers = int(self.model_config.get("num_layers", 0))
+        if arch == "transformer":
+            for i in range(num_layers):
+                payload["edges"].append({
+                    "src": f"blk{i}.q",
+                    "dst": f"blk{i}.score",
+                    "weight": 0.34,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.k",
+                    "dst": f"blk{i}.score",
+                    "weight": 0.33,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.v",
+                    "dst": f"blk{i}.attn_out",
+                    "weight": 0.33,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.score",
+                    "dst": f"blk{i}.attn_out",
+                    "weight": 0.67,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.attn_out",
+                    "dst": f"blk{i}.ffn",
+                    "weight": 0.9,
+                    "kind": "dataflow",
+                    "edge_type": "residual",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                if i + 1 < num_layers:
+                    payload["edges"].append({
+                        "src": f"blk{i}.ffn",
+                        "dst": f"blk{i+1}.q",
+                        "weight": 0.72,
+                        "kind": "dataflow",
+                        "edge_type": "residual",
+                        "edge_bytes": 0.0,
+                        "transport_scale": 1.0,
+                        "collective": "none",
+                        "same_device": True,
+                        "same_stage": True,
+                    })
+                    payload["edges"].append({
+                        "src": f"blk{i}.attn_out",
+                        "dst": f"blk{i+1}.q",
+                        "weight": 0.28,
+                        "kind": "dataflow",
+                        "edge_type": "residual",
+                        "edge_bytes": 0.0,
+                        "transport_scale": 1.0,
+                        "collective": "none",
+                        "same_device": True,
+                        "same_stage": True,
+                    })
+        elif arch == "oscillator":
+            for i in range(num_layers):
+                payload["edges"].append({
+                    "src": f"blk{i}.phase",
+                    "dst": f"blk{i}.adj",
+                    "weight": 0.46,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.phase",
+                    "dst": f"blk{i}.prop",
+                    "weight": 0.54,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.adj",
+                    "dst": f"blk{i}.prop",
+                    "weight": 0.63,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.prop",
+                    "dst": f"blk{i}.phase_attn",
+                    "weight": 0.58,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.phase",
+                    "dst": f"blk{i}.phase_attn",
+                    "weight": 0.19,
+                    "kind": "dataflow",
+                    "edge_type": "residual",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.value",
+                    "dst": f"blk{i}.attn_out",
+                    "weight": 0.41,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.phase_attn",
+                    "dst": f"blk{i}.attn_out",
+                    "weight": 0.59,
+                    "kind": "dataflow",
+                    "edge_type": "attention",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                payload["edges"].append({
+                    "src": f"blk{i}.attn_out",
+                    "dst": f"blk{i}.ffn",
+                    "weight": 0.75,
+                    "kind": "dataflow",
+                    "edge_type": "residual",
+                    "edge_bytes": 0.0,
+                    "transport_scale": 1.0,
+                    "collective": "none",
+                    "same_device": True,
+                    "same_stage": True,
+                })
+                if i + 1 < num_layers:
+                    payload["edges"].append({
+                        "src": f"blk{i}.ffn",
+                        "dst": f"blk{i+1}.phase",
+                        "weight": 0.74,
+                        "kind": "dataflow",
+                        "edge_type": "residual",
+                        "edge_bytes": 0.0,
+                        "transport_scale": 1.0,
+                        "collective": "none",
+                        "same_device": True,
+                        "same_stage": True,
+                    })
+                    payload["edges"].append({
+                        "src": f"blk{i}.attn_out",
+                        "dst": f"blk{i+1}.phase",
+                        "weight": 0.26,
+                        "kind": "dataflow",
+                        "edge_type": "residual",
+                        "edge_bytes": 0.0,
+                        "transport_scale": 1.0,
+                        "collective": "none",
+                        "same_device": True,
+                        "same_stage": True,
+                    })
+
+        out_path = os.path.join(self.output_dir, self.output_name)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        logger.info(f"[SliceProfiler] Tensorearch trace exported: {out_path}")
+        return out_path
 
 
 # ============================================================================
@@ -1775,6 +2247,11 @@ class QuickCookTrainer:
         lecac_warmup_steps: Optional[int] = None,
         lecac_warmup_multiplier: float = 3.0,
         lecac_warmup_schedule: str = "cosine",
+        # Slice profiling for Tensorearch
+        profile_slices: bool = False,
+        profile_warmup_steps: int = 5,
+        profile_active_steps: int = 20,
+        profile_output_name: str = "tensorearch_trace.json",
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -1809,6 +2286,16 @@ class QuickCookTrainer:
         self.lecac_warmup_steps = lecac_warmup_steps
         self.lecac_warmup_multiplier = lecac_warmup_multiplier
         self.lecac_warmup_schedule = lecac_warmup_schedule
+        self.slice_profiler = SliceTraceProfiler(
+            model=self.model,
+            model_config=self.model_config,
+            device=self.device,
+            output_dir=self.output_dir,
+            enabled=profile_slices,
+            warmup_steps=profile_warmup_steps,
+            active_steps=profile_active_steps,
+            output_name=profile_output_name,
+        )
 
         self.global_step = 0
         self.best_loss = float("inf")
@@ -1865,13 +2352,17 @@ class QuickCookTrainer:
                 num_training_steps=total_steps,
             )
         except ImportError:
-            # 没有 transformers 时用 PyTorch 内置的线性 scheduler
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(
-                optimizer,
-                max_lr=self.learning_rate,
-                total_steps=total_steps,
-                pct_start=0.1,
-            )
+            # 没有 transformers 时用 LambdaLR 实现 linear warmup + cosine decay
+            _warmup = warmup_steps
+            _total = total_steps
+
+            def _lr_lambda(current_step: int) -> float:
+                if current_step < _warmup:
+                    return float(current_step) / float(max(_warmup, 1))
+                progress = float(current_step - _warmup) / float(max(_total - _warmup, 1))
+                return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
 
         return optimizer, scheduler
 
@@ -2047,6 +2538,8 @@ class QuickCookTrainer:
                             )
 
                     # ── forward + backward ──
+                    if step_in_accum == 0:
+                        self.slice_profiler.begin_step(self.global_step)
                     loss, running_loss = self._forward_backward_step(
                         input_ids, labels, autocast_ctx, scaler,
                         grad_accum, running_loss,
@@ -2082,6 +2575,7 @@ class QuickCookTrainer:
 
                         self.global_step += 1
                         step_in_accum = 0
+                        self.slice_profiler.finish_step()
 
                         # VA100 信号采集 (每步记录 loss 和显存)
                         if self._va100_signal is not None:
@@ -2195,6 +2689,10 @@ class QuickCookTrainer:
             optimizer, scheduler,
             {"loss": running_loss, "step": self.global_step, "final": True}
         )
+        self.slice_profiler.export_tensorearch_trace(
+            final_loss=progress.last_loss,
+            tokens_per_sec=progress.last_tokens_per_sec,
+        )
         progress.close()
 
         # 最终虚拟 GPU 统计
@@ -2296,6 +2794,7 @@ class QuickCookTrainer:
                 input_ids = batch["input_ids"].to(self.device)
                 labels = batch["labels"].to(self.device)
 
+                self.slice_profiler.begin_step(self.global_step)
                 outputs = self._forward_engine(model_engine, input_ids, labels)
                 loss = outputs["loss"]
 
@@ -2303,6 +2802,7 @@ class QuickCookTrainer:
                 model_engine.step()
 
                 self.global_step += 1
+                self.slice_profiler.finish_step()
                 running_loss += loss.item()
 
                 if self.global_step % self.log_interval == 0 and self.rank == 0:
@@ -2327,6 +2827,10 @@ class QuickCookTrainer:
                 break
 
         if self.rank == 0:
+            self.slice_profiler.export_tensorearch_trace(
+                final_loss=running_loss / max(self.log_interval, 1),
+                tokens_per_sec=0.0,
+            )
             logger.info(f"DeepSpeed 训练完成! 总步数: {self.global_step}")
 
     def _forward(self, input_ids, labels):
@@ -2661,6 +3165,14 @@ def parse_args():
                              "训练集群上应指向 work 目录而非 home。")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--verbose", action="store_true", help="详细日志")
+    parser.add_argument("--profile-slices", action="store_true",
+                        help="导出轻量切片 profiling，并在输出目录写出 Tensorearch trace JSON")
+    parser.add_argument("--profile-warmup-steps", type=int, default=5,
+                        help="切片 profiling warmup 步数 (默认 5)")
+    parser.add_argument("--profile-active-steps", type=int, default=20,
+                        help="切片 profiling 采样步数 (默认 20)")
+    parser.add_argument("--profile-output-name", type=str, default="tensorearch_trace.json",
+                        help="切片 profiling 导出的 Tensorearch trace 文件名")
 
     # --- 虚拟 GPU 加速 (可选) ---
     vgpu_group = parser.add_argument_group("虚拟 GPU 加速 (可选)")
@@ -3146,6 +3658,10 @@ def main():
         lecac_warmup_steps=args.lecac_warmup_steps,
         lecac_warmup_multiplier=args.lecac_warmup_multiplier,
         lecac_warmup_schedule=args.lecac_warmup_schedule,
+        profile_slices=args.profile_slices,
+        profile_warmup_steps=args.profile_warmup_steps,
+        profile_active_steps=args.profile_active_steps,
+        profile_output_name=args.profile_output_name,
     )
 
     try:

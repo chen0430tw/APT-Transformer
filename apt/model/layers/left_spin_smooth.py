@@ -98,7 +98,7 @@ class LeftSpinStep(nn.Module):
 
         # 二阶：加速度（曲率近似）
         # numel()==1 表示初始标量占位符（未初始化），跳过计算
-        if delta_prev is not None and delta_prev.numel() > 1:
+        if delta_prev is not None and delta_prev.numel() > 1 and delta_prev.shape == delta_u.shape:
             norm_delta_prev = torch.norm(delta_prev, p=2, dim=-1, keepdim=False)
             delta_diff = delta_u - delta_prev
             norm_delta_diff = torch.norm(delta_diff, p=2, dim=-1, keepdim=False)
