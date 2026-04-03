@@ -263,6 +263,7 @@ MODEL_REGISTRY: Dict[str, Tuple[str, str]] = {
     "gpt4o":   ("apt.model.architectures.gpt4o_model",    "GPT4oModel"),
     "gpt5":    ("apt.model.architectures.gpt5_model",     "GPT5Model"),
     "claude4": ("apt.model.architectures.claude4_model",   "Claude4Model"),
+    "kimi25":  ("apt.model.architectures.kimi25_model",    "Kimi25Model"),
     "gpto3":      ("apt.model.architectures.gpto3_model",    "GPTo3Model"),
     "oscillator": ("oscillator.model",                        "Oscillator"),
     "transformer": ("transformer.model",                       "Transformer"),
@@ -327,6 +328,21 @@ def create_model(arch: str, vocab_size: int, d_model: int, num_heads: int,
             d_ff=d_model * 4,
             num_layers=num_layers,
             max_seq_len=max_seq_len,
+        )
+    elif arch == "kimi25":
+        model = model_cls(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_heads=num_heads,
+            d_ff=d_model * 4,
+            num_layers=num_layers,
+            max_seq_len=max_seq_len,
+            kv_heads=max(1, num_heads // 8),
+            kv_latent_rank=max(d_model // 8, d_model // 2),
+            num_experts=max(16, min(384, d_model // 8)),
+            top_k=min(8, max(1, num_heads // 2)),
+            shared_experts=1,
+            dense_layers=1,
         )
     elif arch == "gpto3":
         model = model_cls(
@@ -2964,7 +2980,7 @@ class QuickCookTrainer:
     # arch -> forward 签名分组（按 MODEL_REGISTRY key，不依赖类名）
     # torch.compile 会改变 type().__name__，所以必须用 model_config["arch"] 分流
     _ARCH_TEXT_IDS  = {"gpt4o", "gpto3"}
-    _ARCH_INPUT_IDS = {"gpt5", "claude4", "standard-transformer"}
+    _ARCH_INPUT_IDS = {"gpt5", "claude4", "kimi25", "standard-transformer"}
     _ARCH_POSITIONAL = {"oscillator", "transformer"}
     # 其余（apt, apt-lite）走 src_tokens/tgt_tokens
 
@@ -3609,6 +3625,11 @@ def main():
         max_seq_len=args.max_seq_len,
     )
 
+    # 只读文件、验格式；load_state_dict 延迟到 VB/LECAC 包裹之后执行
+    # 原因：VB 把 nn.Linear 包成 VBOptimizedLinearV64(self.base=Linear)，
+    #       保存的 key 是 module.base.weight；裸模型 key 是 module.weight。
+    #       若先 load 再包裹，strict=False 会静默全失败，导致续训实为重开。
+    _resume_ckpt = None
     if args.resume:
         if rank == 0:
             logger.info(f"从检查点恢复: {args.resume}")
@@ -3618,22 +3639,16 @@ def main():
             import gzip as _gzip, io as _io
             with _gzip.open(args.resume, "rb") as _gz:
                 _buf = _io.BytesIO(_gz.read())
-            ckpt = torch.load(_buf, map_location="cpu")
+            _resume_ckpt = torch.load(_buf, map_location="cpu")
         else:
-            ckpt = torch.load(args.resume, map_location="cpu")
-        if not isinstance(ckpt, dict) or "model_state_dict" not in ckpt:
-            available_keys = list(ckpt.keys()) if isinstance(ckpt, dict) else type(ckpt).__name__
+            _resume_ckpt = torch.load(args.resume, map_location="cpu")
+        if not isinstance(_resume_ckpt, dict) or "model_state_dict" not in _resume_ckpt:
+            available_keys = list(_resume_ckpt.keys()) if isinstance(_resume_ckpt, dict) else type(_resume_ckpt).__name__
             raise KeyError(
                 f"检查点格式不兼容: {args.resume}\n"
                 f"  需要 key 'model_state_dict', 实际包含: {available_keys}\n"
                 f"  可能原因: checkpoint 来自不同版本或不同训练脚本"
             )
-        missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
-        if rank == 0 and (missing or unexpected):
-            if missing:
-                logger.warning(f"检查点缺少 {len(missing)} 个参数 (模型新增层): {missing[:5]}...")
-            if unexpected:
-                logger.warning(f"检查点多出 {len(unexpected)} 个参数 (模型已删层): {unexpected[:5]}...")
 
     total_params = sum(p.numel() for p in model.parameters())
     if rank == 0:
@@ -3728,6 +3743,17 @@ def main():
                         "   详见文档: docs/QUICKSTART_WARMUP.md"
                     )
 
+    # --- 加载 checkpoint 权重 (VB/LECAC 包裹完成后，key 格式已对齐) ---
+    if _resume_ckpt is not None:
+        missing, unexpected = model.load_state_dict(_resume_ckpt["model_state_dict"], strict=False)
+        if rank == 0:
+            if missing:
+                logger.warning(f"检查点缺少 {len(missing)} 个参数 (模型新增层): {missing[:5]}...")
+            if unexpected:
+                logger.warning(f"检查点多出 {len(unexpected)} 个参数 (模型已删层): {unexpected[:5]}...")
+            logger.info(f"模型权重已恢复: {args.resume} (step={_resume_ckpt.get('global_step', '?')})")
+        _resume_ckpt = None  # 释放内存
+
     # --- Virtual VRAM: 激活值 offload 配置 (不修改模型, 训练时用 context) ---
     if args.use_virtual_vram:
         if not _VIRTUAL_VRAM_AVAILABLE:
@@ -3800,7 +3826,11 @@ def main():
                 )
 
     # torch.compile (在 distributed wrap 之前，VB/LECAC 替换之后)
-    if getattr(args, "torch_compile", False) and torch.cuda.is_available():
+    # oscillator 使用 complex64，Inductor 不支持，跳过编译
+    _compile_skip_archs = {"oscillator"}
+    if (getattr(args, "torch_compile", False)
+            and torch.cuda.is_available()
+            and args.model_arch not in _compile_skip_archs):
         try:
             model = torch.compile(model)
             if rank == 0:
@@ -3808,6 +3838,9 @@ def main():
         except Exception as _tc_err:
             if rank == 0:
                 logger.warning(f"[torch.compile] 编译失败，跳过: {_tc_err}")
+    elif getattr(args, "torch_compile", False) and args.model_arch in _compile_skip_archs:
+        if rank == 0:
+            logger.info(f"[torch.compile] 跳过 arch={args.model_arch}（含 complex64，Inductor 不支持）")
 
     # 分布式包装 (在 VB 替换之后)
     model = wrap_model_distributed(model, device, dist_config, rank, world_size)
