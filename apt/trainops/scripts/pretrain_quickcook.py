@@ -3266,6 +3266,10 @@ def parse_args():
     # --- 分词器 ---
     parser.add_argument("--tokenizer-path", type=str, default=None,
                         help="已有分词器路径 (JSON). 不指定则从语料训练新的。")
+    parser.add_argument("--tokenizer-cache-dir", type=str, default=None,
+                        help="分词器跨 run 共享缓存目录 (默认: output_dir 的父目录下的 "
+                             ".tokenizer_cache). 训练完成后自动写入, 下次新 output_dir "
+                             "也能复用, 避免重复训练 tokenizer 导致 crash。")
     parser.add_argument("--vocab-size", type=int, default=65536,
                         help="分词器词表大小 (默认 65536)")
     parser.add_argument("--tokenizer-sample-size", type=int, default=100000,
@@ -3549,12 +3553,21 @@ def main():
     tokenizer = None
     tok_path = os.path.join(args.output_dir, "tokenizer.json")
 
-    # 优先级: --tokenizer-path > output_dir/tokenizer.json (已有缓存) > 重新训练
+    # 共享缓存目录: 跨 run 复用, 避免每次新 output_dir 都重新训练
+    # 默认: output_dir 的父目录下的 .tokenizer_cache
+    _cache_dir = args.tokenizer_cache_dir or os.path.join(
+        os.path.dirname(os.path.abspath(args.output_dir)), ".tokenizer_cache"
+    )
+    _cache_tok = os.path.join(_cache_dir, f"tokenizer_{args.vocab_size}.json")
+
+    # 优先级: --tokenizer-path > output_dir/tokenizer.json > shared cache > 重新训练
     _tok_src = None
     if args.tokenizer_path and os.path.exists(args.tokenizer_path):
         _tok_src = args.tokenizer_path
     elif os.path.exists(tok_path):
         _tok_src = tok_path
+    elif os.path.exists(_cache_tok):
+        _tok_src = _cache_tok
 
     if _tok_src:
         # 路径 A: 所有 rank 直接加载已有分词器 (无需 barrier)
@@ -3591,6 +3604,13 @@ def main():
                 vocab_size=args.vocab_size,
             )
             tokenizer.save(tok_path)
+            # 同时写入共享缓存，下次新 output_dir 直接命中，跳过训练
+            try:
+                os.makedirs(_cache_dir, exist_ok=True)
+                tokenizer.save(_cache_tok)
+                logger.info(f"分词器已缓存到: {_cache_tok}")
+            except Exception as _ce:
+                logger.warning(f"写入共享 tokenizer 缓存失败 (不影响训练): {_ce}")
             logger.info(f"分词器训练完成, 词表: {tokenizer.vocab_size}")
 
         # 同步: 所有 rank 都必须到达这里, rank 0 写完文件后才放行
