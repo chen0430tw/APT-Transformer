@@ -2388,7 +2388,7 @@ class QuickCookTrainer:
             ),
             num_workers=self._dataloader_num_workers,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=self._dataloader_prefetch_factor,
+            prefetch_factor=self._dataloader_prefetch_factor if self._dataloader_num_workers > 0 else None,
         )
 
     def _create_optimizer_and_scheduler(self, total_steps: int):
@@ -3298,6 +3298,9 @@ def parse_args():
     parser.add_argument("--log-interval", type=int, default=10, help="日志间隔 (步)")
     parser.add_argument("--save-interval", type=int, default=1000,
                         help="保存间隔 (步)")
+    parser.add_argument("--dataloader-num-workers", type=int, default=0,
+                        help="DataLoader worker 进程数 (默认 0=主进程, 避免登录节点 /dev/shm 满). "
+                             "Blackwell 自动覆盖为 4.")
 
     # --- 分布式 ---
     parser.add_argument("--distributed-backend", type=str, default="ddp",
@@ -3909,9 +3912,10 @@ def main():
         world_size=world_size,
     )
 
-    # DataLoader 并行度: Blackwell 用更激进的预取
-    _dl_num_workers = 4 if _hw["profile"] == "blackwell" else 1
-    _dl_prefetch = 4 if _hw["profile"] == "blackwell" else 2
+    # DataLoader 并行度: Blackwell 自动覆盖; 其余场景遵从 CLI 参数 (默认 0)
+    # num_workers>=1 会 fork 子进程并写 /dev/shm; 登录节点 /dev/shm 常被占满
+    _dl_num_workers = 4 if _hw["profile"] == "blackwell" else args.dataloader_num_workers
+    _dl_prefetch = 4 if _hw["profile"] == "blackwell" else (2 if _dl_num_workers > 0 else None)
 
     # --- 训练 ---
     trainer = QuickCookTrainer(
