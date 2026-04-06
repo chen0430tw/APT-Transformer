@@ -559,16 +559,15 @@ class LECACLinear(nn.Module):
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
             nn.init.uniform_(self.bias, -bound, bound)
 
+    @torch._dynamo.disable
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         fn = (OrthogonalLECACLinearFunction if self.orthogonal
               else LECACLinearFunction)
-        if not _is_compiling():
-            _t0 = time.perf_counter()
-            out = fn.apply(input, self.weight, self.bias, self.bits, self.alpha)
-            _lecac_perf["fwd_n"]  += 1
-            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
-            return out
-        return fn.apply(input, self.weight, self.bias, self.bits, self.alpha)
+        _t0 = time.perf_counter()
+        out = fn.apply(input, self.weight, self.bias, self.bits, self.alpha)
+        _lecac_perf["fwd_n"]  += 1
+        _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
+        return out
 
     def extra_repr(self) -> str:
         return (f"in={self.in_features}, out={self.out_features}, "
