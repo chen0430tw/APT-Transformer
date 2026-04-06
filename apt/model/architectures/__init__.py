@@ -44,6 +44,10 @@ try:
     from apt.model.architectures.vft_tva_model import VFTTVAModel
 except ImportError:
     VFTTVAModel = None
+try:
+    from apt.model.architectures.kimi25_model import Kimi25Model
+except ImportError:
+    Kimi25Model = None
 
 __all__ = [
     # Core models
@@ -56,4 +60,5 @@ __all__ = [
     'GPT4oModel',
     'GPTo3Model',
     'VFTTVAModel',
+    'Kimi25Model',
 ]

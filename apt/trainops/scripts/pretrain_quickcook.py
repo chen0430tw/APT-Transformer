@@ -3069,7 +3069,7 @@ def collect_tokenizer_corpus(
     从各数据源收集用于训练分词器的语料样本。
 
     分词器训练不需要全量数据, 只需要有代表性的子集。
-    这里从 C4/mC4/FineWeb 各采 sample_size/3 条,
+    这里从 C4/Chinese-C4/FineWeb 各采 sample_size/3 条,
     加上 HLBD 全量, 作为分词器的训练语料。
 
     Args:
@@ -3100,22 +3100,22 @@ def collect_tokenizer_corpus(
     except Exception as e:
         logger.warning(f"C4 采样失败: {e}")
 
-    # mC4 zh
+    # Chinese-C4 (shjwudp/chinese-c4，替代已废弃的旧版 mc4 脚本加载方式)
     try:
         from datasets import load_dataset
-        logger.info(f"从 mC4 (zh) 采样 {per_source} 条...")
-        ds = load_dataset("mc4", "zh", streaming=True, split="train",
-                          **_HF_LOAD_KWARGS)
+        logger.info(f"从 Chinese-C4 (shjwudp/chinese-c4) 采样 {per_source} 条...")
+        ds = load_dataset("shjwudp/chinese-c4", streaming=True, split="train")
         count = 0
         for example in ds:
-            if "text" in example and len(example["text"].strip()) > 50:
-                texts.append(example["text"][:2000])
+            text = example.get("text") or example.get("content", "")
+            if text and len(text.strip()) > 50:
+                texts.append(text[:2000])
                 count += 1
                 if count >= per_source:
                     break
-        logger.info(f"  mC4 (zh) 采样完成: {count} 条")
+        logger.info(f"  Chinese-C4 采样完成: {count} 条")
     except Exception as e:
-        logger.warning(f"mC4 采样失败: {e}")
+        logger.warning(f"Chinese-C4 采样失败: {e}")
 
     # FineWeb
     try:
@@ -3173,7 +3173,7 @@ def collect_tokenizer_corpus(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="APT 速食预训练 (QuickCook): C4 + mC4 + FineWeb + HLBD 混合预训练",
+        description="APT 速食预训练 (QuickCook): C4 + Chinese-C4 + FineWeb + HLBD 混合预训练",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
