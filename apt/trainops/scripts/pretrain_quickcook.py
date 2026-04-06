@@ -1172,15 +1172,30 @@ class InterleavedStreamDataset(torch.utils.data.IterableDataset):
             self._hlbd_texts = []
             return self._hlbd_texts
 
-        try:
-            from apt.core.data.hlbd.hlbd_adapter import HLBDDataProcessor
-            processor = HLBDDataProcessor(data_path=self.hlbd_path)
-            processor.process_data(include_multilingual=True, include_separate_levels=True)
-            self._hlbd_texts = processor.get_training_texts()
-            logger.info(f"HLBD 加载完成: {len(self._hlbd_texts)} 个样本")
-        except Exception as e:
-            logger.error(f"HLBD 加载失败: {e}")
-            self._hlbd_texts = []
+        import time as _time
+        _max_retries = 3
+        for _attempt in range(_max_retries):
+            try:
+                from apt.core.data.hlbd.hlbd_adapter import HLBDDataProcessor
+                processor = HLBDDataProcessor(data_path=self.hlbd_path)
+                processor.process_data(include_multilingual=True, include_separate_levels=True)
+                self._hlbd_texts = processor.get_training_texts()
+                logger.info(f"HLBD 加载完成: {len(self._hlbd_texts)} 个样本")
+                return self._hlbd_texts
+            except Exception as e:
+                if _attempt < _max_retries - 1:
+                    _wait = 2 ** _attempt
+                    logger.warning(
+                        f"HLBD 加载失败 (尝试 {_attempt+1}/{_max_retries}): {e!r}, "
+                        f"{_wait}s 后重试", exc_info=True
+                    )
+                    _time.sleep(_wait)
+                else:
+                    logger.error(
+                        f"HLBD 加载失败 (已重试 {_max_retries} 次): {e!r}",
+                        exc_info=True
+                    )
+                    self._hlbd_texts = []
 
         return self._hlbd_texts
 
