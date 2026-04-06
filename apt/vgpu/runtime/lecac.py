@@ -35,6 +35,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# torch.compile 兼容：is_compiling() 在 Dynamo tracing 期间返回 True，
+# 使 perf 统计分支成为死代码，避免 SpeculationLog diverged。
+try:
+    _is_compiling = torch.compiler.is_compiling
+except AttributeError:
+    _is_compiling = lambda: False
+
 # 自然均衡常数：alpha=4/e 是 alpha_sweep 实验中表现最优的锚点
 _ALPHA_4_OVER_E: float = 4.0 / math.e  # ≈ 1.4715
 
@@ -300,11 +307,12 @@ class LECACLinearFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: torch.Tensor, weight: torch.Tensor,
                 bias: Optional[torch.Tensor], bits: int, alpha: float):
-        _t0 = time.perf_counter()
+        _do_perf = not _is_compiling()
+        if _do_perf: _t0 = time.perf_counter()
         # 正常 forward（精度不损失）
-        _t_linear = time.perf_counter()
+        if _do_perf: _t_linear = time.perf_counter()
         output = F.linear(input, weight, bias)
-        _lecac_perf["fwd_linear_ms"] += (time.perf_counter() - _t_linear) * 1000
+        if _do_perf: _lecac_perf["fwd_linear_ms"] += (time.perf_counter() - _t_linear) * 1000
 
         # 将输入展平为 2D 再量化（保持量化粒度一致）
         original_shape = input.shape
@@ -324,14 +332,15 @@ class LECACLinearFunction(torch.autograd.Function):
             ctx.error_std = torch.tensor(0.0, device=input.device)
             ctx.K = 0
             ctx.original_shape = original_shape
-            _lecac_perf["fwd_n"]  += 1
-            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
+            if _do_perf:
+                _lecac_perf["fwd_n"]  += 1
+                _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
             return output
 
         with torch.no_grad():
             # ── 融合量化内核：quant + (dequant + error_std) 合并为单次调用 ──
             # 优化：① 乘法替代除法；② 消除 x_recon 中间张量；③ torch.compile 融合 kernel
-            _t_quant = time.perf_counter()
+            if _do_perf: _t_quant = time.perf_counter()
             if alpha > 0:
                 # 融合：一次 pass 完成 quant + error_std（反量化已内联）
                 if bits == 2:
@@ -345,7 +354,7 @@ class LECACLinearFunction(torch.autograd.Function):
                 else:
                     x_q, scale = _quant_only_int4(input_2d)
                 error_std = 0.0
-            _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant) * 1000
+            if _do_perf: _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant) * 1000
             # fwd_dequant_ms / fwd_std_ms 已融合入 fwd_quant_ms，不再单独计时
 
         # 关键设计：weight 和 bias 不通过 save_for_backward 保存，
@@ -363,34 +372,36 @@ class LECACLinearFunction(torch.autograd.Function):
         ctx.K = input_2d.numel()           # 用于 dimension_balance 归一化
         ctx.original_shape = original_shape
 
-        _lecac_perf["fwd_n"]  += 1
-        _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
+        if _do_perf:
+            _lecac_perf["fwd_n"]  += 1
+            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
         return output
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        _t0 = time.perf_counter()
+        _do_perf = not _is_compiling()
+        if _do_perf: _t0 = time.perf_counter()
         x_q, scale = ctx.saved_tensors
         weight = ctx._weight               # 直接取引用，精度完整
         bias = ctx._bias
         bits = ctx.bits
 
         # 反量化恢复激活值 [M, K]（dequantize 返回 float32，后续需对齐 weight.dtype）
-        _t_dequant = time.perf_counter()
+        if _do_perf: _t_dequant = time.perf_counter()
         if bits == 2:
             x_recon = dequantize_int2_symmetric(x_q, scale)
         else:
             x_recon = dequantize_int4_symmetric(x_q, scale)
-        _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
+        if _do_perf: _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
 
         # LECAC 补偿：融合 randn + scale + add（_compensation 已 torch.compile 加速）
         if ctx.alpha > 0:
             with torch.no_grad():
                 dimension_balance = math.log(ctx.K + math.e)
-                _t_randn = time.perf_counter()
+                if _do_perf: _t_randn = time.perf_counter()
                 scale_factor = ctx.error_std * (ctx.alpha / dimension_balance)
                 x_recon = _compensation(x_recon, scale_factor)
-                _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
+                if _do_perf: _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
 
         # 对齐 dtype：BF16 训练时 grad_output/weight 为 BF16，x_recon 为 float32
         # mm() 要求两个操作数 dtype 完全一致，否则抛 "mat1 and mat2 must have same dtype"
@@ -400,15 +411,16 @@ class LECACLinearFunction(torch.autograd.Function):
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])  # [M, N]
 
         grad_output_2d = grad_output_2d.to(weight.dtype)  # 对齐 dtype
-        _t_mm = time.perf_counter()
+        if _do_perf: _t_mm = time.perf_counter()
         grad_input = grad_output_2d.mm(weight).view(ctx.original_shape)   # [..., K]
         grad_weight = grad_output_2d.t().mm(x_recon)                       # [N, K]
-        _lecac_perf["bwd_mm_ms"] += (time.perf_counter() - _t_mm) * 1000
+        if _do_perf: _lecac_perf["bwd_mm_ms"] += (time.perf_counter() - _t_mm) * 1000
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
                      if bias is not None else None)                         # [N]
 
-        _lecac_perf["bwd_n"]  += 1
-        _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
+        if _do_perf:
+            _lecac_perf["bwd_n"]  += 1
+            _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
         return grad_input, grad_weight, grad_bias, None, None
 
 
@@ -437,7 +449,8 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: torch.Tensor, weight: torch.Tensor,
                 bias: Optional[torch.Tensor], bits: int, alpha: float):
-        _t0 = time.perf_counter()
+        _do_perf = not _is_compiling()
+        if _do_perf: _t0 = time.perf_counter()
         output = F.linear(input, weight, bias)
 
         original_shape = input.shape
@@ -455,12 +468,13 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
             ctx.error_std = torch.tensor(0.0, device=input.device)
             ctx.K = 0
             ctx.original_shape = original_shape
-            _lecac_perf["fwd_n"]  += 1
-            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
+            if _do_perf:
+                _lecac_perf["fwd_n"]  += 1
+                _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
             return output
 
         with torch.no_grad():
-            _t_quant2 = time.perf_counter()
+            if _do_perf: _t_quant2 = time.perf_counter()
             if alpha > 0:
                 if bits == 2:
                     x_q, scale, error_std = _quant_with_std_int2(input_2d)
@@ -472,7 +486,7 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
                 else:
                     x_q, scale = _quant_only_int4(input_2d)
                 error_std = 0.0
-            _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant2) * 1000
+            if _do_perf: _lecac_perf["fwd_quant_ms"] += (time.perf_counter() - _t_quant2) * 1000
 
         # weight/bias 不经 save_for_backward（同 LECACLinearFunction，避免 VRAM 量化引入 ε）
         # x_recon 不保存：backward 直接从 x_q+scale 重建，保存 FP32 x_recon 只会产生无谓 D2H/H2D 开销
@@ -485,34 +499,36 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
         ctx.K = input_2d.numel()
         ctx.original_shape = original_shape
 
-        _lecac_perf["fwd_n"]  += 1
-        _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
+        if _do_perf:
+            _lecac_perf["fwd_n"]  += 1
+            _lecac_perf["fwd_ms"] += (time.perf_counter() - _t0) * 1000
         return output
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        _t0 = time.perf_counter()
+        _do_perf = not _is_compiling()
+        if _do_perf: _t0 = time.perf_counter()
         x_q, scale = ctx.saved_tensors
         weight = ctx._weight               # 直接取引用，精度完整
         bias = ctx._bias
         bits = ctx.bits
 
         # 反量化恢复激活值 [M, K]
-        _t_dequant = time.perf_counter()
+        if _do_perf: _t_dequant = time.perf_counter()
         if bits == 2:
             x_recon_fp = dequantize_int2_symmetric(x_q, scale)
         else:
             x_recon_fp = dequantize_int4_symmetric(x_q, scale)
-        _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
+        if _do_perf: _lecac_perf["bwd_dequant_ms"] += (time.perf_counter() - _t_dequant) * 1000
 
         # LECAC 标准补偿（与 LECACLinearFunction 相同，使用 _compensation 统一入口）
         if ctx.alpha > 0:
             with torch.no_grad():
                 dimension_balance = math.log(ctx.K + math.e)
-                _t_randn = time.perf_counter()
+                if _do_perf: _t_randn = time.perf_counter()
                 scale_factor = ctx.error_std * (ctx.alpha / dimension_balance)
                 x_recon_fp = _compensation(x_recon_fp, scale_factor)
-                _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
+                if _do_perf: _lecac_perf["bwd_randn_ms"] += (time.perf_counter() - _t_randn) * 1000
 
         # 正交投影补偿：将重构激活值投影到 grad_output 的正交补空间，保护梯度方向
         if ctx.alpha > 0:
@@ -526,15 +542,16 @@ class OrthogonalLECACLinearFunction(torch.autograd.Function):
 
         grad_output_2d = grad_output.contiguous().view(-1, grad_output.shape[-1])
         grad_output_2d = grad_output_2d.to(weight.dtype)
-        _t_mm = time.perf_counter()
+        if _do_perf: _t_mm = time.perf_counter()
         grad_input  = grad_output_2d.mm(weight).view(ctx.original_shape)   # [..., K]
         grad_weight = grad_output_2d.t().mm(x_recon_fp)                    # [N, K]
-        _lecac_perf["bwd_mm_ms"] += (time.perf_counter() - _t_mm) * 1000
+        if _do_perf: _lecac_perf["bwd_mm_ms"] += (time.perf_counter() - _t_mm) * 1000
         grad_bias = (grad_output.sum(list(range(grad_output.dim() - 1)))
                      if bias is not None else None)                         # [N]
 
-        _lecac_perf["bwd_n"]  += 1
-        _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
+        if _do_perf:
+            _lecac_perf["bwd_n"]  += 1
+            _lecac_perf["bwd_ms"] += (time.perf_counter() - _t0) * 1000
         return grad_input, grad_weight, grad_bias, None, None
 
 
