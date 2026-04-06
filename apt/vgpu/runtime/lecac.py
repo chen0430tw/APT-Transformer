@@ -590,6 +590,7 @@ class LECACLinear(nn.Module):
             alpha=alpha,
             orthogonal=orthogonal,
         )
+        layer = layer.to(linear.weight.device)
         with torch.no_grad():
             layer.weight.copy_(linear.weight)
             if has_bias:
