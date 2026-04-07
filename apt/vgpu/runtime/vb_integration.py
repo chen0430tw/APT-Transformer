@@ -110,13 +110,9 @@ class VBOptimizedLinearV64(nn.Module):
 
     # ─────────────────────────────────────────────────────────────────────
 
+    @torch._dynamo.disable
     def _gate_forward(self, x: torch.Tensor) -> torch.Tensor:
         """门投影模式 forward：非门点零开销"""
-        # torch.compile 兼容：编译时不要把"门控/脉冲"控制面纳入图里。
-        # 否则 step/phase 这种 Python int 静态属性会触发频繁重编译或回退，导致不稳定甚至变慢。
-        if torch._dynamo.is_compiling():
-            return self.base.forward(x)
-
         step = self.controller.step
         is_pulse = (step % self.pulse_interval) == self.phase
 
@@ -129,12 +125,9 @@ class VBOptimizedLinearV64(nn.Module):
             self.adapter.observe_call(self.name, is_pulse=True)
         return self.adapter.linear_pulse(x, self.base.weight, self.base.bias, self.name, step=step)
 
+    @torch._dynamo.disable
     def _wrapper_forward(self, x: torch.Tensor) -> torch.Tensor:
         """传统 wrapper 模式 forward（gate_projected_mode=False 时使用）"""
-        # torch.compile 兼容：wrapper 模式下也避免把 Python 侧统计/门控塞进编译图。
-        if torch._dynamo.is_compiling():
-            return self.base.forward(x)
-
         step = self.controller.step
         is_pulse = (step % self.pulse_interval) == self.phase
 

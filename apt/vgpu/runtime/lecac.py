@@ -624,10 +624,23 @@ def replace_linear_with_lecac(
     示例：
         replace_linear_with_lecac(model, skip_names=("lm_head", "embed"))
     """
+    # 延迟导入避免循环依赖；VBOptimizedLinearV64 已自带 pulse 逻辑，
+    # 不能让 LECaC 递归进去替换其内部 base（否则 VB pulse 路径失效）。
+    try:
+        from apt.vgpu.runtime.vb_integration import VBOptimizedLinearV64 as _VBLinear
+    except ImportError:
+        _VBLinear = None  # type: ignore[assignment,misc]
+
     for name, module in list(model.named_children()):
         if any(name.startswith(s) for s in skip_names):
             continue
-        if isinstance(module, nn.Linear):
+        if _VBLinear is not None and isinstance(module, _VBLinear):
+            # VB wrapper：把其内部 base (nn.Linear) 直接替换为 LECACLinear，
+            # 保留 VB 的 pulse/gate 外层逻辑不变。
+            if isinstance(module.base, nn.Linear):
+                module.base = LECACLinear.from_linear(
+                    module.base, bits=bits, alpha=alpha, orthogonal=orthogonal)
+        elif isinstance(module, nn.Linear):
             setattr(model, name, LECACLinear.from_linear(
                 module, bits=bits, alpha=alpha, orthogonal=orthogonal))
         else:
