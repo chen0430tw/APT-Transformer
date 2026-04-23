@@ -2958,6 +2958,7 @@ class QuickCookTrainer:
                                     self.model.parameters(), self.gradient_clip
                                 )
                             )
+                            _tensorearch_post_clip_grad_norm = self._compute_post_clip_grad_norm()
                             scaler.step(optimizer)
                             scaler.update()
                         else:
@@ -2966,6 +2967,7 @@ class QuickCookTrainer:
                                     self.model.parameters(), self.gradient_clip
                                 )
                             )
+                            _tensorearch_post_clip_grad_norm = self._compute_post_clip_grad_norm()
                             optimizer.step()
 
                         scheduler.step()
@@ -3026,6 +3028,7 @@ class QuickCookTrainer:
                             direction_consistency=_te_dir,
                             val_metric=_te_last_val_metric,
                             raw_loss=_te_raw_step_loss,
+                            post_clip_grad_norm=_tensorearch_post_clip_grad_norm,
                             gradient_clip=float(self.gradient_clip),
                             grad_norm_kind="pre_clip",
                             val_metric_observed=(_te_val_observed_this_step or _te_last_val_metric > 0.0),
@@ -3191,6 +3194,23 @@ class QuickCookTrainer:
             self._va100_tier.stats.record_step()
         except Exception:
             pass  # 信号采集不影响训练主路径
+
+    def _compute_post_clip_grad_norm(self) -> float:
+        """Return the actual total L2 grad norm after clip_grad_norm_ has run.
+
+        Mirrors how torch.nn.utils.clip_grad_norm_ computes the norm internally:
+        per-parameter L2 norms stacked then L2-normed. Uses float32 accumulation
+        so bf16/fp16 grads on a 100M+ param model do not overflow during sum.
+        """
+        with torch.no_grad():
+            norms = [
+                torch.linalg.vector_norm(p.grad.detach().float())
+                for p in self.model.parameters()
+                if p.grad is not None
+            ]
+            if not norms:
+                return 0.0
+            return float(torch.linalg.vector_norm(torch.stack(norms)).item())
 
     def _log_vgpu_stats(self):
         """打印虚拟 GPU 组件的统计摘要"""
