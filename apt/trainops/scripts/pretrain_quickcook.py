@@ -480,7 +480,8 @@ class ProgressTracker:
     """
 
     def __init__(self, output_dir: str, total_steps: int, rank: int = 0,
-                 log_interval: int = 10):
+                 log_interval: int = 10,
+                 enable_forecast_trace: bool = False):
         self.rank = rank
         self.total_steps = total_steps
         self.log_interval = log_interval
@@ -497,6 +498,14 @@ class ProgressTracker:
             self._progress_file = open(
                 os.path.join(output_dir, "progress.log"), "a", encoding="utf-8"
             )
+            # # TENSOREARCH_FORECAST_LOG_v1 Tensorearch forecast-ready trace (one JSON per step).
+            # # TENSOREARCH_FORECAST_LOG_v3 only open when toggled on
+            self._trace_path = os.path.join(output_dir, "training_trace.jsonl")
+            self._output_dir = output_dir
+            if enable_forecast_trace:
+                self._trace_file = open(self._trace_path, "a", encoding="utf-8")
+            else:
+                self._trace_file = None
             self._write_header()
 
             # 如果有 tqdm 且连接到终端/srun
@@ -525,10 +534,35 @@ class ProgressTracker:
             self._progress_file.flush()
 
     def update(self, step: int, loss: float, lr: float,
-               tokens_in_batch: int = 0):
+               tokens_in_batch: int = 0,
+               grad_norm: float = 0.0,
+               curvature: float = 0.0,
+               direction_consistency: float = 0.0,
+               val_metric: float = 0.0):
         """更新进度"""
         if self.rank != 0:
             return
+        # Tensorearch-forecast trace row (one line per step).
+        try:
+            import json as _json, math as _math
+            def _safe(x):
+                v = float(x)
+                if _math.isnan(v) or _math.isinf(v):
+                    return v
+                return v
+            row = {
+                "step": int(step),
+                "train_loss": _safe(loss),
+                "val_metric": _safe(val_metric if val_metric else loss),
+                "grad_norm": _safe(grad_norm),
+                "curvature": _safe(curvature),
+                "direction_consistency": _safe(direction_consistency),
+            }
+            if self._trace_file:
+                self._trace_file.write(_json.dumps(row, allow_nan=True) + "\n")
+                self._trace_file.flush()
+        except Exception:
+            pass
 
         self._tokens_processed += tokens_in_batch
         elapsed = time.time() - self._start_time
@@ -576,6 +610,34 @@ class ProgressTracker:
                 f"总 token: {self._tokens_processed:,}\n"
             )
             self._progress_file.close()
+        # Wrap per-step JSONL into a single TrainingTrace JSON so
+        # `tensorearch forecast` can ingest it directly.
+        if getattr(self, "_trace_file", None) is not None:
+            try:
+                self._trace_file.close()
+                import json as _json, os as _os
+                run_id = _os.path.basename(self._output_dir.rstrip("/")) or "quickcook"
+                steps = []
+                with open(self._trace_path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            steps.append(_json.loads(line))
+                        except Exception:
+                            continue
+                trace = {
+                    "run_id": run_id,
+                    "checkpoint_path": "",
+                    "target_metric": "train_loss_decrease",
+                    "steps": steps,
+                }
+                out_json = _os.path.join(self._output_dir, "training_trace.json")
+                with open(out_json, "w", encoding="utf-8") as fh:
+                    _json.dump(trace, fh, ensure_ascii=False, indent=2, allow_nan=True)
+            except Exception:
+                pass
 
 
 def _tensor_nbytes(obj: Any) -> int:
@@ -2338,6 +2400,10 @@ class QuickCookTrainer:
         compress_checkpoints: bool = False,
         save_optimizer_state: bool = False,
         disable_anomaly_detection: bool = False,
+        # # TENSOREARCH_FORECAST_LOG_v3 Tensorearch forecast trace toggle
+        tensorearch_trace: bool = False,
+        tensorearch_val_batches: int = 8,
+        tensorearch_val_interval: int = 0,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -2351,6 +2417,10 @@ class QuickCookTrainer:
         self.batch_size = batch_size
         self.gradient_clip = gradient_clip
         self.log_interval = log_interval
+        # # TENSOREARCH_FORECAST_LOG_v3 forecast-trace toggle storage
+        self.tensorearch_trace = tensorearch_trace
+        self.tensorearch_val_batches = int(tensorearch_val_batches)
+        self.tensorearch_val_interval = int(tensorearch_val_interval)
         self.save_interval = save_interval
         self.max_steps = max_steps
         self.epochs = epochs
@@ -2635,8 +2705,10 @@ class QuickCookTrainer:
                 logger.info("  [vGPU] Virtual A100 三层显存管理已启用")
 
         # 进度追踪器 (写入 progress.log + tqdm)
+        # # TENSOREARCH_FORECAST_LOG_v3 propagate forecast-trace toggle
         progress = ProgressTracker(
-            self.output_dir, total_steps, self.rank, self.log_interval
+            self.output_dir, total_steps, self.rank, self.log_interval,
+            enable_forecast_trace=self.tensorearch_trace,
         )
 
         # ── GPU 内存泄漏监控（诊断用，识别跨步骤持续增长） ──
@@ -2663,12 +2735,64 @@ class QuickCookTrainer:
                      if self._vram_config is not None and virtual_vram is not None
                      else nullcontext())
 
+        # # TENSOREARCH_FORECAST_LOG_v2 true held-out validation
+        # # TENSOREARCH_FORECAST_LOG_v3 both knobs configurable
+        _te_val_batches: list = []
+        _TE_VAL_BATCH_COUNT = self.tensorearch_val_batches if self.tensorearch_trace else 0
+        _TE_VAL_INTERVAL = (
+            self.tensorearch_val_interval
+            if (self.tensorearch_trace and self.tensorearch_val_interval > 0)
+            else max(self.log_interval * 5, 50)
+        )
+        _te_last_val_metric: float = 0.0
+
+        def _te_run_validation() -> float:
+            """Forward-only over cached val batches; return exp(-mean_loss) in [0,1]."""
+            if not _te_val_batches:
+                return 0.0
+            try:
+                import math as _math
+                base_model = self.model.module if hasattr(self.model, "module") else self.model
+                was_training = base_model.training
+                base_model.eval()
+                losses = []
+                with torch.no_grad():
+                    _vctx = autocast_ctx if autocast_ctx is not None else nullcontext()
+                    with _vctx:
+                        for vb in _te_val_batches:
+                            v_input = vb["input_ids"].to(self.device)
+                            v_labels = vb["labels"].to(self.device)
+                            v_out = base_model(v_input, labels=v_labels)
+                            v_loss = v_out.loss if hasattr(v_out, "loss") else v_out[0]
+                            if v_loss is not None and torch.isfinite(v_loss):
+                                losses.append(float(v_loss.item()))
+                if was_training:
+                    base_model.train()
+                if not losses:
+                    return 0.0
+                mean_loss = sum(losses) / len(losses)
+                metric = _math.exp(-mean_loss)
+                return max(0.0, min(1.0, metric))
+            except Exception:
+                return 0.0
+
         with _vram_ctx:
             for epoch in range(self.epochs):
                 if self.rank == 0:
                     logger.info(f"===== Epoch {epoch + 1}/{self.epochs} =====")
 
                 for batch in dataloader:
+                    # # TENSOREARCH_FORECAST_LOG_v2 divert first N batches to held-out val cache
+                    # # TENSOREARCH_FORECAST_LOG_v3 gated by toggle
+                    if self.tensorearch_trace and len(_te_val_batches) < _TE_VAL_BATCH_COUNT:
+                        try:
+                            _te_val_batches.append({
+                                "input_ids": batch["input_ids"].detach().cpu().clone(),
+                                "labels":    batch["labels"].detach().cpu().clone(),
+                            })
+                        except Exception:
+                            pass
+                        continue
                     # 移到设备
                     input_ids = batch["input_ids"].to(self.device)
                     labels = batch["labels"].to(self.device)
@@ -2712,16 +2836,21 @@ class QuickCookTrainer:
 
                     # 累积够了再更新
                     if step_in_accum >= grad_accum:
+                        # # TENSOREARCH_FORECAST_LOG_v1 capture grad-norm for forecast trace.
                         if scaler is not None:
                             scaler.unscale_(optimizer)
-                            torch.nn.utils.clip_grad_norm_(
-                                self.model.parameters(), self.gradient_clip
+                            _tensorearch_grad_norm = float(
+                                torch.nn.utils.clip_grad_norm_(
+                                    self.model.parameters(), self.gradient_clip
+                                )
                             )
                             scaler.step(optimizer)
                             scaler.update()
                         else:
-                            torch.nn.utils.clip_grad_norm_(
-                                self.model.parameters(), self.gradient_clip
+                            _tensorearch_grad_norm = float(
+                                torch.nn.utils.clip_grad_norm_(
+                                    self.model.parameters(), self.gradient_clip
+                                )
                             )
                             optimizer.step()
 
@@ -2741,9 +2870,40 @@ class QuickCookTrainer:
                         cur_lr = scheduler.get_last_lr()[0]
                         tokens_in_batch = input_ids.numel()
 
+                        # # TENSOREARCH_FORECAST_LOG_v1 compute cheap proxies for forecast.
+                        if not hasattr(self, "_te_loss_window"):
+                            self._te_loss_window = []
+                            self._te_prev_loss = None
+                        self._te_loss_window.append(float(cur_loss))
+                        if len(self._te_loss_window) > 3:
+                            self._te_loss_window.pop(0)
+                        if len(self._te_loss_window) >= 3:
+                            a, b, c = self._te_loss_window[-3:]
+                            _te_curvature = abs(a - 2.0 * b + c)
+                        else:
+                            _te_curvature = 0.0
+                        if self._te_prev_loss is None:
+                            _te_dir = 1.0
+                        else:
+                            _te_dir = 1.0 if cur_loss <= self._te_prev_loss else 0.0
+                        self._te_prev_loss = float(cur_loss)
+                        # # TENSOREARCH_FORECAST_LOG_v2 refresh val_metric every VAL_INTERVAL steps
+                        # # TENSOREARCH_FORECAST_LOG_v3 gated by toggle
+                        if (
+                            self.tensorearch_trace
+                            and _TE_VAL_INTERVAL > 0
+                            and self.global_step > 0
+                            and self.global_step % _TE_VAL_INTERVAL == 0
+                            and len(_te_val_batches) > 0
+                        ):
+                            _te_last_val_metric = _te_run_validation()
                         progress.update(
                             self.global_step, cur_loss, cur_lr,
                             tokens_in_batch=tokens_in_batch,
+                            grad_norm=_tensorearch_grad_norm,
+                            curvature=_te_curvature,
+                            direction_consistency=_te_dir,
+                            val_metric=_te_last_val_metric,
                         )
 
                         if self.global_step % self.log_interval == 0:
@@ -3368,6 +3528,14 @@ def parse_args():
     parser.add_argument("--profile-output-name", type=str, default="tensorearch_trace.json",
                         help="切片 profiling 导出的 Tensorearch trace 文件名")
 
+    # # TENSOREARCH_FORECAST_LOG_v3 Tensorearch forecast trace toggle
+    parser.add_argument("--tensorearch-trace", action="store_true",
+                        help="开启 Tensorearch forecast 训练轨迹日志: 输出 training_trace.json + 真 held-out val_metric")
+    parser.add_argument("--tensorearch-val-batches", type=int, default=8,
+                        help="--tensorearch-trace 启用时, 用前 N 个 batch 当 held-out 验证集 (默认 8)")
+    parser.add_argument("--tensorearch-val-interval", type=int, default=0,
+                        help="--tensorearch-trace 启用时, 每 N 步评估一次 val_metric; 0 = 自动 = max(log_interval*5, 50)")
+
     # --- 虚拟 GPU 加速 (可选) ---
     vgpu_group = parser.add_argument_group("虚拟 GPU 加速 (可选)")
 
@@ -3977,6 +4145,10 @@ def main():
         profile_warmup_steps=args.profile_warmup_steps,
         profile_active_steps=args.profile_active_steps,
         profile_output_name=args.profile_output_name,
+        # # TENSOREARCH_FORECAST_LOG_v3 forecast-trace toggle plumbing
+        tensorearch_trace=args.tensorearch_trace,
+        tensorearch_val_batches=args.tensorearch_val_batches,
+        tensorearch_val_interval=args.tensorearch_val_interval,
     )
 
     try:
