@@ -533,13 +533,30 @@ class ProgressTracker:
             self._progress_file.write(header)
             self._progress_file.flush()
 
-    def update(self, step: int, loss: float, lr: float,
+    def update(self, step: int, display_loss: float, lr: float,
                tokens_in_batch: int = 0,
                grad_norm: float = 0.0,
                curvature: float = 0.0,
                direction_consistency: float = 0.0,
-               val_metric: float = 0.0):
-        """更新进度"""
+               val_metric: float = 0.0,
+               *,
+               raw_loss: float | None = None,
+               post_clip_grad_norm: float = 0.0,
+               gradient_clip: float = 0.0,
+               grad_norm_kind: str = "pre_clip",
+               val_metric_observed: bool = False):
+        """更新进度
+
+        display_loss: 用于 progress.log + tqdm postfix 的平滑显示值
+        raw_loss: per-optimizer-step 的 micro-batch 原始 loss 均值, 用于
+                  Tensorearch trace。如果未传则等于 display_loss (向后兼容,
+                  但会触发 trace contract validator 的 sawtooth 警告)。
+
+        # # TENSOREARCH_FORECAST_LOG_v4 contract: trace 必须用 raw_loss, val_metric 不再
+        # fallback 到 loss; 新增 grad_norm_kind / gradient_clip / post_clip /
+        # val_metric_observed 字段供 zombie / forecast 判定。
+        """
+        loss = display_loss  # backward compatibility: existing self.last_loss
         if self.rank != 0:
             return
         # Tensorearch-forecast trace row (one line per step).
@@ -550,11 +567,17 @@ class ProgressTracker:
                 if _math.isnan(v) or _math.isinf(v):
                     return v
                 return v
+            _trace_loss = float(raw_loss) if raw_loss is not None else float(display_loss)
             row = {
                 "step": int(step),
-                "train_loss": _safe(loss),
-                "val_metric": _safe(val_metric if val_metric else loss),
+                "train_loss": _safe(_trace_loss),
+                "train_loss_kind": "raw_step_mean" if raw_loss is not None else "display_smoothed",
+                "val_metric": _safe(val_metric),
+                "val_metric_observed": bool(val_metric_observed),
                 "grad_norm": _safe(grad_norm),
+                "grad_norm_kind": grad_norm_kind,
+                "post_clip_grad_norm": _safe(post_clip_grad_norm),
+                "gradient_clip": _safe(gradient_clip),
                 "curvature": _safe(curvature),
                 "direction_consistency": _safe(direction_consistency),
             }
@@ -2688,6 +2711,8 @@ class QuickCookTrainer:
         grad_accum = self.dist_config.gradient_accumulation_steps
         running_loss = 0.0
         step_in_accum = 0
+        # # TENSOREARCH_FORECAST_LOG_v4 raw step-loss accumulator (independent of display smoothing)
+        _te_step_micro_sum = 0.0
 
         logger.info(f"[Rank {self.rank}] 开始训练, 总步数估计: {total_steps}")
         logger.info(
@@ -2776,6 +2801,91 @@ class QuickCookTrainer:
             except Exception:
                 return 0.0
 
+        # # TENSOREARCH_FORECAST_LOG_v5 training-time broadcast: read latest trace,
+        # run zombie + forecast, write training_forecast.json, return log line
+        _te_broadcast_warn_once = [False]
+        def _te_broadcast_forecast():
+            if not self.tensorearch_trace:
+                return None
+            try:
+                from tensorearch.io import load_training_trace_from_dict
+                from tensorearch.forecast import forecast_trace
+                from tensorearch.zombie import assess_zombie
+                from dataclasses import asdict as _asdict
+            except Exception as _e:
+                if not _te_broadcast_warn_once[0]:
+                    logger.warning(f"[Tensorearch] 广播 disabled: tensorearch not importable ({_e!r}); 训练不受影响")
+                    _te_broadcast_warn_once[0] = True
+                return None
+            import json as _json
+            trace_jsonl_path = os.path.join(self.output_dir, "training_trace.jsonl")
+            if not os.path.exists(trace_jsonl_path):
+                return None
+            steps = []
+            try:
+                with open(trace_jsonl_path, "r", encoding="utf-8") as _fh:
+                    for line in _fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            steps.append(_json.loads(line))
+                        except Exception:
+                            continue
+            except Exception:
+                return None
+            if not steps:
+                return None
+            payload = {
+                "run_id": os.path.basename(self.output_dir.rstrip("/")) or "quickcook",
+                "checkpoint_path": "",
+                "target_metric": "train_loss_decrease",
+                "steps": steps,
+            }
+            try:
+                trace = load_training_trace_from_dict(payload)
+                zombie = assess_zombie(trace)
+                forecast = forecast_trace(trace)
+            except Exception as _e:
+                return f"[Tensorearch] broadcast error: {_e!r}"
+            if zombie.severity in ("INFECTED", "ZOMBIE"):
+                status = "zombie"
+            elif (not forecast.continue_training_recommended) and forecast.recommended_stop_step > 0:
+                status = "stop"
+            else:
+                status = "hold"
+            log_line = (
+                f"[Tensorearch] status={status} "
+                f"predicted={forecast.predicted_final_score:.3f} "
+                f"conf={forecast.confidence:.3f} "
+            )
+            if status == "stop":
+                log_line += f"recommended_stop={forecast.recommended_stop_step}"
+            elif status == "zombie":
+                log_line += f"class={zombie.zombie_class} step={zombie.infection_step}"
+            elif forecast.decision_window_start > 0:
+                log_line += f"stop_window=[{forecast.decision_window_start},{forecast.decision_window_end}]"
+            else:
+                log_line += "stop_window=[]"
+            try:
+                out = {
+                    "status": status,
+                    "predicted_final_score": float(forecast.predicted_final_score),
+                    "uncertainty": float(forecast.uncertainty),
+                    "confidence": float(forecast.confidence),
+                    "earliest_decision_step": int(forecast.earliest_decision_step),
+                    "decision_window_start": int(forecast.decision_window_start),
+                    "decision_window_end": int(forecast.decision_window_end),
+                    "recommended_stop_step": int(forecast.recommended_stop_step),
+                    "zombie": _asdict(zombie),
+                    "trace_contract": forecast.metadata.get("contract", {}),
+                }
+                with open(os.path.join(self.output_dir, "training_forecast.json"), "w", encoding="utf-8") as _fh:
+                    _json.dump(out, _fh, ensure_ascii=False, indent=2, allow_nan=True, default=str)
+            except Exception:
+                pass
+            return log_line
+
         with _vram_ctx:
             for epoch in range(self.epochs):
                 if self.rank == 0:
@@ -2819,10 +2929,14 @@ class QuickCookTrainer:
                     # ── forward + backward ──
                     if step_in_accum == 0:
                         self.slice_profiler.begin_step(self.global_step)
+                        _te_step_micro_sum = 0.0  # # TENSOREARCH_FORECAST_LOG_v4 reset per opt-step window
+                    _te_running_before = running_loss
                     loss, running_loss = self._forward_backward_step(
                         input_ids, labels, autocast_ctx, scaler,
                         grad_accum, running_loss,
                     )
+                    # # TENSOREARCH_FORECAST_LOG_v4 capture this micro-batch's raw contribution
+                    _te_step_micro_sum += float(running_loss - _te_running_before)
 
                     # 🔍 前10步输出实时loss（检测NaN）
                     if self.rank == 0 and self.global_step < 10 and alpha_scheduler is not None:
@@ -2870,11 +2984,15 @@ class QuickCookTrainer:
                         cur_lr = scheduler.get_last_lr()[0]
                         tokens_in_batch = input_ids.numel()
 
+                        # # TENSOREARCH_FORECAST_LOG_v4 raw per-optimizer-step loss (mean of grad_accum micro-batches)
+                        _te_raw_step_loss = _te_step_micro_sum / max(grad_accum, 1)
+
                         # # TENSOREARCH_FORECAST_LOG_v1 compute cheap proxies for forecast.
+                        # # TENSOREARCH_FORECAST_LOG_v4 moved onto _te_raw_step_loss to avoid display-smoothing sawtooth
                         if not hasattr(self, "_te_loss_window"):
                             self._te_loss_window = []
                             self._te_prev_loss = None
-                        self._te_loss_window.append(float(cur_loss))
+                        self._te_loss_window.append(float(_te_raw_step_loss))
                         if len(self._te_loss_window) > 3:
                             self._te_loss_window.pop(0)
                         if len(self._te_loss_window) >= 3:
@@ -2885,10 +3003,12 @@ class QuickCookTrainer:
                         if self._te_prev_loss is None:
                             _te_dir = 1.0
                         else:
-                            _te_dir = 1.0 if cur_loss <= self._te_prev_loss else 0.0
-                        self._te_prev_loss = float(cur_loss)
+                            _te_dir = 1.0 if _te_raw_step_loss <= self._te_prev_loss else 0.0
+                        self._te_prev_loss = float(_te_raw_step_loss)
                         # # TENSOREARCH_FORECAST_LOG_v2 refresh val_metric every VAL_INTERVAL steps
                         # # TENSOREARCH_FORECAST_LOG_v3 gated by toggle
+                        # # TENSOREARCH_FORECAST_LOG_v4 track whether this step actually had a fresh val eval
+                        _te_val_observed_this_step = False
                         if (
                             self.tensorearch_trace
                             and _TE_VAL_INTERVAL > 0
@@ -2897,6 +3017,7 @@ class QuickCookTrainer:
                             and len(_te_val_batches) > 0
                         ):
                             _te_last_val_metric = _te_run_validation()
+                            _te_val_observed_this_step = True
                         progress.update(
                             self.global_step, cur_loss, cur_lr,
                             tokens_in_batch=tokens_in_batch,
@@ -2904,7 +3025,21 @@ class QuickCookTrainer:
                             curvature=_te_curvature,
                             direction_consistency=_te_dir,
                             val_metric=_te_last_val_metric,
+                            raw_loss=_te_raw_step_loss,
+                            gradient_clip=float(self.gradient_clip),
+                            grad_norm_kind="pre_clip",
+                            val_metric_observed=(_te_val_observed_this_step or _te_last_val_metric > 0.0),
                         )
+                        # # TENSOREARCH_FORECAST_LOG_v5 training-time broadcast every val interval
+                        if (
+                            self.tensorearch_trace
+                            and _TE_VAL_INTERVAL > 0
+                            and self.global_step > 0
+                            and self.global_step % _TE_VAL_INTERVAL == 0
+                        ):
+                            _bc_log = _te_broadcast_forecast()
+                            if _bc_log:
+                                logger.info(_bc_log)
 
                         if self.global_step % self.log_interval == 0:
                             running_loss = 0.0
