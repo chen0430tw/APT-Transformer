@@ -26,6 +26,7 @@ LECAC — Low-Entropy Compensation for Activated Computation
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -34,6 +35,8 @@ from typing import Dict, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
 
 # torch.compile 兼容：is_compiling() 在 Dynamo tracing 期间返回 True，
 # 使 perf 统计分支成为死代码，避免 SpeculationLog diverged。

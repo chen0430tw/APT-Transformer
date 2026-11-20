@@ -3098,13 +3098,19 @@ class QuickCookTrainer:
                                 fwd_ms     = lp.get("fwd_ms", 0.0)
                                 bwd_n      = int(lp.get("bwd_n", 0))
                                 bwd_ms     = lp.get("bwd_ms", 0.0)
+                                pf_hit     = int(vp.get("prefetch_hit", 0))
+                                pf_miss    = int(vp.get("prefetch_miss", 0))
+                                pf_str     = (f" | Prefetch: hit={pf_hit} miss={pf_miss} "
+                                              f"({pf_hit / (pf_hit + pf_miss):.0%})"
+                                              if (pf_hit + pf_miss) > 0 else "")
 
                                 logger.info(
                                     f"[PerfTrack] step={self.global_step:5d} "
                                     f"| D2H: n={pack_n} skip={skip_n} "
                                     f"{pack_mb:.1f}MB {pack_ms:.1f}ms "
                                     f"({pack_ms/max(pack_n,1):.3f}ms/op) "
-                                    f"| H2D: n={unpack_n} {unpack_mb:.1f}MB(submit) "
+                                    f"| H2D: n={unpack_n} {unpack_mb:.1f}MB(submit)"
+                                    f"{pf_str} "
                                     f"| LECaC fwd: n={fwd_n} {fwd_ms:.1f}ms "
                                     f"({fwd_ms/max(fwd_n,1):.3f}ms/op) "
                                     f"| LECaC bwd: n={bwd_n} {bwd_ms:.1f}ms "
@@ -3708,9 +3714,9 @@ def parse_args():
     vgpu_group.add_argument("--vram-block-size", type=int, default=64,
                             help="Virtual VRAM v1.3: 分块大小 (默认 64)")
     vgpu_group.add_argument("--vram-enable-prefetch", action="store_true",
-                            help="Virtual VRAM v1.3: 启用异步预取")
+                            help="Virtual VRAM v1.6.2: 启用 backward 倒序异步预取（专用 CUDA 流）")
     vgpu_group.add_argument("--vram-prefetch-cache-size", type=int, default=5,
-                            help="Virtual VRAM v1.3: 预取缓存大小")
+                            help="Virtual VRAM v1.6.2: 预取深度 = 同时驻留 GPU 的预取 tensor 上限")
     vgpu_group.add_argument("--vram-enable-quantization", action="store_true",
                             help="Virtual VRAM v1.2: 启用 LECaC 量化")
     vgpu_group.add_argument("--vram-quantization-bits", type=int, default=8,

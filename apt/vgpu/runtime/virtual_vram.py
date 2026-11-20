@@ -1,7 +1,26 @@
-# virtual_vram_v16.py
+# virtual_vram.py  (v1.6.2；virtual_vram_v*.py 均为历史快照，不被任何代码导入)
 # -*- coding: utf-8 -*-
 """
-Virtual VRAM v1.6 (Linear Scaling Nested Architecture)
+Virtual VRAM v1.6.2 (Linear Scaling Nested Architecture)
+
+v1.6.2 backward 倒序预取：
+  - 旧预取在 forward 中立即把刚 offload 的激活值 H2D 搬回 GPU 并常驻到 backward，
+    开启预取后峰值显存甚至高于不 offload（实测 1310MB vs 基线 753MB）。
+  - 现在 forward 只记录 pack 顺序；backward 每 unpack 一个 tensor，就在专用 CUDA 流上
+    为接下来要用的（pack 更早的）prefetch_cache_size 个 tensor 发起 pinned→GPU 异步拷贝，
+    通过 CUDA event + record_stream 与计算流同步。不再使用后台线程。
+  - 传统 fallback 路径（默认配置走这条）也改为 pinned + 异步 D2H，否则无法异步预取。
+
+v1.6.1 正确性修复：
+  - 主 cache 命中改为校验源 tensor 身份（weakref 存活 + _version 未变）。
+    旧实现仅凭 data_ptr 命中：virtual_vram 包住整个训练循环时，内存池把旧地址分给
+    新 step 的激活值，backward 拿到上一步的 CPU 数据 → 梯度错误（每步约 97/101 个 tensor）。
+  - 源 tensor 释放时由 weakref 回调移除 cache 条目。
+  - 不再 offload 叶子参数（offload 不省显存；旧实现返回 optimizer.step 前的旧权重）。
+  - Prefetcher：删除按 data_ptr 索引的 cache；prefetched 交接加锁并按 pending 计数，
+    消除"同步路径已返回后才写入 prefetched"的 GPU 滞留竞态；cache_size 限制驻留个数；
+    add() 非阻塞。
+  - arc_clone 不再写入 _heat_pq（2e7b0b9 遗漏的强引用泄漏点）。
 
 v1.6 核心改进：线性缩放嵌套结构
   - LECaC → Page → Block → Arc (嵌套，非独立)
@@ -36,6 +55,7 @@ import threading
 import time
 import weakref
 import heapq
+import bisect
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -64,6 +84,9 @@ _vram_perf: Dict[str, float] = {
     "skip_n":      0.0,   # _pack_hook 快速跳过次数（INT8/bool/size 过滤）
     "unpack_n":    0.0,   # H2D 提交次数（non_blocking，不含实际 DMA 时间）
     "unpack_bytes":0.0,   # H2D 总字节数（估算）
+    "prefetch_issued": 0.0,  # v1.6.2 backward 倒序预取发起次数
+    "prefetch_hit":    0.0,  # unpack 命中预取（无同步 H2D）
+    "prefetch_miss":   0.0,  # 开启预取时 unpack 未命中（走同步 H2D）
 }
 
 
@@ -240,8 +263,8 @@ class _NestedArcBlock:
             self.access_count += 1  # 增加访问次数
             self.last_access = time.time()  # 更新访问时间
 
-        # 更新全局热度优先队列（O(1)标记脏）
-        _heat_pq.add_or_update(self, key)
+        # ⚠️ 不再调用 _heat_pq.add_or_update：get_top_k() 从未被调用，
+        # 写入只会强引用 _NestedArcBlock，使其 pinned cpu_tensor 无法释放（见 2e7b0b9）。
         return self
 
     def arc_drop(self) -> bool:
@@ -435,24 +458,16 @@ class VirtualVRAMConfig:
     # 训练时务必保持 False，否则每次 backward 均会打印大量日志
     debug: bool = False
 
-    # 主 cache 最大条目数（真 LRU 淘汰，需与 move_to_end 配合使用）
-    # 背景：
-    #   - 第1步：pack ~97 个 tensor（含模型参数的激活值）→ 后续步骤因 PyTorch 内存池
-    #     地址重用而命中 cache（cache hit），只有 ~3.8/步 是真正的新 key。
-    #   - 激活 tensor 每步地址不同（cache miss）→ 约 3.8 条/步新 _Packed 写入 cache。
-    #   - cache hit 时调用 move_to_end(key) 保证"频繁访问的参数激活"不被淘汰。
+    # 主 cache 最大条目数（安全上限）
+    # 主 cache 只用于"同一个仍存活、未被原地修改的 tensor 被多次 save_for_backward"时的去重。
+    # 条目在源 GPU tensor 被释放时由 weakref 回调立即移除，因此正常情况下 cache 很小，
+    # 此上限只是兜底。
     #
-    # 关键 BUG（已修复）：原值 2000 导致 LRU 从不触发（100步仅积累 ~380 条）：
-    #   prefetcher 可能在 _unpack_hook 走同步路径之后才完成 H2D，
-    #   并把 GPU tensor 写入 packed.prefetched；该 tensor 此后无人消费，
-    #   直到对应 _Packed 被 LRU 淘汰后随 _Packed GC 才释放。
-    #   原值 2000 → LRU 在步骤 (2000-97)/3.8 ≈ 500 步才触发 → GPU 显存持续累积。
-    #
-    # 新值 200 推导：
-    #   ~97 个稳定 pool-reused 条目（每步 cache hit）+ 103 个激活 buffer
-    #   → LRU 在 103/3.8 ≈ 27 步时开始淘汰旧激活 _Packed
-    #   → 步骤 30 基准线时已达稳态，步骤 30→100 增长 ≈ 0
-    #   （若模型的稳定 key 数量超过 ~100，可适当上调此值）
+    # ⚠️ 历史 BUG（v1.6.1 修复）：旧实现仅凭 (data_ptr, shape, stride, offset) 判定命中。
+    #   源 tensor 释放后 PyTorch 内存池会把同一地址分给后续 step 的新激活值，
+    #   旧实现因此把上一步的 _Packed（旧 CPU 数据）返回给 backward → 梯度错误。
+    #   旧注释中"~97 个稳定 pool-reused 条目每步命中 cache"正是这种错误命中。
+    #   现在命中要求：源 tensor 仍存活（weakref）且 _version 未变（无原地修改）。
     max_cache_entries: int = 200
 
     # 已废弃
@@ -631,7 +646,16 @@ class _Packed:
     __slots__ = ('cpu_tensor', 'device', 'dtype', 'requires_grad',
                  'quantized', 'block_info', 'prefetched', 'cache_key',
                  'page_id', 'arc_mode',
-                 'nested_block')  # v1.6: 嵌套块
+                 'nested_block',  # v1.6: 嵌套块
+                 # v1.6.1: 源 tensor 身份校验（防止地址重用导致的错误命中）
+                 'src_ref', 'src_version',
+                 # v1.6.1: 尚未 unpack 的次数；prefetcher 仅在 >0 时写入 prefetched
+                 'pending',
+                 # v1.6.2: 反向预取 —— forward pack 序号 + 预取 H2D 完成事件
+                 'seq', 'prefetch_event',
+                 # v1.6.2: 传统路径异步 D2H 完成事件（嵌套路径的在 nested_block.dma_event）
+                 'dma_event',
+                 '__weakref__')
 
     def __init__(self, cpu_tensor: torch.Tensor,
                  device: torch.device,
@@ -659,128 +683,191 @@ class _Packed:
         # v1.6: 嵌套块模式（新）
         self.nested_block = nested_block
 
+        self.src_ref = None
+        self.src_version = -1
+        self.pending = 0
+        self.seq = -1
+        self.prefetch_event = None
+        self.dma_event = None
+
 
 class _Prefetcher:
-    """异步预取器（支持弱引用）"""
+    """
+    反向（backward 顺序）预取器 —— v1.6.2
+
+    问题（v1.6.1 及之前）：
+      旧预取器在 pack_hook（forward）里把 _Packed 送进队列，后台线程立即 H2D。
+      forward 期间刚 offload 的激活值马上被搬回 GPU 并常驻到 backward
+      → 开启预取 ≈ 不 offload，显存几乎不省；且 backward 是倒序消费，
+      forward 顺序预取的头几个 tensor 反而最晚用到。
+
+    新机制：
+      1. forward：pack_hook 为每个新 _Packed 分配递增序号 seq（track），不做任何 H2D。
+      2. backward：autograd 大致按 seq 倒序 unpack。每次 unpack(seq=s) 之后，
+         在专用 CUDA 预取流上为 s 之下最近的 depth 个待 unpack 的 _Packed 发起
+         异步 H2D（pinned → GPU, non_blocking），与当前 backward 计算重叠。
+      3. 消费：unpack 命中 prefetched 时，当前流 wait_event(H2D 完成事件)，
+         并 record_stream(当前流) 告知缓存分配器该显存在当前流上被使用。
+      4. 驻留上限：同时持有 prefetched GPU tensor 的 _Packed 不超过 depth 个
+         （= cfg.prefetch_cache_size），预取额外显存 ≤ depth 个激活值。
+
+    同步关系：
+      - 预取流先 wait_event(pack 时记录的 D2H dma_event)，保证 pinned 数据已写完（GPU 侧等待，CPU 不阻塞）。
+      - pinned CPU 内存由 CachingHostAllocator 管理，异步拷贝会记录使用事件，不会被提前复用。
+      - 不使用后台线程：发起异步拷贝只是入队，开销很小，在 unpack_hook 内直接完成。
+        unpack_hook 可能运行在 autograd 设备线程上，所以共享状态仍由 self.lock 保护。
+
+    不预取（走同步路径，结果仍正确）：量化块（需 CPU 去量化）、非 pinned 的 CPU tensor
+    （v1.5 分页/Arc 与传统 fallback 路径使用 .cpu()，不是 pinned）。
+    """
 
     def __init__(self, cache_size: int = 5, verbose: bool = False, debug: bool = False):
-        self.cache: OrderedDict[Tuple, WeakTensor] = OrderedDict()  # 使用弱引用
-        self.cache_size = cache_size
-        self.queue: queue.Queue = queue.Queue(maxsize=10)
+        self.depth = max(int(cache_size), 1)
+        self.cache_size = self.depth  # 兼容旧字段名
+        self.lock = threading.Lock()
         self.verbose = verbose
         self.debug = debug
-        self.stop_event = threading.Event()
-        self.thread: Optional[threading.Thread] = None
+        self._seq = 0
+        self._order: List[int] = []                       # 待 unpack 的 seq（升序）
+        self._by_seq: Dict[int, "weakref.ref[_Packed]"] = {}
+        self._resident: "weakref.WeakSet[_Packed]" = weakref.WeakSet()
+        self._streams: Dict[Any, "torch.cuda.Stream"] = {}
+        # 统计
+        self.issued = 0      # 发起的预取 H2D 次数
+        self.hits = 0        # unpack 命中预取
+        self.misses = 0      # unpack 未命中（走同步 H2D）
+        self.wasted = 0      # 预取了但 _Packed 已无 unpack 需求而丢弃
 
+    # ---- 生命周期（保留旧接口） ----
     def start(self):
-        self.stop_event.clear()
-        self.thread = threading.Thread(target=self._prefetch_worker, daemon=True)
-        self.thread.start()
+        pass
 
     def stop(self):
-        self.stop_event.set()
-        if self.thread:
-            self.thread.join(timeout=2.0)
+        with self.lock:
+            for p in list(self._resident):
+                p.prefetched = None
+                p.prefetch_event = None
+            self._order.clear()
+            self._by_seq.clear()
 
-    def add(self, packed: _Packed):
-        if packed.cache_key is not None:
-            self.queue.put(packed)
+    # ---- forward：登记 pack 顺序 ----
+    def track(self, packed: _Packed) -> None:
+        with self.lock:
+            seq = self._seq
+            self._seq += 1
+            packed.seq = seq
+            self._order.append(seq)  # seq 单调递增，append 后仍有序
 
-    def _prefetch_worker(self):
-        while not self.stop_event.is_set():
-            try:
-                packed = self.queue.get(timeout=0.1)
-                self._do_prefetch(packed)
-            except queue.Empty:
-                continue
-            except Exception as e:
-                if self.verbose:
-                    print(f"[VirtualVRAM] ⚠️  Prefetch error: {e}")
+            def _on_dead(_r, seq=seq, self_ref=weakref.ref(self)):
+                me = self_ref()
+                if me is not None:
+                    with me.lock:
+                        me._untrack_locked(seq)
 
-    def _do_prefetch(self, packed: _Packed):
+            self._by_seq[seq] = weakref.ref(packed, _on_dead)
+
+    def _untrack_locked(self, seq: int) -> None:
+        if self._by_seq.pop(seq, None) is None:
+            return
+        i = bisect.bisect_left(self._order, seq)
+        if i < len(self._order) and self._order[i] == seq:
+            del self._order[i]
+
+    def _resident_count_locked(self) -> int:
+        return sum(1 for p in self._resident if p.prefetched is not None)
+
+    # ---- backward：消费 ----
+    def take(self, packed: _Packed) -> Optional[torch.Tensor]:
+        """登记一次 unpack，取走预取结果（若有）并建立流同步"""
+        with self.lock:
+            packed.pending -= 1
+            pre = packed.prefetched
+            ev = packed.prefetch_event
+            packed.prefetched = None
+            packed.prefetch_event = None
+            if packed.pending <= 0 and packed.seq >= 0:
+                self._untrack_locked(packed.seq)
+            if pre is not None:
+                self.hits += 1
+                _vram_perf["prefetch_hit"] += 1
+            elif packed.seq >= 0:
+                self.misses += 1
+                _vram_perf["prefetch_miss"] += 1
+        if pre is not None:
+            cur = torch.cuda.current_stream(pre.device)
+            if ev is not None:
+                cur.wait_event(ev)
+            pre.record_stream(cur)
+        return pre
+
+    # ---- backward：按倒序为后续 unpack 发起预取 ----
+    def schedule_after(self, packed: _Packed) -> None:
+        seq = packed.seq
+        if seq < 0:
+            return
+        with self.lock:
+            budget = self.depth - self._resident_count_locked()
+            if budget <= 0:
+                return
+            i = bisect.bisect_left(self._order, seq) - 1
+            scanned = 0
+            # 只看 seq 之下最近的 depth 个候选（倒序 = backward 即将用到的顺序）
+            while i >= 0 and budget > 0 and scanned < self.depth:
+                p = self._by_seq.get(self._order[i])
+                p = p() if p is not None else None
+                i -= 1
+                scanned += 1
+                if p is None or p.pending <= 0 or p.prefetched is not None:
+                    continue
+                if self._issue_locked(p):
+                    budget -= 1
+
+    def _stream_for(self, device) -> "torch.cuda.Stream":
+        s = self._streams.get(device)
+        if s is None:
+            s = torch.cuda.Stream(device=device)
+            self._streams[device] = s
+        return s
+
+    def _issue_locked(self, p: _Packed) -> bool:
+        nb = p.nested_block
+        if nb is not None:
+            cpu, dev, dtype, rg, quant = nb.cpu_tensor, nb.device, nb.dtype, nb.requires_grad, nb.quantized
+            dma_ev = nb.dma_event
+        else:
+            if p.page_id is not None or p.block_info:
+                return False  # v1.5 分页/Arc 与分块路径：数据不在单个 pinned cpu_tensor 中
+            cpu, dev, dtype, rg, quant = p.cpu_tensor, p.device, p.dtype, p.requires_grad, p.quantized
+            dma_ev = p.dma_event
+        if quant or cpu is None or cpu.dtype != dtype or not cpu.is_pinned():
+            return False
         try:
-            # v1.6: 支持嵌套块模式
-            if packed.nested_block is not None:
-                # 从嵌套块获取数据
-                nested = packed.nested_block
-
-                # 等待异步 D2H 完成（prefetch 线程可能早于 unpack_hook 访问 cpu_tensor）
-                # 先存局部变量再 synchronize()，避免主线程并发置 None 后拿到 NoneType。
-                _ev = nested.dma_event
-                if _ev is not None:
-                    _ev.synchronize()
-                    nested.dma_event = None
-
-                cpu_tensor = nested.cpu_tensor
-                target_device = nested.device
-                requires_grad = nested.requires_grad
-                original_dtype = nested.dtype
-
-                # LECaC 去量化
-                if nested.quantized and LECaC_AVAILABLE:
-                    restored = lecac_dequantize(
-                        cpu_tensor,
-                        bits=nested.quantization_bits,
-                        original_shape=cpu_tensor.shape,
-                        original_dtype=original_dtype,
-                        constant=NATURAL_EQUILIBRIUM_CONSTANT
-                    )
-                else:
-                    restored = cpu_tensor
-
-                if self.debug:
-                    print(f'[DEBUG _do_prefetch NESTED] Before to: tensor dtype={restored.dtype}, target dtype={original_dtype}, device={target_device}')
-                restored = restored.to(device=target_device, dtype=original_dtype, non_blocking=False)
-                if self.debug:
-                    print(f'[DEBUG _do_prefetch NESTED] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
-                restored.requires_grad_(requires_grad)
-                if self.debug:
-                    print(f'[DEBUG _do_prefetch NESTED] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
-            else:
-                # 传统模式
-                cpu_tensor = packed.cpu_tensor
-
-                if packed.quantized and LECaC_AVAILABLE:
-                    restored = lecac_dequantize(
-                        cpu_tensor, bits=8,
-                        original_shape=cpu_tensor.shape,
-                        original_dtype=packed.dtype,
-                        constant=NATURAL_EQUILIBRIUM_CONSTANT
-                    )
-                else:
-                    restored = cpu_tensor
-
-                if self.debug:
-                    print(f'[DEBUG _do_prefetch LEGACY] Before to: tensor dtype={restored.dtype}, target dtype={packed.dtype}, device={packed.device}')
-                restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=False)
-                if self.debug:
-                    print(f'[DEBUG _do_prefetch LEGACY] After to: tensor dtype={restored.dtype}, shape={restored.shape}, requires_grad={restored.requires_grad}')
-                restored.requires_grad_(packed.requires_grad)
-                if self.debug:
-                    print(f'[DEBUG _do_prefetch LEGACY] After requires_grad: dtype={restored.dtype}, requires_grad={restored.requires_grad}')
-
-            # 存入 cache（作为弱引用，允许 GC）
-            if packed.cache_key is not None:
-                # 临时存储为强引用，后续转为弱引用
-                self.cache[packed.cache_key] = restored
-
-            if len(self.cache) > self.cache_size:
-                self.cache.popitem(last=False)
-
-            packed.prefetched = restored
-
-            if self.verbose:
-                mb = restored.numel() * restored.element_size() / 1024 / 1024
-                print(f"[VirtualVRAM] ⚡ Prefetched {mb:.2f}MB {tuple(restored.shape)}")
-
+            stream = self._stream_for(dev)
+            with torch.cuda.stream(stream):
+                if dma_ev is not None:
+                    stream.wait_event(dma_ev)          # D2H 写完 pinned 内存后再读
+                gpu = cpu.to(device=dev, non_blocking=True)
+                done = torch.cuda.Event()
+                done.record(stream)
+            gpu.requires_grad_(rg)
         except Exception as e:
             if self.verbose:
                 print(f"[VirtualVRAM] ⚠️  Prefetch failed: {e}")
-            packed.prefetched = None
+            return False
+        p.prefetched = gpu
+        p.prefetch_event = done
+        self._resident.add(p)
+        self.issued += 1
+        _vram_perf["prefetch_issued"] += 1
+        if self.debug:
+            mb = gpu.numel() * gpu.element_size() / 1024 / 1024
+            print(f"[VirtualVRAM] ⚡ Prefetch issued seq={p.seq} {mb:.2f}MB {tuple(gpu.shape)}")
+        return True
 
-    def get(self, cache_key: Tuple) -> Optional[torch.Tensor]:
-        val = self.cache.get(cache_key)
-        return val
+    def stats(self) -> Dict[str, int]:
+        with self.lock:
+            return {"issued": self.issued, "hits": self.hits, "misses": self.misses,
+                    "resident": self._resident_count_locked(), "tracked": len(self._order)}
 
 
 @contextmanager
@@ -838,6 +925,46 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             t.storage_offset(),
         )
 
+    def _is_live_hit(packed: _Packed, t: torch.Tensor) -> bool:
+        """cache 命中是否有效：源 tensor 仍存活，且自 pack 以来未被原地修改。
+
+        源 tensor 存活 ⇒ 其显存地址不可能被别的 tensor 占用，所以同 key 必然同一块存储；
+        _version 在所有 view 之间共享，原地修改会使其递增。
+        """
+        ref = packed.src_ref
+        if ref is None:
+            return False
+        src = ref()
+        if src is None:
+            return False
+        return src._version == packed.src_version == t._version
+
+    def _register(packed: _Packed, t: torch.Tensor, key: Tuple) -> None:
+        """登记新建的 _Packed：记录源 tensor 身份、入 cache、LRU 兜底、触发预取"""
+        packed.src_version = t._version
+        pref = weakref.ref(packed)
+
+        def _on_src_freed(_r, key=key, pref=pref):
+            # 源 GPU tensor 释放 → 地址可能被重用 → 立即移除该条目
+            # （仅当 cache 中仍是同一个 _Packed 时才删，避免误删同 key 的新条目）
+            p = pref()
+            if p is not None and cache.get(key) is p:
+                cache.pop(key, None)
+
+        try:
+            packed.src_ref = weakref.ref(t, _on_src_freed)
+        except TypeError:
+            packed.src_ref = None  # 无法弱引用 → 永不命中，只是失去去重
+
+        cache[key] = packed
+        if len(cache) > cfg.max_cache_entries:
+            cache.popitem(last=False)
+
+        packed.pending += 1
+        if prefetcher:
+            # v1.6.2: forward 只登记 pack 顺序，不做 H2D；预取在 backward 中按倒序发起
+            prefetcher.track(packed)
+
     def _split_first_dim(t: torch.Tensor, block_size: int) -> List[torch.Tensor]:
         if t.dim() == 0 or t.size(0) == 0:
             return [t]
@@ -894,22 +1021,36 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     _vram_perf["skip_n"] += 1
                     return t
 
+        # 不 offload 叶子参数本身（nn.Parameter / requires_grad 的叶子 tensor）：
+        # 参数常驻 GPU，offload 不省显存，只增加每步 D2H/H2D。
+        # （旧实现靠地址命中 cache 跳过它们，但返回的是 optimizer.step 之前的旧权重。）
+        if t.requires_grad and t.grad_fn is None:
+            _vram_perf["skip_n"] += 1
+            return t
+
         # 通过所有过滤器 → 将进行实际 D2H，开始计时
         _pack_t0 = time.perf_counter()
 
         # 查表缓存
         key = _make_key(t)
-        if key in cache:
-            cached = cache[key]
+        cached = cache.get(key)
+        if cached is not None and not _is_live_hit(cached, t):
+            # 地址被重用（源 tensor 已释放）或被原地修改 → 旧数据，不能复用
+            cache.pop(key, None)
+            cached = None
+        if cached is not None:
             # 访问时升到队尾（真正 LRU：频繁访问的 tensor 不被淘汰）
             cache.move_to_end(key)
-            # v1.6: 如果是嵌套块，增加引用计数并更新热度队列
+            # v1.6: 如果是嵌套块，增加引用计数
             if cached.nested_block is not None:
                 cached.nested_block.arc_clone(key)
                 if cfg.verbose:
                     print(f"[VirtualVRAM v1.6] 🔗 Cache hit + Arc clone: ref={cached.nested_block.arc_strong_count()}")
             if prefetcher:
-                prefetcher.add(cached)
+                with prefetcher.lock:
+                    cached.pending += 1
+            else:
+                cached.pending += 1
             return cached
 
         # ===== v1.6: 嵌套模式（LECaC → Page → Block → Arc） =====
@@ -992,16 +1133,10 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     nested_block=nested_block  # v1.6: 使用嵌套块
                 )
 
-                cache[key] = packed
-                # LRU 淘汰：防止 cache 跨步骤无限增长（每步激活 tensor 的 data_ptr 不同）
                 # ⚠️ 不再调用 _heat_pq.add_or_update：_heat_pq.get_top_k() 在整个代码库中从未被调用，
                 # 优先队列纯粹是写入，没有读取，但每次 add_or_update 都强引用 _NestedArcBlock，
                 # 导致其 cpu_tensor（pinned 内存）永远无法被 GC，造成 CPU pinned 内存无限积累。
-                if len(cache) > cfg.max_cache_entries:
-                    cache.popitem(last=False)
-
-                if prefetcher:
-                    prefetcher.add(packed)
+                _register(packed, t, key)
 
                 _vram_perf["pack_n"]     += 1
                 _vram_perf["pack_bytes"] += nbytes
@@ -1076,13 +1211,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                         mb = nbytes / 1024 / 1024
                         print(f"[VirtualVRAM] 📄 Paged: {mb:.2f}MB -> page {page_ids[0]}")
 
-                cache[key] = packed
-                # LRU 淘汰
-                if len(cache) > cfg.max_cache_entries:
-                    cache.popitem(last=False)
-
-                if prefetcher:
-                    prefetcher.add(packed)
+                _register(packed, t, key)
 
                 _vram_perf["pack_n"]     += 1
                 _vram_perf["pack_bytes"] += nbytes
@@ -1098,6 +1227,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             original_dtype = t.dtype
             quantized = False
             block_info = None
+            legacy_dma_event: Optional[torch.cuda.Event] = None
 
             if cfg.enable_block_offload and t.dim() > 0 and t.size(0) > cfg.block_size:
                 blocks = _split_first_dim(t, cfg.block_size)
@@ -1139,18 +1269,22 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                     ).cpu()
                     quantized = True
                 else:
-                    cpu_tensor = t.detach().cpu()
+                    # v1.6.2: pinned + 异步 D2H（与 v1.6 嵌套路径一致）。
+                    # pinned 内存是 backward 反向预取能异步 H2D 的前提；
+                    # 可分页内存的 non_blocking 拷贝实际是同步的。
+                    try:
+                        cpu_tensor = torch.empty(t.shape, dtype=t.dtype, pin_memory=True)
+                        cpu_tensor.copy_(t.detach(), non_blocking=True)
+                        legacy_dma_event = torch.cuda.Event()
+                        legacy_dma_event.record()
+                    except Exception:
+                        cpu_tensor = t.detach().cpu()  # pinned 分配失败 → 同步 D2H
 
             packed = _Packed(cpu_tensor, t.device, original_dtype,
                              bool(t.requires_grad), quantized,
                              block_info, key)
-            cache[key] = packed
-            # LRU 淘汰
-            if len(cache) > cfg.max_cache_entries:
-                cache.popitem(last=False)
-
-            if prefetcher:
-                prefetcher.add(packed)
+            packed.dma_event = legacy_dma_event
+            _register(packed, t, key)
 
             _vram_perf["pack_n"]     += 1
             _vram_perf["pack_bytes"] += nbytes
@@ -1172,6 +1306,28 @@ def virtual_vram(cfg: VirtualVRAMConfig):
     def _unpack_hook(packed: Any) -> torch.Tensor:
         if not isinstance(packed, _Packed):
             return packed
+        restored = _unpack_impl(packed)
+        if prefetcher is not None:
+            # v1.6.2: 当前 tensor 的 H2D 已入队后，再为 backward 接下来要用的
+            # （pack 顺序更早的）depth 个 tensor 发起异步预取，避免预取抢在当前拷贝之前。
+            prefetcher.schedule_after(packed)
+        return restored
+
+    def _unpack_impl(packed: _Packed) -> torch.Tensor:
+        # ⚡ 登记本次 unpack 并取走预取结果（含流同步）
+        if prefetcher is not None:
+            _pre = prefetcher.take(packed)
+        else:
+            packed.pending -= 1
+            _pre = None
+        if _pre is not None:
+            if packed.nested_block is not None:
+                packed.nested_block.access_count += 1
+                packed.nested_block.last_access = time.time()
+            if cfg.verbose:
+                mb = _pre.numel() * _pre.element_size() / 1024 / 1024
+                print(f"[VirtualVRAM] ⚡ Prefetch hit: {mb:.2f}MB {tuple(_pre.shape)}")
+            return _pre
 
         # 统计 H2D 提交次数和字节数（non_blocking=True：提交即返回，不含 DMA 等待）
         if packed.nested_block is not None:
@@ -1187,26 +1343,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
             try:
                 nested = packed.nested_block
 
-                # ⚡ 优先消费预取结果（prefetcher 线程已在 forward 期间完成 H2D）
-                # ⚠️ 必须先取局部引用再清零：防止 prefetcher 线程并发写入时的竞争
-                # ⚠️ 清零后原来的 GPU 强引用由 t_pre 持有，函数返回后自动释放，防止泄漏
-                _pre = packed.prefetched
-                if _pre is not None:
-                    packed.prefetched = None  # 消费后立即释放强引用，防止 GPU tensor 滞留泄漏
-                    # 同步从 prefetcher.cache 移除：_do_prefetch 会把同一个 GPU tensor
-                    # 存入 prefetcher.cache[key]（强引用），非 v1.6 fallback 路径已有 pop；
-                    # v1.6 路径此处补上，确保 GPU tensor 引用计数立即归零、显存立即释放。
-                    if prefetcher is not None and packed.cache_key is not None:
-                        prefetcher.cache.pop(packed.cache_key, None)
-                    nested.access_count += 1
-                    nested.last_access = time.time()
-                    if cfg.verbose:
-                        mb = _pre.numel() * _pre.element_size() / 1024 / 1024
-                        print(f"[VirtualVRAM v1.6] ⚡ Prefetch hit: {mb:.2f}MB "
-                              f"block={nested.block_id} heat={nested.arc_heat_score():.2f}")
-                    return _pre
-
-                # 预取未就绪，走同步路径：
+                # 预取未就绪（已在函数开头检查），走同步路径：
                 # 等待异步 D2H 完成（pack 时 non_blocking=True，unpack 前必须 synchronize）
                 # 正常训练中 backward 发生在若干 forward 层之后，DMA 通常早已完成，此处几乎无等待
                 # 注意：先把引用存入局部变量再调用 synchronize()，避免 prefetcher 线程并发把
@@ -1288,23 +1425,7 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 if cfg.verbose:
                     print(f"[VirtualVRAM] ⚠️  分页加载失败: {e}")
 
-        # 检查预取
-        # ⚠️ 必须在 return 前将 packed.prefetched 清零！
-        # 若不清零，GPU tensor 会以强引用留在 _Packed 里，而 _Packed 在主 cache 中
-        # 永远存活 → 每步预取的 GPU tensor 全部泄漏。
-        if packed.prefetched is not None:
-            t_pre = packed.prefetched
-            packed.prefetched = None  # 消费后立即释放 GPU 强引用
-            return t_pre
-
-        if prefetcher and packed.cache_key is not None:
-            cached = prefetcher.get(packed.cache_key)
-            if cached is not None:
-                # 消费后从预取缓存移除，避免 GPU tensor 在 prefetcher.cache 里滞留
-                prefetcher.cache.pop(packed.cache_key, None)
-                return cached
-
-        # Fallback: 标准恢复
+        # Fallback: 标准恢复（预取结果已在函数开头消费）
         try:
             cpu_tensor = packed.cpu_tensor
 
@@ -1318,6 +1439,11 @@ def virtual_vram(cfg: VirtualVRAMConfig):
                 )
             else:
                 restored = cpu_tensor
+
+            # v1.6.2: pack 时 D2H 是异步的 → 当前流在 GPU 侧等待其完成（CPU 不阻塞）
+            _ev = packed.dma_event
+            if _ev is not None:
+                torch.cuda.current_stream(packed.device).wait_event(_ev)
 
             restored = restored.to(device=packed.device, dtype=packed.dtype, non_blocking=True)
             restored.requires_grad_(packed.requires_grad)
