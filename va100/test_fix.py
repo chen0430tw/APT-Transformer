@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-验证 Virtual VRAM v0.3 修复效果
+验证 Virtual VRAM 修复效果（apt/vgpu/runtime/virtual_vram.py, v1.6.2）
+
+原 v0.3 版的 compress / compress_dtype / stream_prefetch / track_dependencies
+参数和 mgr.stats 已不存在：量化压缩已弃用，异步预取改为 enable_prefetch
+（backward 倒序预取，CUDA event + record_stream 同步），统计改用
+get_vram_perf_stats()。
 """
 
+import os
+import sys
 import torch
 import torch.nn as nn
-from virtual_vram import VirtualVRAMConfig, virtual_vram
+
+# 从仓库根导入 apt 包（va100/ 的上一级）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from apt.vgpu.runtime.virtual_vram import (
+    VirtualVRAMConfig, virtual_vram, get_vram_perf_stats, reset_vram_perf_stats,
+)
 
 
 def test_gradient_convergence():
@@ -80,51 +92,18 @@ def test_gradient_convergence():
     
     # 修复后应该不 NaN 的配置
     configs = [
-        ("plain (同步)", VirtualVRAMConfig(
-            enabled=True, 
-            min_tensor_bytes=1<<10,
-            compress=False,
-            stream_prefetch=False,  # 同步模式
-            track_dependencies=True,
+        ("legacy (同步)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10,
         )),
-        ("plain (异步+依赖)", VirtualVRAMConfig(
-            enabled=True,
-            min_tensor_bytes=1<<10,
-            compress=False,
-            stream_prefetch=True,  # 异步但有依赖闭环
-            track_dependencies=True,
+        ("legacy (预取)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10, enable_prefetch=True,
         )),
-        ("fp16 (同步)", VirtualVRAMConfig(
-            enabled=True,
-            min_tensor_bytes=1<<10,
-            compress=True,
-            compress_dtype="float16",
-            stream_prefetch=False,
-            track_dependencies=True,
+        ("nested (同步)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10, enable_nested_v16=True,
         )),
-        ("fp16 (异步+依赖)", VirtualVRAMConfig(
-            enabled=True,
-            min_tensor_bytes=1<<10,
-            compress=True,
-            compress_dtype="float16",
-            stream_prefetch=True,
-            track_dependencies=True,
-        )),
-        ("int8 (同步)", VirtualVRAMConfig(
-            enabled=True,
-            min_tensor_bytes=1<<10,
-            compress=True,
-            compress_dtype="int8",
-            stream_prefetch=False,
-            track_dependencies=True,
-        )),
-        ("int8 (异步+依赖)", VirtualVRAMConfig(
-            enabled=True,
-            min_tensor_bytes=1<<10,
-            compress=True,
-            compress_dtype="int8",
-            stream_prefetch=True,
-            track_dependencies=True,
+        ("nested (预取)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10, enable_nested_v16=True,
+            enable_prefetch=True,
         )),
     ]
     
@@ -141,15 +120,17 @@ def test_gradient_convergence():
     
     all_passed = True
     for name, (loss, grad, nan) in results.items():
-        # 检查：1) 不 NaN  2) loss 与 baseline 一致
+        # 检查：1) 不 NaN  2) loss 与 baseline 一致  3) 梯度与 baseline 一致
+        # （offload 只影响 backward，loss 必然一致；梯度才能暴露恢复错误）
         loss_match = abs(loss - loss_base) < 1e-4
+        grad_match = abs(grad - grad_base) <= 1e-5 * max(abs(grad_base), 1.0)
         no_nan = not nan
-        passed = loss_match and no_nan
+        passed = loss_match and grad_match and no_nan
         all_passed = all_passed and passed
-        
+
         status = "✅ PASS" if passed else "❌ FAIL"
         print(f"  {name:20s}: {status}  "
-              f"(loss_match={loss_match}, no_nan={no_nan})")
+              f"(loss_match={loss_match}, grad_match={grad_match}, no_nan={no_nan})")
     
     print()
     if all_passed:
@@ -161,53 +142,65 @@ def test_gradient_convergence():
 
 
 def test_dependency_tracking():
-    """测试依赖追踪"""
+    """测试异步预取的流同步（v1.6.2：D2H dma_event → 预取流 H2D → 计算流 wait_event）"""
     print("\n" + "="*70)
-    print("测试 2: 依赖追踪（审计 stream 依赖闭环）")
+    print("测试 2: 异步预取（审计 offload / restore / 预取命中）")
     print("="*70)
-    
+
     if not torch.cuda.is_available():
         print("需要 CUDA")
         return
-    
-    model = nn.Sequential(
-        nn.Linear(256, 512),
-        nn.ReLU(),
-        nn.Linear(512, 256),
-    ).cuda()
-    
-    x = torch.randn(16, 256, device="cuda")
-    
-    # 测试异步 prefetch + 依赖追踪
+
+    # 多层模型：倒序预取需要多个 saved tensor 才有"下一个"可预取
+    torch.manual_seed(0)
+    layers = []
+    for _ in range(6):
+        layers += [nn.Linear(256, 256), nn.ReLU()]
+    model = nn.Sequential(*layers).cuda()
+
+    x = torch.randn(64, 256, device="cuda")
+
+    def grads():
+        return torch.cat([p.grad.flatten() for p in model.parameters()])
+
+    model.zero_grad(set_to_none=True)
+    model(x).pow(2).mean().backward()
+    g_ref = grads()
+
     config = VirtualVRAMConfig(
         enabled=True,
         min_tensor_bytes=1<<10,
-        compress=True,
-        compress_dtype="int8",
-        stream_prefetch=True,
-        track_dependencies=True,
+        enable_prefetch=True,
+        prefetch_cache_size=2,
         verbose=False,
     )
-    
-    with virtual_vram(config) as mgr:
-        y = model(x)
-        loss = y.mean()
-        loss.backward()
-    
-    print(f"  dependency_edges = {mgr.stats.dependency_edges}")
-    print(f"  loop_breaks = {mgr.stats.loop_breaks}")
-    print(f"  offload_count = {mgr.stats.offload_count}")
-    print(f"  restore_count = {mgr.stats.restore_count}")
-    
-    if mgr.stats.loop_breaks > 0:
-        print("\n  ⚠️  检测到断环！这会导致 NaN。")
+
+    model.zero_grad(set_to_none=True)
+    reset_vram_perf_stats()
+    with virtual_vram(config):
+        model(x).pow(2).mean().backward()
+    torch.cuda.synchronize()
+    st = get_vram_perf_stats()
+    g = grads()
+
+    max_err = (g - g_ref).abs().max().item()
+    print(f"  offload (D2H) = {int(st['pack_n'])}")
+    print(f"  restore (H2D) = {int(st['unpack_n'])}")
+    print(f"  prefetch issued/hit/miss = {int(st['prefetch_issued'])}/"
+          f"{int(st['prefetch_hit'])}/{int(st['prefetch_miss'])}")
+    print(f"  max|grad - baseline| = {max_err:.2e}")
+
+    if st['pack_n'] == 0:
+        print("\n  ❌ 没有发生 offload，测试无效。")
         return False
-    elif mgr.stats.dependency_edges > 0:
-        print("\n  ✅ 依赖闭环正常建立。")
-        return True
-    else:
-        print("\n  ℹ️  未使用异步 prefetch，无需依赖边。")
-        return True
+    if max_err > 1e-6:
+        print("\n  ❌ 预取恢复的数据与 baseline 不一致（流同步有问题）。")
+        return False
+    if st['prefetch_hit'] == 0:
+        print("\n  ❌ 开启了预取但没有命中，预取路径未生效。")
+        return False
+    print("\n  ✅ 预取命中且梯度与 baseline 一致。")
+    return True
 
 
 def test_restore_semantics():
@@ -236,12 +229,9 @@ def test_restore_semantics():
     config = VirtualVRAMConfig(
         enabled=True,
         min_tensor_bytes=1<<10,
-        compress=True,
-        compress_dtype="int8",
-        stream_prefetch=False,
         verbose=False,
     )
-    
+
     with virtual_vram(config):
         y = model(x)
         loss = y.mean()
@@ -268,7 +258,7 @@ def test_restore_semantics():
 def main():
     """主测试流程"""
     print("╔" + "="*68 + "╗")
-    print("║" + " "*15 + "Virtual VRAM v0.3 修复验证" + " "*15 + "║")
+    print("║" + " "*15 + "Virtual VRAM v1.6.2 修复验证" + " "*13 + "║")
     print("╚" + "="*68 + "╝")
     print()
     
@@ -281,8 +271,8 @@ def main():
     # 测试 1: 梯度收敛性
     results['gradient'] = test_gradient_convergence()
     
-    # 测试 2: 依赖追踪
-    results['dependency'] = test_dependency_tracking()
+    # 测试 2: 异步预取
+    results['prefetch'] = test_dependency_tracking()
     
     # 测试 3: Restore 语义
     results['restore'] = test_restore_semantics()
@@ -302,12 +292,13 @@ def main():
         print("🎉 所有核心修复已验证通过！")
         print()
         print("修复内容:")
-        print("  1. ✅ Stream 依赖闭环：使用 CUDA event 建立依赖边")
-        print("  2. ✅ Restore 语义修正：恢复的 tensor 一律 detach")
-        print("  3. ✅ 依赖追踪审计：可审计的搬运路径")
+        print("  1. ✅ 各 offload 路径梯度与 baseline 一致")
+        print("  2. ✅ 倒序预取：CUDA event + record_stream 流同步正确")
+        print("  3. ✅ Restore 语义：backward 正常完成")
     else:
         print("⚠️  部分测试未通过，需要进一步调试。")
+    return all_passed
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -183,15 +183,22 @@ class McDonald3070_70BConfig:
         )
 
     def to_vvram_config(self):
-        """转换为 VirtualVRAMConfig"""
-        from virtual_vram import VirtualVRAMConfig
+        """转换为 VirtualVRAMConfig（apt/vgpu/runtime/virtual_vram.py, v1.6.2）
+
+        v0.3 的 compress / compress_dtype / stream_prefetch / track_dependencies 已移除：
+          - 激活量化已弃用（saved_tensors_hooks 中量化会破坏 backward），
+            compress_dtype 只对 Ghost 权重压缩有意义，这里不再传给 virtual_vram
+          - stream_prefetch → enable_prefetch（backward 倒序预取，CUDA event 同步）
+        """
+        import os, sys
+        _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig
         return VirtualVRAMConfig(
             enabled=True,
             min_tensor_bytes=self.min_tensor_bytes,
-            compress=True,
-            compress_dtype=self.compress_dtype,
-            stream_prefetch=self.window_prefetch,
-            track_dependencies=True,
+            enable_prefetch=self.window_prefetch,
             verbose=self.verbose,
         )
 

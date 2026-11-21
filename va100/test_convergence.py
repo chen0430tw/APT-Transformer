@@ -23,7 +23,7 @@ GPT-5.2 终止版口径：只做 3 件事，然后就停。
   C) page_in+out 连续 3 步上升 (摩擦失控)
 
 用法:
-  把 virtual_vram.py 放同目录, 然后:
+  在仓库任意目录运行（自动从仓库根导入 apt.vgpu.runtime.virtual_vram）:
     python test_convergence.py                    # 全量测试
     python test_convergence.py --quick             # 快速验证 (小模型)
     python test_convergence.py --find-limit        # 找极限 batch size
@@ -39,6 +39,7 @@ import gc
 import json
 import time
 import argparse
+import dataclasses
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
@@ -74,16 +75,13 @@ except ImportError:
     HAS_PSUTIL = False
     print("WARNING: psutil not found, CPU RAM monitoring disabled")
 
-# ── 导入 virtual_vram (灵活路径) ──
-try:
-    from virtual_vram import VirtualVRAMConfig, virtual_vram, VVRAMStats
-except ImportError:
-    try:
-        from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram, VVRAMStats
-    except ImportError:
-        print("ERROR: virtual_vram.py not found.")
-        print("  把 virtual_vram.py 放到同目录, 或确保 apt 包可导入")
-        sys.exit(1)
+# ── 导入 virtual_vram（apt/vgpu/runtime/virtual_vram.py）──
+# 从仓库根导入 apt 包（va100/ 的上一级）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import apt.vgpu.runtime.virtual_vram as vv_module
+from apt.vgpu.runtime.virtual_vram import (
+    VirtualVRAMConfig, virtual_vram, get_vram_perf_stats, reset_vram_perf_stats,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -158,26 +156,22 @@ CONFIGS = {
 }
 
 # 虚拟显存模式
+# v0.3 的 v01_plain / v02_fp16 / v02_int8 已不可用：量化压缩已弃用
+# （saved_tensors_hooks 中量化会破坏 backward），offload 现在是无损拷贝。
+# 当前模式 = 两条 offload 路径（legacy / nested v1.6）× 是否开启倒序预取（v1.6.2）。
 VVRAM_MODES = {
-    "off":       None,
-    "v01_plain": lambda mb: VirtualVRAMConfig(
-        enabled=True, min_tensor_bytes=mb,
-        compress=False, stream_prefetch=True,
-        track_dependencies=True,  # v0.3: 启用依赖追踪
-        verbose=False),
-    "v02_fp16":  lambda mb: VirtualVRAMConfig(
-        enabled=True, min_tensor_bytes=mb,
-        compress=True, compress_dtype="float16",
-        stream_prefetch=True,
-        track_dependencies=True,  # v0.3: 启用依赖追踪
-        verbose=False),
-    "v02_int8":  lambda mb: VirtualVRAMConfig(
-        enabled=True, min_tensor_bytes=mb,
-        compress=True, compress_dtype="int8",
-        stream_prefetch=True,
-        track_dependencies=True,  # v0.3: 启用依赖追踪
-        verbose=False),
+    "off":         None,
+    "legacy":      lambda mb: VirtualVRAMConfig(
+        enabled=True, min_tensor_bytes=mb, verbose=False),
+    "legacy_pf":   lambda mb: VirtualVRAMConfig(
+        enabled=True, min_tensor_bytes=mb, enable_prefetch=True, verbose=False),
+    "nested":      lambda mb: VirtualVRAMConfig(
+        enabled=True, min_tensor_bytes=mb, enable_nested_v16=True, verbose=False),
+    "nested_pf":   lambda mb: VirtualVRAMConfig(
+        enabled=True, min_tensor_bytes=mb, enable_nested_v16=True,
+        enable_prefetch=True, verbose=False),
 }
+DEFAULT_VVRAM_MODE = "legacy_pf"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -399,12 +393,9 @@ def run_single_step(
     # 如果 thrash_guard 激活, 动态调大 offload 阈值
     effective_cfg = vvram_cfg
     if thrash_guard and thrash_guard.active and vvram_cfg is not None:
-        effective_cfg = VirtualVRAMConfig(
-            enabled=True,
+        effective_cfg = dataclasses.replace(
+            vvram_cfg,
             min_tensor_bytes=thrash_guard.safe_min_tensor_bytes,
-            compress=vvram_cfg.compress,
-            compress_dtype=vvram_cfg.compress_dtype,
-            stream_prefetch=vvram_cfg.stream_prefetch,
             verbose=False,
         )
 
@@ -414,9 +405,9 @@ def run_single_step(
     x = x_cpu.to(device)
     del x_cpu
 
-    # ── 采集 offload 前后的 stats 差值 ──
-    # virtual_vram 的 stats 是内部的, 我们通过 hook 间接追踪
-    # 方法: 用 CUDA events 测 compute vs total
+    # ── 采集 offload 统计：每步清零 virtual_vram 的 perf 计数器，步后读取 ──
+    # 计算/总耗时用 CUDA events 测
+    reset_vram_perf_stats()
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
 
@@ -454,38 +445,25 @@ def run_single_step(
     tokens = cfg.batch_size * cfg.seq_len if phase == "prefill" else cfg.batch_size
     tok_s = tokens / step_time if step_time > 0 else 0.0
 
-    # page bytes: 基于 VRAM 实际增量估算 offload 量
-    # vram_before ≈ model params, peak ≈ params + activations on GPU
-    param_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-    input_bytes = cfg.batch_size * cfg.seq_len * cfg.d_model * 4  # FP32
-    # Transformer 每层保存的中间张量:
-    #   hidden states (~4个), attention scores (batch*heads*seq*seq*4),
-    #   FFN intermediates (~2个), layernorm inputs (~2个)
-    # 粗估: hidden_per_layer + attention_scores_per_layer
-    hidden_per_layer = cfg.batch_size * cfg.seq_len * cfg.d_model * 4 * 6
-    attn_scores_per_layer = cfg.batch_size * cfg.nhead * cfg.seq_len * cfg.seq_len * 4
-    activation_est = cfg.num_layers * (hidden_per_layer + attn_scores_per_layer)
-    actual_act_on_gpu = max(0, int(peak_alloc * 1e9) - vram_before)
-    page_out_est = max(0, activation_est - actual_act_on_gpu)
-    page_in_est = page_out_est  # backward 恢复 ≈ forward offload
-
-    # hit_rate: 基于 VRAM 节省比例
+    # page bytes / 计数：直接读 virtual_vram 的实测计数器（不再按模型结构估算）
+    #   pack_n / pack_bytes = 实际 D2H 的次数 / 字节
+    #   skip_n             = pack_hook 跳过（小于阈值等，留在 GPU）的次数
+    # 量化压缩已弃用，offload 为无损拷贝，压缩比固定 1.0。
+    comp_ratio = 1.0
     if effective_cfg is None:
         hit_rate = 1.0
-        comp_ratio = 1.0
         offload_count = 0
         skip_count = 0
+        page_out_est = 0
+        page_in_est = 0
     else:
-        offload_ratio = page_out_est / max(activation_est, 1)
-        offload_count = max(0, int(cfg.num_layers * 2 * offload_ratio))
-        skip_count = max(0, cfg.num_layers * 2 - offload_count)
+        vp = get_vram_perf_stats()
+        offload_count = int(vp["pack_n"])
+        skip_count = int(vp["skip_n"])
         total = offload_count + skip_count
         hit_rate = skip_count / total if total > 0 else 0.0
-        comp_ratio = {"int8": 4.0, "float16": 2.0}.get(
-            effective_cfg.compress_dtype, 1.0) if effective_cfg.compress else 1.0
-        # 压缩后实际 PCIe 搬运量更小
-        page_out_est = int(page_out_est / comp_ratio)
-        page_in_est = page_out_est
+        page_out_est = int(vp["pack_bytes"])
+        page_in_est = page_out_est  # backward 把每个 offload 的 tensor 至少恢复一次
 
     model.zero_grad(set_to_none=True)
     del x, y, loss
@@ -610,7 +588,7 @@ def test_baseline_comparison(cfg: BenchmarkConfig, n_steps: int = 5):
 # 测试 2: 找极限 batch size (二分搜索)
 # ═══════════════════════════════════════════════════════════════════
 
-def test_find_limit(base_cfg: BenchmarkConfig, mode: str = "v02_int8"):
+def test_find_limit(base_cfg: BenchmarkConfig, mode: str = DEFAULT_VVRAM_MODE):
     """二分搜索找到给定模式的最大可用 batch size"""
     print(f"\n{'='*72}")
     print(f"TEST: 找极限 batch [{mode}] (d={base_cfg.d_model}, "
@@ -702,7 +680,7 @@ def test_find_limit(base_cfg: BenchmarkConfig, mode: str = "v02_int8"):
 # 测试 3: 稳定性 (连续 N 轮, 检测雪崩)
 # ═══════════════════════════════════════════════════════════════════
 
-def test_stability(cfg: BenchmarkConfig, mode: str = "v02_int8",
+def test_stability(cfg: BenchmarkConfig, mode: str = DEFAULT_VVRAM_MODE,
                    n_rounds: int = 50):
     """连续跑 N 轮, 验证吞吐不雪崩"""
     print(f"\n{'='*72}")
@@ -804,8 +782,7 @@ def test_gradient_accuracy(cfg: BenchmarkConfig):
     print(f"TEST: 梯度精度 [{cfg.label()}]")
     print(f"{'='*72}")
 
-    # ── 路径一致性检查：确认使用的是 v0.3 ──
-    import virtual_vram as vv_module
+    # ── 路径一致性检查：确认导入的是 apt/vgpu/runtime/virtual_vram.py ──
     print(f"  VirtualVRAM 模块路径: {vv_module.__file__}")
     if hasattr(vv_module, '__version__'):
         print(f"  VirtualVRAM 版本: {vv_module.__version__}")
@@ -997,7 +974,7 @@ def main():
 示例:
   python test_convergence.py --quick           # 快速验证 (小模型)
   python test_convergence.py --compare medium  # medium 配置对比 4 模式
-  python test_convergence.py --find-limit      # 找 v02_int8 极限 batch
+  python test_convergence.py --find-limit      # 找 legacy_pf 极限 batch
   python test_convergence.py --stability 50    # 50 轮稳定性
   python test_convergence.py --gradient        # 梯度精度验证
   python test_convergence.py --all             # 全部跑一遍
@@ -1019,9 +996,9 @@ def main():
     parser.add_argument("--config", type=str, default="medium",
                         choices=list(CONFIGS.keys()),
                         help="默认配置档位 (default: medium)")
-    parser.add_argument("--mode", type=str, default="v02_int8",
+    parser.add_argument("--mode", type=str, default=DEFAULT_VVRAM_MODE,
                         choices=list(VVRAM_MODES.keys()),
-                        help="虚拟显存模式 (default: v02_int8)")
+                        help="虚拟显存模式 (default: legacy_pf)")
 
     args = parser.parse_args()
 

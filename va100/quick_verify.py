@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-快速验证 virtual_vram.py v0.3 修复
+快速验证 virtual_vram（apt/vgpu/runtime/virtual_vram.py, v1.6.2）
+
+v0.3 的 compress / compress_dtype / stream_prefetch 参数已移除：
+  - 量化压缩已弃用（saved_tensors_hooks 中量化会破坏 backward）
+  - stream_prefetch → enable_prefetch（v1.6.2 backward 倒序预取）
 """
 
+import os
 import sys
 import torch
 import torch.nn as nn
 
-# 导入修复后的 virtual_vram
-sys.path.insert(0, '/mnt/user-data/outputs')
-from virtual_vram import VirtualVRAMConfig, virtual_vram
+# 从仓库根导入 apt 包（va100/ 的上一级）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from apt.vgpu.runtime.virtual_vram import VirtualVRAMConfig, virtual_vram
 
 
 def test_basic_functionality():
@@ -36,9 +41,7 @@ def test_basic_functionality():
     config = VirtualVRAMConfig(
         enabled=True,
         min_tensor_bytes=1 << 10,  # 1 KB
-        compress=True,
-        compress_dtype="int8",
-        stream_prefetch=True,  # v0.3: 已修复
+        enable_prefetch=True,
         verbose=True,
     )
     
@@ -53,7 +56,7 @@ def test_basic_functionality():
     model.zero_grad()
     x.grad = None
     
-    print("\n[Virtual VRAM v0.3]")
+    print("\n[Virtual VRAM v1.6.2]")
     with virtual_vram(config):
         y = model(x)
         loss = y.mean()
@@ -69,9 +72,10 @@ def test_basic_functionality():
     if has_nan:
         print("\n❌ 测试失败：仍然有 NaN！")
         return False
-    elif abs(vvram_grad_norm - baseline_grad_norm) / baseline_grad_norm > 0.1:
-        print(f"\n⚠️  警告：梯度差异较大 ({abs(vvram_grad_norm - baseline_grad_norm) / baseline_grad_norm:.1%})")
-        return True  # 可能是量化误差，不算失败
+    elif abs(vvram_grad_norm - baseline_grad_norm) / baseline_grad_norm > 1e-5:
+        # 无量化：offload 是无损拷贝，梯度应与 baseline 一致
+        print(f"\n❌ 测试失败：梯度与 baseline 不一致 ({abs(vvram_grad_norm - baseline_grad_norm) / baseline_grad_norm:.2e})")
+        return False
     else:
         print("\n✅ 测试通过：无 NaN，梯度一致")
         return True
@@ -99,24 +103,15 @@ def test_all_modes():
     
     # 测试模式
     modes = [
-        ("plain (同步)", VirtualVRAMConfig(
-            enabled=True, min_tensor_bytes=1<<10,
-            compress=False, stream_prefetch=False)),
-        ("plain (异步)", VirtualVRAMConfig(
-            enabled=True, min_tensor_bytes=1<<10,
-            compress=False, stream_prefetch=True)),
-        ("fp16 (同步)", VirtualVRAMConfig(
-            enabled=True, min_tensor_bytes=1<<10,
-            compress=True, compress_dtype="float16", stream_prefetch=False)),
-        ("fp16 (异步)", VirtualVRAMConfig(
-            enabled=True, min_tensor_bytes=1<<10,
-            compress=True, compress_dtype="float16", stream_prefetch=True)),
-        ("int8 (同步)", VirtualVRAMConfig(
-            enabled=True, min_tensor_bytes=1<<10,
-            compress=True, compress_dtype="int8", stream_prefetch=False)),
-        ("int8 (异步)", VirtualVRAMConfig(
-            enabled=True, min_tensor_bytes=1<<10,
-            compress=True, compress_dtype="int8", stream_prefetch=True)),
+        ("legacy (同步)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10)),
+        ("legacy (预取)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10, enable_prefetch=True)),
+        ("nested (同步)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10, enable_nested_v16=True)),
+        ("nested (预取)", VirtualVRAMConfig(
+            enabled=True, min_tensor_bytes=1<<10, enable_nested_v16=True,
+            enable_prefetch=True)),
     ]
     
     all_passed = True
@@ -149,7 +144,7 @@ def test_all_modes():
 
 def main():
     print("╔" + "="*68 + "╗")
-    print("║" + " "*15 + "Virtual VRAM v0.3 快速验证" + " "*15 + "║")
+    print("║" + " "*15 + "Virtual VRAM v1.6.2 快速验证" + " "*13 + "║")
     print("╚" + "="*68 + "╝")
     print()
     
@@ -181,7 +176,7 @@ def main():
     all_passed = all(r[1] for r in results)
     print()
     if all_passed:
-        print("🎉 所有测试通过！v0.3 修复生效。")
+        print("🎉 所有测试通过！")
     else:
         print("⚠️  部分测试失败，需要进一步检查。")
     
