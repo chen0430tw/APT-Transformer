@@ -778,13 +778,20 @@ class _Prefetcher:
 
     # ---- backward：消费 ----
     def take(self, packed: _Packed) -> Optional[torch.Tensor]:
-        """登记一次 unpack，取走预取结果（若有）并建立流同步"""
+        """登记一次 unpack，取走预取结果（若有）并建立流同步
+
+        同一个 _Packed 可能被多次 unpack（去重：如 ReLU 输出同时被 ReLU 和下一层
+        Linear 保存，pending=2）。还有后续 unpack 时保留 prefetched 给下一个消费者
+        （仍计入驻留上限），否则第二次 unpack 必然未命中、走同步 H2D。
+        多个消费者共享同一个 GPU tensor 与不加 hook 时 autograd 的行为一致。
+        """
         with self.lock:
             packed.pending -= 1
             pre = packed.prefetched
             ev = packed.prefetch_event
-            packed.prefetched = None
-            packed.prefetch_event = None
+            if packed.pending <= 0:
+                packed.prefetched = None
+                packed.prefetch_event = None
             if packed.pending <= 0 and packed.seq >= 0:
                 self._untrack_locked(packed.seq)
             if pre is not None:
